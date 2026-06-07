@@ -40,6 +40,7 @@ describe('gemini_generate_set (master mode)', () => {
   });
 });
 
+// Task 13: lock chain-mode referencing + count-variation behavior
 describe('gemini_generate_set (chain mode + count)', () => {
   it('chain mode references the previous image each step', async () => {
     let n = 0;
