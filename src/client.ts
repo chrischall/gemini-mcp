@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadDotenvSafely, readEnvVar, McpToolError, truncateErrorMessage } from '@chrischall/mcp-utils';
-import { resolveModel, filterImageModels, type GeminiModel } from './models.js';
+import { resolveModel, filterImageModels, type GeminiModel, type RawModel } from './models.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 await loadDotenvSafely({ path: join(__dirname, '..', '.env'), override: false });
@@ -63,8 +63,8 @@ export class GeminiClient {
   }
 
   async listModels(): Promise<GeminiModel[]> {
-    const data = await this.call<{ models?: unknown[] }>('GET', '/models?pageSize=200');
-    return filterImageModels((data.models ?? []) as Parameters<typeof filterImageModels>[0]);
+    const data = await this.call<{ models?: RawModel[] }>('GET', '/models?pageSize=200');
+    return filterImageModels(data.models ?? []);
   }
 
   async generate(opts: GenerateOpts): Promise<GeneratedImage[]> {
@@ -89,7 +89,7 @@ export class GeminiClient {
     for (const cand of data.candidates ?? []) {
       for (const part of cand.content?.parts ?? []) {
         const inline = (part.inline_data ?? part.inlineData) as { data?: string; mime_type?: string; mimeType?: string } | undefined;
-        if (inline?.data) out.push({ base64: inline.data, mimeType: inline.mime_type ?? inline.mimeType ?? 'image/png' });
+        if (inline?.data) out.push({ base64: inline.data, mimeType: inline.mime_type ?? inline.mimeType ?? 'image/jpeg' });
       }
     }
     if (out.length === 0) {

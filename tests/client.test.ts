@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +6,15 @@ import { GeminiClient } from '../src/client.js';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const listFixture = JSON.parse(readFileSync(join(FIX, 'list-models-response.json'), 'utf8'));
+
+// These tests mutate process.env.GEMINI_API_KEY; restore it after each so the
+// env doesn't leak across tests/files (e.g. a stray 'test-key' masking the
+// deferred-config path elsewhere).
+const ORIG_KEY = process.env.GEMINI_API_KEY;
+afterEach(() => {
+  if (ORIG_KEY === undefined) delete process.env.GEMINI_API_KEY;
+  else process.env.GEMINI_API_KEY = ORIG_KEY;
+});
 
 function mockFetch(body: unknown, ok = true, status = 200): typeof fetch {
   return (async () => ({
@@ -31,6 +40,8 @@ describe('listModels', () => {
     expect(models.length).toBeGreaterThan(0);
     expect(models.every((m) => /image/i.test(m.id))).toBe(true);
     expect(models.every((m) => !m.id.startsWith('models/'))).toBe(true);
+    // imagen-* is in the fixture but uses a different API — must be excluded.
+    expect(models.map((m) => m.id)).not.toContain('imagen-4.0-generate-001');
   });
 
   it('maps a non-2xx to a redacted McpToolError', async () => {
