@@ -3,10 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError } from '@chrischall/mcp-utils';
 import { client, type GeneratedImage } from '../client.js';
 import { slugify } from '../images.js';
-import { emit, type NamedImage } from './shared.js';
-
-const ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9', '1:4', '4:1', '1:8', '8:1'] as const;
-const IMAGE_SIZES = ['1K', '2K', '4K'] as const;
+import { emit, sharedImageSchema, type NamedImage } from './shared.js';
 
 export function registerSetTools(server: McpServer): void {
   server.registerTool(
@@ -17,17 +14,14 @@ export function registerSetTools(server: McpServer): void {
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
         master_prompt: z.string().min(1).describe('Prompt for the master/reference image'),
-        scenes: z.array(z.string().min(1)).optional().describe('Per-image prompts; each references the master'),
+        scenes: z.array(z.string().min(1)).min(1).max(8).optional().describe('Per-image prompts (1-8); each references the master'),
         count: z.number().int().positive().max(8).optional().describe('Number of variations of master_prompt (when scenes omitted)'),
         reference_mode: z.enum(['master', 'chain']).optional().describe('master: every image references the master (default). chain: each references the previous.'),
-        model: z.string().optional().describe('Model id override (see gemini_list_models)'),
-        aspect_ratio: z.enum(ASPECT_RATIOS).optional().describe('Output aspect ratio'),
-        image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution'),
-        output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),
-        inline: z.boolean().optional().describe('Return base64 images inline instead of writing to disk'),
+        ...sharedImageSchema,
       },
     },
     async (args) => {
+      // `scenes` is min(1) at the schema, so a non-undefined value is non-empty.
       if ((args.scenes && args.count) || (!args.scenes && !args.count)) {
         throw new McpToolError('Provide exactly one of `scenes` or `count`.');
       }

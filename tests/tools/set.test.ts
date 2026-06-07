@@ -38,6 +38,15 @@ describe('gemini_generate_set (master mode)', () => {
     expect(res.isError).toBe(true);
     await h.close();
   });
+
+  it('rejects an empty scenes array (would otherwise silently yield only a master)', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerSetTools);
+    const res = await h.callTool('gemini_generate_set', { master_prompt: 'x', scenes: [] });
+    expect(res.isError).toBe(true);
+    expect(spy).not.toHaveBeenCalled(); // rejected at schema validation, no master generated
+    await h.close();
+  });
 });
 
 // Task 13: lock chain-mode referencing + count-variation behavior
