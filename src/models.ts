@@ -21,10 +21,14 @@ export function resolveModel(perCall: string | undefined, envOverride: string | 
   return perCall?.trim() || envOverride?.trim() || DEFAULT_IMAGE_MODEL;
 }
 
-/** Keep only image-capable models (id contains "image"), strip the `models/` prefix. */
+/**
+ * Keep only Gemini image-generation models (the Nano Banana family) and strip
+ * the `models/` prefix. Excludes `imagen-*` — those contain the substring
+ * "image" but use a different `:predict` API this server doesn't implement.
+ */
 export function filterImageModels(raw: RawModel[]): GeminiModel[] {
   return raw
-    .filter((m) => /image/i.test(m.name ?? ''))
+    .filter((m) => /image/i.test(m.name ?? '') && !/imagen/i.test(m.name ?? ''))
     .map((m) => ({
       id: (m.name ?? '').replace(/^models\//, ''),
       displayName: m.displayName ?? '',
