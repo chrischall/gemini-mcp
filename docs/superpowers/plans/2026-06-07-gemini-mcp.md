@@ -386,6 +386,12 @@ git add -A && git commit -m "feat: image disk I/O (slug, write, read, output dir
 ## Phase 2 — API verification (REQUIRES GEMINI_API_KEY)
 
 > **GATE:** Tasks 6–8 encode the real request/response shape. Per the fleet rule "never encode a request shape you haven't seen succeed," this task must run first and produce the pinned fixture. If `GEMINI_API_KEY` is not yet available, STOP here and resume once the key is in `~/git/gemini-mcp/.env`. Tasks 1–4 above can be done without it.
+>
+> **Verification findings (2026-06-07, partial — billing gate):**
+> - Endpoint is **`/v1beta`**, NOT `/v1` (v1 lacks `gemini-3-pro-image`). All curls below use `/v1beta`.
+> - generateContent image models present on v1beta: `gemini-3-pro-image`(+`-preview`), `gemini-3.1-flash-image`(+`-preview`), `gemini-2.5-flash-image`, alias `nano-banana-pro-preview`. `imagen-4.0-*` are a separate `:predict` API — excluded from `filterImageModels` (done).
+> - `GET /v1beta/models` → 200 (listing shape confirmed; saved to fixture in step 5).
+> - **Image generation requires PAID billing.** The test key's free tier returns `429 … free_tier_requests, limit: 0` for every image model (Pro and Flash). The request-field name (`imageConfig` vs `responseFormat.image`) and the success response shape are **still UNCONFIRMED** — re-run steps 3–5 once billing is enabled, then code Tasks 6–8.
 
 ### Task 5: Verify endpoints + pin fixtures
 
@@ -488,7 +494,7 @@ import { resolveModel, filterImageModels, type GeminiModel } from './models.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 await loadDotenvSafely({ path: join(__dirname, '..', '.env'), override: false });
 
-const BASE_URL = 'https://generativelanguage.googleapis.com/v1';
+const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'; // v1 lacks gemini-3-pro-image; confirmed via Task 5
 const SERVICE = 'Gemini';
 
 export interface GeneratedImage { base64: string; mimeType: string; }
