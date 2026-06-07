@@ -39,3 +39,51 @@ describe('listModels', () => {
     await expect(c.listModels()).rejects.toThrow(/Gemini API 403/);
   });
 });
+
+const genFixture = JSON.parse(readFileSync(join(FIX, 'generate-response.json'), 'utf8'));
+
+function capturingFetch(body: unknown): { fn: typeof fetch; calls: { url: string; init: RequestInit }[] } {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fn = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    return { ok: true, status: 200, json: async () => body, text: async () => '' };
+  }) as unknown as typeof fetch;
+  return { fn, calls };
+}
+
+describe('generate', () => {
+  it('posts prompt + inline images and extracts image bytes', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    const out = await c.generate({
+      prompt: 'a leaf',
+      images: [{ base64: 'QQ==', mimeType: 'image/png' }],
+      model: 'gemini-3-pro-image',
+      aspectRatio: '1:1',
+      imageSize: '1K',
+    });
+
+    // request: correct URL + auth header
+    expect(cap.calls[0].url).toContain('/models/gemini-3-pro-image:generateContent');
+    expect((cap.calls[0].init.headers as Record<string, string>)['x-goog-api-key']).toBe('test-key');
+
+    // request: body shape (CONFIRMED in Task 5)
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.contents[0].parts[0]).toEqual({ text: 'a leaf' });
+    expect(sent.contents[0].parts[1]).toEqual({ inline_data: { mime_type: 'image/png', data: 'QQ==' } });
+    expect(sent.generationConfig.responseModalities).toContain('IMAGE');
+    expect(sent.generationConfig.imageConfig).toEqual({ aspectRatio: '1:1', imageSize: '1K' });
+
+    // response: image extracted
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0].base64.length).toBeGreaterThan(0);
+    expect(out[0].mimeType).toMatch(/^image\//);
+  });
+
+  it('throws when no image part is returned', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const c = new GeminiClient({ fetchImpl: capturingFetch({ candidates: [{ content: { parts: [{ text: 'blocked' }] } }] }).fn });
+    await expect(c.generate({ prompt: 'x' })).rejects.toThrow(/no image/i);
+  });
+});
