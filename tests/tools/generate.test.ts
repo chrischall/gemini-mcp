@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
@@ -37,6 +37,21 @@ describe('gemini_generate_image', () => {
     const h = await createTestHarness(registerGenerateTools);
     const res = await h.callTool('gemini_generate_image', { prompt: 'leaf', inline: true });
     expect(res.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' });
+    await h.close();
+  });
+});
+
+describe('gemini_edit_image', () => {
+  it('reads input images, passes them to generate, returns a path', async () => {
+    const inPath = join(dir, 'src.png');
+    writeFileSync(inPath, Buffer.from(PNG, 'base64'));
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', images: [inPath], output_dir: dir });
+    expect(parseToolResult<{ images: string[] }>(res).images).toHaveLength(1);
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ images: [{ base64: PNG, mimeType: 'image/png' }] }),
+    );
     await h.close();
   });
 });
