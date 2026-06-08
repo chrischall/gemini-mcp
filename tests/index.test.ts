@@ -3,6 +3,7 @@ import { createTestHarness } from '@chrischall/mcp-utils/test';
 import { registerModelTools } from '../src/tools/models.js';
 import { registerGenerateTools } from '../src/tools/generate.js';
 import { registerSetTools } from '../src/tools/set.js';
+import { registerInteractTools } from '../src/tools/interact.js';
 
 describe('tool roster', () => {
   it('registers exactly the expected tools', async () => {
@@ -10,9 +11,10 @@ describe('tool roster', () => {
       registerModelTools(s);
       registerGenerateTools(s);
       registerSetTools(s);
+      registerInteractTools(s);
     });
     const names = (await h.listTools()).map((t) => t.name).sort();
-    expect(names).toEqual(['gemini_edit_image', 'gemini_generate_image', 'gemini_generate_set', 'gemini_list_models']);
+    expect(names).toEqual(['gemini_edit_image', 'gemini_generate_image', 'gemini_generate_set', 'gemini_interact', 'gemini_list_models']);
     await h.close();
   });
 });

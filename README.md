@@ -20,6 +20,7 @@ Developed and maintained by AI (Claude Code).
 | `gemini_generate_image` | Generate image(s) from a text prompt |
 | `gemini_edit_image` | Edit or compose one or more input images with a text instruction |
 | `gemini_generate_set` | Generate a master image plus N consistent images referencing it |
+| `gemini_interact` | Multi-turn generation/editing via the Interactions API (Beta); returns an `interaction_id` to refine the same image conversationally |
 
 ## Quick Start
 

@@ -31,12 +31,12 @@ export function registerSetTools(server: McpServer): void {
       }
       const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
-      const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size };
+      const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level };
       const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
 
       // 1. master (optionally seeded from reference images)
       const masterRefInputs = await loadImageInputs(args.master_images, args.master_images_base64);
-      const [master] = await client.generate({
+      const { images: [master], text: masterText } = await client.generate({
         prompt: args.master_prompt,
         images: masterRefInputs.length > 0 ? masterRefInputs : undefined,
         seed,
@@ -44,6 +44,8 @@ export function registerSetTools(server: McpServer): void {
       });
       const named: NamedImage[] = [{ image: master, base: `${slug}-master` }];
 
+      // Only the master's text is surfaced (below). Per-scene text is intentionally
+      // dropped — a set returns one combined result and merging N captions is noise.
       // 2. scene prompts (explicit, or N repeats of master_prompt for variations)
       const scenePrompts = args.scenes ?? Array.from({ length: args.count ?? 0 }, () => args.master_prompt);
       const mode = args.reference_mode ?? 'master';
@@ -51,18 +53,20 @@ export function registerSetTools(server: McpServer): void {
       if (mode === 'chain') {
         let ref: GeneratedImage = master;
         for (let i = 0; i < scenePrompts.length; i++) {
-          const [img] = await client.generate({ prompt: scenePrompts[i], images: [ref], seed: seed + i + 1, ...cfg });
+          const { images: [img] } = await client.generate({ prompt: scenePrompts[i], images: [ref], seed: seed + i + 1, ...cfg });
           named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` });
           ref = img;
         }
       } else {
         const scenes = await Promise.all(
-          scenePrompts.map((p, i) => client.generate({ prompt: p, images: [master], seed: seed + i + 1, ...cfg }).then((r) => r[0])),
+          scenePrompts.map((p, i) => client.generate({ prompt: p, images: [master], seed: seed + i + 1, ...cfg }).then((r) => r.images[0])),
         );
         scenes.forEach((img, i) => named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` }));
       }
 
-      return emit(named, args, buildMeta(model, seed, args));
+      const meta = buildMeta(model, seed, args);
+      if (masterText) meta.text = masterText;
+      return emit(named, args, meta);
     },
   );
 }
