@@ -1,4 +1,4 @@
-# gemini-mcp
+# gemini-image-mcp
 
 MCP server for Google Gemini image generation and editing. Exposes four tools to Claude over stdio: list available models, generate images from text prompts, edit or compose images with text instructions, and generate a consistent set of images from a master prompt. Images are written to disk by default (path returned) or returned inline as base64. Built on the Gemini v1beta API (`generativelanguage.googleapis.com`) using the Nano Banana / Nano Banana Pro model family.
 

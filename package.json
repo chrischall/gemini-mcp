@@ -1,10 +1,10 @@
 {
   "name": "gemini-image-mcp",
   "version": "0.1.0",
-  "mcpName": "io.github.chrischall/gemini-mcp",
+  "mcpName": "io.github.chrischall/gemini-image-mcp",
   "description": "Gemini image-generation MCP server for Claude — developed and maintained by AI (Claude Code)",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
-  "repository": { "type": "git", "url": "git+https://github.com/chrischall/gemini-mcp.git" },
+  "repository": { "type": "git", "url": "git+https://github.com/chrischall/gemini-image-mcp.git" },
   "license": "MIT",
   "keywords": ["mcp", "model-context-protocol", "claude", "ai", "gemini", "nano-banana", "image-generation", "image-editing", "text-to-image", "google-gemini"],
   "type": "module",

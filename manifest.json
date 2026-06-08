@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/mcpb-manifest.schema.json",
   "manifest_version": "0.3",
-  "name": "gemini-mcp",
+  "name": "gemini-image-mcp",
   "display_name": "Gemini Images",
   "version": "0.1.0",
   "description": "Generate and edit images with Google Gemini image models (Nano Banana / Nano Banana Pro) via natural language prompts",
@@ -12,10 +12,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/chrischall/gemini-mcp"
+    "url": "https://github.com/chrischall/gemini-image-mcp"
   },
-  "homepage": "https://github.com/chrischall/gemini-mcp",
-  "support": "https://github.com/chrischall/gemini-mcp/issues",
+  "homepage": "https://github.com/chrischall/gemini-image-mcp",
+  "support": "https://github.com/chrischall/gemini-image-mcp/issues",
   "license": "MIT",
   "keywords": [
     "gemini",

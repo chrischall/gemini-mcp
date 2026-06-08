@@ -1,5 +1,5 @@
 {
-  "name": "gemini-mcp",
+  "name": "gemini-image-mcp",
   "displayName": "Gemini Images",
   "version": "0.1.0",
   "description": "MCP server for Google Gemini image generation and editing — generate and edit images via the Gemini API",
@@ -7,8 +7,8 @@
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com"
   },
-  "homepage": "https://github.com/chrischall/gemini-mcp",
-  "repository": "https://github.com/chrischall/gemini-mcp",
+  "homepage": "https://github.com/chrischall/gemini-image-mcp",
+  "repository": "https://github.com/chrischall/gemini-image-mcp",
   "license": "MIT",
   "keywords": [
     "gemini",

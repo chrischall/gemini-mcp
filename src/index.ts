@@ -9,8 +9,8 @@ import { registerSetTools } from './tools/set.js';
 // that defers its config error to the first request — so the server boots and
 // answers the host's install-time tools/list probe even without GEMINI_API_KEY.
 await runMcp({
-  name: 'gemini-mcp',
+  name: 'gemini-image-mcp',
   version: VERSION,
-  banner: '[gemini-mcp] This project was developed and is maintained by AI (Claude). Use at your own discretion.',
+  banner: '[gemini-image-mcp] This project was developed and is maintained by AI (Claude). Use at your own discretion.',
   tools: [registerModelTools, registerGenerateTools, registerSetTools],
 });
