@@ -6,6 +6,10 @@ import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerSetTools } from '../../src/tools/set.js';
 import { client } from '../../src/client.js';
 
+vi.mock('../../src/clipboard.js', () => ({
+  readClipboardImage: vi.fn().mockResolvedValue({ base64: 'Y2xpcGJvYXJk', mimeType: 'image/jpeg' }),
+}));
+
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-set-')); });
@@ -167,6 +171,25 @@ describe('gemini_generate_set (chain mode + count)', () => {
     const res = await h.callTool('gemini_generate_set', { master_prompt: 'fox', count: 3, output_dir: dir });
     expect(parseToolResult<{ images: string[] }>(res).images).toHaveLength(4); // master + 3
     expect(spy.mock.calls.slice(1).every((c) => c[0].prompt === 'fox')).toBe(true);
+    await h.close();
+  });
+});
+
+describe('gemini_generate_set from_clipboard', () => {
+  it('passes clipboard image as master input when from_clipboard:true', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerSetTools);
+    const res = await h.callTool('gemini_generate_set', {
+      master_prompt: 'fox',
+      scenes: ['waving'],
+      from_clipboard: true,
+      output_dir: dir,
+    });
+    expect(res.isError).toBeFalsy();
+    // First (master) call should have clipboard image as input
+    expect(spy.mock.calls[0][0].images).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mimeType: 'image/jpeg' })]),
+    );
     await h.close();
   });
 });

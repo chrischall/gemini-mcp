@@ -37,7 +37,8 @@
       "env": {
         "GEMINI_API_KEY": "${user_config.gemini_api_key}",
         "GEMINI_IMAGE_MODEL": "${user_config.gemini_image_model}",
-        "GEMINI_OUTPUT_DIR": "${user_config.gemini_output_dir}"
+        "GEMINI_OUTPUT_DIR": "${user_config.gemini_output_dir}",
+        "GEMINI_INPUT_DIR": "${user_config.gemini_input_dir}"
       }
     }
   },
@@ -60,6 +61,13 @@
       "type": "string",
       "title": "Output Directory",
       "description": "Default directory for generated images (default: current working directory)",
+      "required": false,
+      "sensitive": false
+    },
+    "gemini_input_dir": {
+      "type": "string",
+      "title": "Input Directory",
+      "description": "Directory to resolve bare input-image filenames against (e.g. an uploads folder)",
       "required": false,
       "sensitive": false
     }

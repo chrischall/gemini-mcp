@@ -36,6 +36,13 @@
           "isRequired": false,
           "format": "string",
           "isSecret": false
+        },
+        {
+          "name": "GEMINI_INPUT_DIR",
+          "description": "Directory to resolve bare input-image filenames against",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
         }
       ]
     }

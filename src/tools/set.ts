@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client, type GeneratedImage } from '../client.js';
-import { slugify, baseName, loadImageInputs } from '../images.js';
+import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, type NamedImage } from './shared.js';
 
 export function registerSetTools(server: McpServer): void {
@@ -35,7 +35,7 @@ export function registerSetTools(server: McpServer): void {
       const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
 
       // 1. master (optionally seeded from reference images)
-      const masterRefInputs = await loadImageInputs(args.master_images, args.master_images_base64);
+      const masterRefInputs = await gatherImageInputs({ images: args.master_images, images_base64: args.master_images_base64, from_clipboard: args.from_clipboard });
       const masterResult = await client.generate({
         prompt: args.master_prompt,
         images: masterRefInputs.length > 0 ? masterRefInputs : undefined,

@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client, type GroundingResult } from '../client.js';
-import { slugify, baseName, loadImageInputs } from '../images.js';
+import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, type NamedImage } from './shared.js';
 
 export function registerGenerateTools(server: McpServer): void {
@@ -27,7 +27,7 @@ export function registerGenerateTools(server: McpServer): void {
       const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
-      const refInputs = await loadImageInputs(args.images, args.images_base64);
+      const refInputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
       const named: NamedImage[] = [];
       let capturedText: string | undefined;
       // For count>1, surface the FIRST call's grounding (each call grounds
@@ -77,13 +77,13 @@ export function registerGenerateTools(server: McpServer): void {
     async (args) => {
       const hasPaths = (args.images?.length ?? 0) > 0;
       const hasBase64 = (args.images_base64?.length ?? 0) > 0;
-      if (!hasPaths && !hasBase64) {
-        throw new McpToolError('Provide at least one input image via `images` or `images_base64`.');
+      if (!hasPaths && !hasBase64 && !args.from_clipboard) {
+        throw new McpToolError('Provide at least one input image via `images`, `images_base64`, or `from_clipboard`.');
       }
       const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
-      const inputs = await loadImageInputs(args.images, args.images_base64);
+      const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
       const result = await client.generate({
         prompt: args.prompt,
         images: inputs,
