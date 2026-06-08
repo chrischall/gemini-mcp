@@ -11,6 +11,7 @@ Developed and maintained by AI (Claude Code).
 | `GEMINI_API_KEY` | Yes | Your Google Gemini API key ([aistudio.google.com/apikey](https://aistudio.google.com/apikey)) |
 | `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-3-pro-image`) |
 | `GEMINI_OUTPUT_DIR` | No | Default directory for generated images (default: current working directory) |
+| `GEMINI_INPUT_DIR` | No | Directory to resolve bare input-image filenames against (so `images: ["foo.jpg"]` works) |
 
 ## Tools
 
