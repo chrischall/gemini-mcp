@@ -80,6 +80,10 @@
     {
       "name": "gemini_generate_set",
       "description": "Generate a master image plus N consistent images referencing it"
+    },
+    {
+      "name": "gemini_interact",
+      "description": "Multi-turn image generation/editing via the Interactions API (Beta); returns an interaction_id for conversational refinement"
     }
   ],
   "compatibility": {

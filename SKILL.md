@@ -82,9 +82,14 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 ### Image Generation
 | Tool | Description |
 |------|-------------|
-| `gemini_generate_image(prompt, count?, images?, images_base64?, seed?, filename?, model?, aspect_ratio?, image_size?, output_dir?, inline?)` | Generate image(s) from a text prompt (optionally image-conditioned via `images`/`images_base64`) |
-| `gemini_edit_image(prompt, images?, images_base64?, seed?, filename?, model?, aspect_ratio?, image_size?, output_dir?, inline?)` | Edit or compose input image(s) — by **path** (`images`) or **value** (`images_base64`: data URI or raw base64) — with a text instruction. Requires ≥1 input |
-| `gemini_generate_set(master_prompt, scenes? \| count?, reference_mode?, master_images?, master_images_base64?, seed?, basename?, model?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it |
+| `gemini_generate_image(prompt, count?, images?, images_base64?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Generate image(s) from a text prompt (optionally image-conditioned via `images`/`images_base64`) |
+| `gemini_edit_image(prompt, images?, images_base64?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Edit or compose input image(s) — by **path** (`images`) or **value** (`images_base64`: data URI or raw base64) — with a text instruction. Requires ≥1 input |
+| `gemini_generate_set(master_prompt, scenes? \| count?, reference_mode?, master_images?, master_images_base64?, seed?, basename?, model?, thinking_level?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it |
+
+### Multi-turn (Interactions API — Beta)
+| Tool | Description |
+|------|-------------|
+| `gemini_interact(input, previous_interaction_id?, images?, images_base64?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` to **iteratively refine the same image** conversationally — the recommended way to make incremental edits. Output is **JPEG**. (Beta API.) |
 
 ## Workflows
 
@@ -132,6 +137,16 @@ gemini_edit_image(
 )
 → returns path to the edited image
 ```
+
+**Iterate on ONE image conversationally (multi-turn):**
+```
+r1 = gemini_interact(input: "a cozy reading nook, watercolor")
+   → { images: [...], interaction_id: "v1_abc…" }
+r2 = gemini_interact(input: "add a sleeping cat on the chair",
+                     previous_interaction_id: r1.interaction_id)
+   → refined image that preserves r1; returns a NEW interaction_id
+```
+Prefer this over re-running `gemini_edit_image` when you're making a *series* of incremental edits — the model keeps the prior result in context.
 Pasted/attached images aren't written to disk by the host, so pass their bytes via `images_base64` (a `data:` URI or raw base64) instead of a path.
 
 ## Notes
@@ -139,9 +154,13 @@ Pasted/attached images aren't written to disk by the host, so pass their bytes v
 - **Input images** accept either file **paths** (`images` / `master_images`) or **base64/data-URI values** (`images_base64` / `master_images_base64`).
 - **`seed`** makes a result reproducible; it's echoed in the result metadata (a random one is chosen + echoed when omitted). `count>1` uses `seed, seed+1, …` so the images differ. Determinism isn't fully guaranteed by the model.
 - **`filename`/`basename`** set the output name (extension stripped); names never overwrite (a `-2`, `-3` suffix is added). The result echoes the absolute path(s), `model`, `seed`, and aspect/size.
-- **No edit-strength control.** Gemini exposes no denoise/strength knob, and Nano Banana over-preserves the input — big structural edits ("move/remove/shrink", add a mat border) are often ignored. Workarounds: reroll with a different `seed`, use forceful wording, or do layout changes (padding/borders) with an external tool.
+- **No edit-strength control.** Gemini exposes no denoise/strength knob, and Nano Banana over-preserves the input — big structural edits ("move/remove/shrink", add a mat border) are often ignored. Workarounds: reroll with a different `seed`, raise `thinking_level` to `high`, use forceful wording, do layout changes (padding/borders) externally, or use `gemini_interact` multi-turn.
+- **`thinking_level`** (`minimal`/`high`, Gemini 3 models) controls reasoning depth — `high` can improve complex compositions/edits at higher latency/cost.
+- **Model text.** When the model returns a caption/explanation (mostly Gemini 3 **Pro**), it's surfaced as `text` in the result metadata.
+- **`gemini_interact`** is the multi-turn path: it returns an `interaction_id`; thread it back via `previous_interaction_id` for conversational refinement. Output is **JPEG only**. It's a **Beta** API (separate from the stable `generate`/`edit`/`set` tools).
 - `output_dir` per-call overrides `$GEMINI_OUTPUT_DIR` overrides cwd. `inline: true` returns bytes (with a metadata text block) instead of writing.
 - `count` and `scenes` are mutually exclusive in `gemini_generate_set`; `reference_mode: "chain"` references the previous image instead of the master.
-- Aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `2:3`, `3:2`, … · Image sizes: `1K`, `2K`, `4K` (Pro). `4K` is the max native output — true 18×24 in @ 300 DPI (5400×7200) needs an external upscale step.
+- Aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `2:3`, `3:2`, … · Image sizes: `512` (0.5K, Flash only), `1K`, `2K`, `4K`. `4K` is the max native output — true 18×24 in @ 300 DPI (5400×7200) needs an external upscale step.
+- All generated images carry a **SynthID** watermark (Google).
 - The model can mis-render text/Roman numerals (e.g. years) — verify any text in the output; it's a model limitation, not a tool setting.
 - Server logs to stderr only — stdout is reserved for JSON-RPC.
