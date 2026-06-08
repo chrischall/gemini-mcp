@@ -96,6 +96,27 @@ describe('decodeImageInput', () => {
     expect(r.mimeType).toBe('image/png');
     expect(r.base64).toBe(PNG_B64);
   });
+
+  it('tolerates extra params before the base64 marker (e.g. charset)', () => {
+    const r = decodeImageInput(`data:image/png;charset=utf-8;base64,${PNG_B64}`);
+    expect(r.mimeType).toBe('image/png');
+    expect(r.base64).toBe(PNG_B64);
+  });
+
+  it('throws on a malformed data URI rather than silently decoding garbage', () => {
+    expect(() => decodeImageInput('data:image/png,not-base64-content')).toThrow(/data URI/i);
+  });
+});
+
+describe('writeImage extension by mime', () => {
+  it('writes .webp for image/webp (not .png)', async () => {
+    const p = await writeImage(dir, 'pic', PNG_B64, 'image/webp');
+    expect(p.endsWith('.webp')).toBe(true);
+  });
+  it('writes .jpg for image/jpeg', async () => {
+    const p = await writeImage(dir, 'pic', PNG_B64, 'image/jpeg');
+    expect(p.endsWith('.jpg')).toBe(true);
+  });
 });
 
 describe('loadImageInputs', () => {

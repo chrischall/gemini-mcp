@@ -3,8 +3,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
-import { slugify, readImageAsInline, baseName, loadImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, type NamedImage } from './shared.js';
+import { slugify, baseName, loadImageInputs } from '../images.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, type NamedImage } from './shared.js';
 
 export function registerGenerateTools(server: McpServer): void {
   server.registerTool(
@@ -29,20 +29,19 @@ export function registerGenerateTools(server: McpServer): void {
       const refInputs = await loadImageInputs(args.images, args.images_base64);
       const named: NamedImage[] = [];
       for (let i = 0; i < count; i++) {
+        // Distinct seed per image (seed+0 for the single-image case == echoed seed)
+        // so count>1 yields N *different* images, not N duplicates.
         const [img] = await client.generate({
           prompt: args.prompt,
           images: refInputs.length > 0 ? refInputs : undefined,
           model: args.model,
           aspectRatio: args.aspect_ratio,
           imageSize: args.image_size,
-          seed,
+          seed: seed + i,
         });
         named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
       }
-      const meta: Record<string, unknown> = { model, seed };
-      if (args.aspect_ratio) meta.aspect_ratio = args.aspect_ratio;
-      if (args.image_size) meta.image_size = args.image_size;
-      return emit(named, args, meta);
+      return emit(named, args, buildMeta(model, seed, args));
     },
   );
 
@@ -79,10 +78,7 @@ export function registerGenerateTools(server: McpServer): void {
         imageSize: args.image_size,
         seed,
       });
-      const meta: Record<string, unknown> = { model, seed };
-      if (args.aspect_ratio) meta.aspect_ratio = args.aspect_ratio;
-      if (args.image_size) meta.image_size = args.image_size;
-      return emit([{ image: img, base: slug }], args, meta);
+      return emit([{ image: img, base: slug }], args, buildMeta(model, seed, args));
     },
   );
 }

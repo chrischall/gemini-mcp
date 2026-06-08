@@ -23,12 +23,14 @@ describe('gemini_generate_image', () => {
     await h.close();
   });
 
-  it('count makes N independent calls', async () => {
+  it('count makes N calls each with a DISTINCT seed (not N duplicates)', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_generate_image', { prompt: 'leaf', count: 3, output_dir: dir });
+    const res = await h.callTool('gemini_generate_image', { prompt: 'leaf', count: 3, seed: 100, output_dir: dir });
     expect(parseToolResult<{ images: string[] }>(res).images).toHaveLength(3);
     expect(spy).toHaveBeenCalledTimes(3);
+    const seeds = spy.mock.calls.map((c) => c[0].seed);
+    expect(seeds).toEqual([100, 101, 102]); // seed + i — distinct per image
     await h.close();
   });
 

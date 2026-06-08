@@ -49,7 +49,7 @@ function sniffMimeBytes(buf: Buffer): string {
 /** Decode base64 image bytes and write to disk (creating dir). Returns the absolute path. */
 export async function writeImage(dir: string, base: string, base64: string, mimeType: string): Promise<string> {
   await mkdir(dir, { recursive: true });
-  const ext = mimeType.includes('jpeg') ? 'jpg' : 'png';
+  const ext = mimeType.includes('jpeg') ? 'jpg' : mimeType.includes('webp') ? 'webp' : 'png';
   const path = await uniquePath(dir, base, ext);
   await writeFile(path, Buffer.from(base64, 'base64'));
   return resolve(path);
@@ -68,9 +68,18 @@ export async function readImageAsInline(path: string): Promise<{ base64: string;
  */
 export function decodeImageInput(input: string): { base64: string; mimeType: string } {
   const trimmed = input.trim();
-  const dataUriMatch = trimmed.match(/^data:([^;]+);base64,(.+)$/);
-  if (dataUriMatch) {
-    return { mimeType: dataUriMatch[1], base64: dataUriMatch[2] };
+  if (trimmed.startsWith('data:')) {
+    // data:<mediatype>[;param=value…];base64,<data> — tolerate extra params
+    // (e.g. charset) between the type and the base64 marker. Don't silently
+    // fall through to the raw-base64 path: a malformed data URI would decode to
+    // garbage bytes and ship corrupted data to the API.
+    const marker = trimmed.indexOf(';base64,');
+    if (marker === -1) {
+      throw new Error(`Unsupported data URI (expected ;base64,<data>): ${trimmed.slice(0, 48)}…`);
+    }
+    // MIME runs from after "data:" to the first ';' (a param sep or the base64 marker).
+    const mimeType = trimmed.slice(5, trimmed.indexOf(';', 5)) || 'image/png';
+    return { mimeType, base64: trimmed.slice(marker + ';base64,'.length) };
   }
   // Raw base64 — sniff from decoded bytes
   const buf = Buffer.from(trimmed, 'base64');

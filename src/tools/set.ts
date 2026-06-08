@@ -4,7 +4,7 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client, type GeneratedImage } from '../client.js';
 import { slugify, baseName, loadImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, type NamedImage } from './shared.js';
 
 export function registerSetTools(server: McpServer): void {
   server.registerTool(
@@ -62,10 +62,7 @@ export function registerSetTools(server: McpServer): void {
         scenes.forEach((img, i) => named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` }));
       }
 
-      const meta: Record<string, unknown> = { model, seed };
-      if (args.aspect_ratio) meta.aspect_ratio = args.aspect_ratio;
-      if (args.image_size) meta.image_size = args.image_size;
-      return emit(named, args, meta);
+      return emit(named, args, buildMeta(model, seed, args));
     },
   );
 }

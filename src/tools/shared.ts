@@ -26,9 +26,24 @@ export const sharedImageSchema = {
 /** A generated image plus the base filename (no extension) to write it under. */
 export interface NamedImage { image: GeneratedImage; base: string; }
 
-/** Return the provided seed, or pick a random one in [0, 2_147_483_647). */
+/**
+ * Return the provided seed, or pick a random one. Capped well below INT32_MAX
+ * so derived per-image seeds (`seed + i`) can't overflow a 32-bit int.
+ */
 export function pickSeed(seed?: number): number {
-  return seed ?? Math.floor(Math.random() * 2_147_483_647);
+  return seed ?? Math.floor(Math.random() * 2_147_483_000);
+}
+
+/** Build the result metadata echoed to the caller (omitting unset optionals). */
+export function buildMeta(
+  model: string,
+  seed: number,
+  opts: { aspect_ratio?: string; image_size?: string },
+): Record<string, unknown> {
+  const meta: Record<string, unknown> = { model, seed };
+  if (opts.aspect_ratio) meta.aspect_ratio = opts.aspect_ratio;
+  if (opts.image_size) meta.image_size = opts.image_size;
+  return meta;
 }
 
 /**
