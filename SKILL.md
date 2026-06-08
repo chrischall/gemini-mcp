@@ -159,6 +159,19 @@ the file and give its **path** (→ `images`), drop it into the project dir, pas
 it as a **`data:` URI in text**, or host it at a **URL** (fetch → base64 →
 `images_base64`). This is a host/Cowork limitation, not an MCP one.
 
+**macOS clipboard workaround (verified):** if the user **copies the image to the
+system clipboard** (e.g. ⌘C on the photo — distinct from pasting it inline into
+chat), the assistant *can* extract the real bytes and save a file, then pass that
+path to `images`:
+```bash
+osascript -e 'set f to (open for access POSIX file "/tmp/ref.png" with write permission)' \
+          -e 'write (the clipboard as «class PNGf») to f' -e 'close access f'
+# clipboard images can be huge/16-bit — downscale for Gemini's ~20MB inline cap:
+sips -Z 2048 -s format jpeg /tmp/ref.png --out /tmp/ref.jpg
+```
+Then `gemini_edit_image(prompt: "…", images: ["/tmp/ref.jpg"])`. (A *chat-pasted*
+image is NOT reliably on the system clipboard — the user must explicitly copy it.)
+
 ## Notes
 
 - **Input images** accept either file **paths** (`images` / `master_images`) or **base64/data-URI values** (`images_base64` / `master_images_base64`).
