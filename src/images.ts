@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { readEnvVar } from '@chrischall/mcp-utils';
 
 /** URL/file-safe slug from a prompt; never empty. */
@@ -25,21 +25,87 @@ export async function uniquePath(dir: string, base: string, ext: string): Promis
   return candidate;
 }
 
-/** Decode base64 image bytes and write to disk (creating dir). Returns the path. */
+/** Sniff MIME type from the first bytes of an image buffer. */
+function sniffMimeBytes(buf: Buffer): string {
+  // PNG: 89 50 4E 47
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return 'image/png';
+  }
+  // JPEG: FF D8 FF
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  // WebP: RIFF....WEBP (bytes 0-3 = RIFF, bytes 8-11 = WEBP)
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return 'image/png';
+}
+
+/** Decode base64 image bytes and write to disk (creating dir). Returns the absolute path. */
 export async function writeImage(dir: string, base: string, base64: string, mimeType: string): Promise<string> {
   await mkdir(dir, { recursive: true });
-  const ext = mimeType.includes('jpeg') ? 'jpg' : 'png';
+  const ext = mimeType.includes('jpeg') ? 'jpg' : mimeType.includes('webp') ? 'webp' : 'png';
   const path = await uniquePath(dir, base, ext);
   await writeFile(path, Buffer.from(base64, 'base64'));
-  return path;
+  return resolve(path);
 }
 
 /** Read an image file into `{ base64, mimeType }` for an inline_data part. */
 export async function readImageAsInline(path: string): Promise<{ base64: string; mimeType: string }> {
   const buf = await readFile(path);
-  const lower = path.toLowerCase();
-  const mimeType = lower.endsWith('.jpg') || lower.endsWith('.jpeg') ? 'image/jpeg' : 'image/png';
+  const mimeType = sniffMimeBytes(buf);
   return { base64: buf.toString('base64'), mimeType };
+}
+
+/**
+ * Accept either a data URI (`data:image/png;base64,XXXX`) or raw base64.
+ * For raw base64, MIME is sniffed from the decoded bytes.
+ */
+export function decodeImageInput(input: string): { base64: string; mimeType: string } {
+  const trimmed = input.trim();
+  if (trimmed.startsWith('data:')) {
+    // data:<mediatype>[;param=value…];base64,<data> — tolerate extra params
+    // (e.g. charset) between the type and the base64 marker. Don't silently
+    // fall through to the raw-base64 path: a malformed data URI would decode to
+    // garbage bytes and ship corrupted data to the API.
+    const marker = trimmed.indexOf(';base64,');
+    if (marker === -1) {
+      throw new Error(`Unsupported data URI (expected ;base64,<data>): ${trimmed.slice(0, 48)}…`);
+    }
+    // MIME runs from after "data:" to the first ';' (a param sep or the base64 marker).
+    const mimeType = trimmed.slice(5, trimmed.indexOf(';', 5)) || 'image/png';
+    return { mimeType, base64: trimmed.slice(marker + ';base64,'.length) };
+  }
+  // Raw base64 — sniff from decoded bytes
+  const buf = Buffer.from(trimmed, 'base64');
+  return { base64: trimmed, mimeType: sniffMimeBytes(buf) };
+}
+
+/** Load images from file paths (via readImageAsInline) and raw base64 strings (via decodeImageInput), paths first. */
+export async function loadImageInputs(
+  paths: string[] = [],
+  base64s: string[] = [],
+): Promise<{ base64: string; mimeType: string }[]> {
+  const fromPaths = await Promise.all(paths.map((p) => readImageAsInline(p)));
+  const fromBase64s = base64s.map((b) => decodeImageInput(b));
+  return [...fromPaths, ...fromBase64s];
+}
+
+/** Caller-supplied filename → safe base name (no extension). */
+export function baseName(name: string): string {
+  // Strip known image extensions
+  const stripped = name.replace(/\.(png|jpe?g|webp)$/i, '');
+  // Replace non-safe chars with hyphens, collapse repeats, trim edges
+  const safe = stripped
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return safe || 'image';
 }
 
 /** per-call → $GEMINI_OUTPUT_DIR → cwd. */

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { slugify, writeImage, readImageAsInline, resolveOutputDir } from '../src/images.js';
+import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, loadImageInputs, baseName } from '../src/images.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-img-')); });
@@ -34,11 +34,126 @@ describe('writeImage', () => {
 });
 
 describe('readImageAsInline', () => {
-  it('reads a file into base64 + mime type', async () => {
+  it('reads a file into base64 + mime type (magic-byte sniff: PNG)', async () => {
     const p = join(dir, 'in.png');
     writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
     const r = await readImageAsInline(p);
     expect(r).toEqual({ base64: PNG_B64, mimeType: 'image/png' });
+  });
+
+  it('sniffs JPEG magic bytes even without a .jpg extension', async () => {
+    // A minimal JPEG starts with FF D8 FF
+    const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+    const p = join(dir, 'noext');
+    writeFileSync(p, jpegBytes);
+    const r = await readImageAsInline(p);
+    expect(r.mimeType).toBe('image/jpeg');
+  });
+
+  it('sniffs WebP magic bytes', async () => {
+    // RIFF....WEBP header
+    const webpBytes = Buffer.from([
+      0x52, 0x49, 0x46, 0x46, // RIFF
+      0x24, 0x00, 0x00, 0x00, // file size
+      0x57, 0x45, 0x42, 0x50, // WEBP
+    ]);
+    const p = join(dir, 'test.webp');
+    writeFileSync(p, webpBytes);
+    const r = await readImageAsInline(p);
+    expect(r.mimeType).toBe('image/webp');
+  });
+});
+
+describe('decodeImageInput', () => {
+  it('parses a data URI into mime + base64', () => {
+    const r = decodeImageInput(`data:image/png;base64,${PNG_B64}`);
+    expect(r.mimeType).toBe('image/png');
+    expect(r.base64).toBe(PNG_B64);
+  });
+
+  it('parses a data URI with image/jpeg mime', () => {
+    const jpegB64 = Buffer.from([0xff, 0xd8, 0xff]).toString('base64');
+    const r = decodeImageInput(`data:image/jpeg;base64,${jpegB64}`);
+    expect(r.mimeType).toBe('image/jpeg');
+    expect(r.base64).toBe(jpegB64);
+  });
+
+  it('sniffs PNG from raw base64 (no data URI prefix)', () => {
+    const r = decodeImageInput(PNG_B64);
+    expect(r.mimeType).toBe('image/png');
+    expect(r.base64).toBe(PNG_B64);
+  });
+
+  it('sniffs JPEG from raw base64', () => {
+    const jpegB64 = Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString('base64');
+    const r = decodeImageInput(jpegB64);
+    expect(r.mimeType).toBe('image/jpeg');
+    expect(r.base64).toBe(jpegB64);
+  });
+
+  it('trims whitespace from input', () => {
+    const r = decodeImageInput(`  data:image/png;base64,${PNG_B64}  `);
+    expect(r.mimeType).toBe('image/png');
+    expect(r.base64).toBe(PNG_B64);
+  });
+
+  it('tolerates extra params before the base64 marker (e.g. charset)', () => {
+    const r = decodeImageInput(`data:image/png;charset=utf-8;base64,${PNG_B64}`);
+    expect(r.mimeType).toBe('image/png');
+    expect(r.base64).toBe(PNG_B64);
+  });
+
+  it('throws on a malformed data URI rather than silently decoding garbage', () => {
+    expect(() => decodeImageInput('data:image/png,not-base64-content')).toThrow(/data URI/i);
+  });
+});
+
+describe('writeImage extension by mime', () => {
+  it('writes .webp for image/webp (not .png)', async () => {
+    const p = await writeImage(dir, 'pic', PNG_B64, 'image/webp');
+    expect(p.endsWith('.webp')).toBe(true);
+  });
+  it('writes .jpg for image/jpeg', async () => {
+    const p = await writeImage(dir, 'pic', PNG_B64, 'image/jpeg');
+    expect(p.endsWith('.jpg')).toBe(true);
+  });
+});
+
+describe('loadImageInputs', () => {
+  it('loads paths via readImageAsInline and base64 via decodeImageInput, paths first', async () => {
+    const pngPath = join(dir, 'in.png');
+    writeFileSync(pngPath, Buffer.from(PNG_B64, 'base64'));
+    const jpegB64 = Buffer.from([0xff, 0xd8, 0xff]).toString('base64');
+    const result = await loadImageInputs([pngPath], [jpegB64]);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ base64: PNG_B64, mimeType: 'image/png' });
+    expect(result[1].mimeType).toBe('image/jpeg');
+  });
+
+  it('handles empty arrays gracefully', async () => {
+    const result = await loadImageInputs([], []);
+    expect(result).toHaveLength(0);
+  });
+});
+
+describe('baseName', () => {
+  it('strips common image extensions', () => {
+    expect(baseName('my-photo.png')).toBe('my-photo');
+    expect(baseName('image.jpg')).toBe('image');
+    expect(baseName('foo.jpeg')).toBe('foo');
+    expect(baseName('bar.webp')).toBe('bar');
+  });
+
+  it('replaces invalid chars with hyphens, collapses repeats, trims edges', () => {
+    expect(baseName('my image!!file')).toBe('my-image-file');
+    expect(baseName('--bad--')).toBe('bad');
+    expect(baseName('hello world')).toBe('hello-world');
+  });
+
+  it('returns image for empty or all-invalid input', () => {
+    expect(baseName('')).toBe('image');
+    expect(baseName('!!!')).toBe('image');
+    expect(baseName('.png')).toBe('image');
   });
 });
 

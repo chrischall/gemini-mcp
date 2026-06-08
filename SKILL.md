@@ -82,9 +82,9 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 ### Image Generation
 | Tool | Description |
 |------|-------------|
-| `gemini_generate_image(prompt, count?, model?, aspect_ratio?, image_size?, output_dir?, inline?)` | Generate image(s) from a text prompt |
-| `gemini_edit_image(prompt, images[], model?, aspect_ratio?, image_size?, output_dir?, inline?)` | Edit or compose one or more input images with a text instruction |
-| `gemini_generate_set(master_prompt, scenes? \| count?, reference_mode?, model?, ...)` | Generate a master image plus N consistent images referencing it |
+| `gemini_generate_image(prompt, count?, images?, images_base64?, seed?, filename?, model?, aspect_ratio?, image_size?, output_dir?, inline?)` | Generate image(s) from a text prompt (optionally image-conditioned via `images`/`images_base64`) |
+| `gemini_edit_image(prompt, images?, images_base64?, seed?, filename?, model?, aspect_ratio?, image_size?, output_dir?, inline?)` | Edit or compose input image(s) — by **path** (`images`) or **value** (`images_base64`: data URI or raw base64) — with a text instruction. Requires ≥1 input |
+| `gemini_generate_set(master_prompt, scenes? \| count?, reference_mode?, master_images?, master_images_base64?, seed?, basename?, model?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it |
 
 ## Workflows
 
@@ -124,12 +124,24 @@ gemini_generate_set(
 → returns master + 5 variations
 ```
 
+**Use a reference photo by value (no file needed):**
+```
+gemini_edit_image(
+  prompt: "place this house on a vintage travel-poster background",
+  images_base64: ["data:image/jpeg;base64,/9j/4AAQ..."]   // or raw base64
+)
+→ returns path to the edited image
+```
+Pasted/attached images aren't written to disk by the host, so pass their bytes via `images_base64` (a `data:` URI or raw base64) instead of a path.
+
 ## Notes
 
-- `output_dir` per-call overrides `$GEMINI_OUTPUT_DIR` which overrides the current working directory
-- `inline: true` returns image bytes directly in the response instead of writing to disk
-- `count` and `scenes` are mutually exclusive in `gemini_generate_set`
-- `reference_mode: "chain"` makes each scene reference the previous image (vs. all referencing master)
-- Aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `2:3`, `3:2`, and others
-- Image sizes: `1K`, `2K`, `4K`
-- Server logs to stderr only — stdout is reserved for JSON-RPC
+- **Input images** accept either file **paths** (`images` / `master_images`) or **base64/data-URI values** (`images_base64` / `master_images_base64`).
+- **`seed`** makes a result reproducible; it's echoed in the result metadata (a random one is chosen + echoed when omitted). `count>1` uses `seed, seed+1, …` so the images differ. Determinism isn't fully guaranteed by the model.
+- **`filename`/`basename`** set the output name (extension stripped); names never overwrite (a `-2`, `-3` suffix is added). The result echoes the absolute path(s), `model`, `seed`, and aspect/size.
+- **No edit-strength control.** Gemini exposes no denoise/strength knob, and Nano Banana over-preserves the input — big structural edits ("move/remove/shrink", add a mat border) are often ignored. Workarounds: reroll with a different `seed`, use forceful wording, or do layout changes (padding/borders) with an external tool.
+- `output_dir` per-call overrides `$GEMINI_OUTPUT_DIR` overrides cwd. `inline: true` returns bytes (with a metadata text block) instead of writing.
+- `count` and `scenes` are mutually exclusive in `gemini_generate_set`; `reference_mode: "chain"` references the previous image instead of the master.
+- Aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `2:3`, `3:2`, … · Image sizes: `1K`, `2K`, `4K` (Pro). `4K` is the max native output — true 18×24 in @ 300 DPI (5400×7200) needs an external upscale step.
+- The model can mis-render text/Roman numerals (e.g. years) — verify any text in the output; it's a model limitation, not a tool setting.
+- Server logs to stderr only — stdout is reserved for JSON-RPC.
