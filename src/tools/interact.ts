@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
-import { slugify, baseName, loadImageInputs } from '../images.js';
+import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, ASPECT_RATIOS, IMAGE_SIZES, type NamedImage } from './shared.js';
 
 export function registerInteractTools(server: McpServer): void {
@@ -64,10 +64,14 @@ export function registerInteractTools(server: McpServer): void {
           .url()
           .optional()
           .describe('Public YouTube URL as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
+        from_clipboard: z
+          .boolean()
+          .optional()
+          .describe('Use the image currently on the macOS system clipboard as an input (downscaled to JPEG)'),
       },
     },
     async (args) => {
-      const inputs = await loadImageInputs(args.images, args.images_base64);
+      const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
       const r = await client.interact({
         input: args.input,
         images: inputs.length ? inputs : undefined,

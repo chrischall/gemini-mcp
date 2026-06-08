@@ -6,6 +6,11 @@ import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerGenerateTools } from '../../src/tools/generate.js';
 import { client } from '../../src/client.js';
 
+// Mock clipboard so from_clipboard tests don't shell out
+vi.mock('../../src/clipboard.js', () => ({
+  readClipboardImage: vi.fn().mockResolvedValue({ base64: 'Y2xpcGJvYXJk', mimeType: 'image/jpeg' }),
+}));
+
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-gen-')); });
@@ -236,6 +241,64 @@ describe('gemini_edit_image', () => {
     });
     const data = parseToolResult<{ images: string[] }>(res);
     expect(basename(data.images[0])).toBe('edited-output.png');
+    await h.close();
+  });
+});
+
+describe('gemini_edit_image from_clipboard guard', () => {
+  it('accepts from_clipboard:true with no images/images_base64 — passes the guard', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', from_clipboard: true, output_dir: dir });
+    expect(res.isError).toBeFalsy();
+    await h.close();
+  });
+
+  it('from_clipboard passes the clipboard image to generate', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_edit_image', { prompt: 'make it blue', from_clipboard: true, output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({
+      images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/jpeg' })]),
+    }));
+    await h.close();
+  });
+});
+
+describe('gemini_generate_image input-dir resolution via GEMINI_INPUT_DIR', () => {
+  afterEach(() => { delete process.env.GEMINI_INPUT_DIR; });
+
+  it('resolves a bare filename against GEMINI_INPUT_DIR and passes the image to generate', async () => {
+    const imgPath = join(dir, 'ref.png');
+    writeFileSync(imgPath, Buffer.from(PNG, 'base64'));
+    process.env.GEMINI_INPUT_DIR = dir;
+
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', { prompt: 'style transfer', images: ['ref.png'], output_dir: dir });
+    expect(res.isError).toBeFalsy();
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({
+      images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
+    }));
+    await h.close();
+  });
+});
+
+describe('gemini_edit_image input-dir resolution via GEMINI_INPUT_DIR', () => {
+  afterEach(() => { delete process.env.GEMINI_INPUT_DIR; });
+
+  it('resolves a bare filename against GEMINI_INPUT_DIR for edit', async () => {
+    const imgPath = join(dir, 'edit-src.png');
+    writeFileSync(imgPath, Buffer.from(PNG, 'base64'));
+    process.env.GEMINI_INPUT_DIR = dir;
+
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', images: ['edit-src.png'], output_dir: dir });
+    expect(res.isError).toBeFalsy();
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({
+      images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
+    }));
     await h.close();
   });
 });

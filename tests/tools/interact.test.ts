@@ -6,6 +6,10 @@ import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerInteractTools } from '../../src/tools/interact.js';
 import { client } from '../../src/client.js';
 
+vi.mock('../../src/clipboard.js', () => ({
+  readClipboardImage: vi.fn().mockResolvedValue({ base64: 'Y2xpcGJvYXJk', mimeType: 'image/jpeg' }),
+}));
+
 // A minimal 1×1 PNG base64 for test images
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AJQAB/9k=';
@@ -213,6 +217,22 @@ describe('gemini_interact', () => {
     const h = await createTestHarness(registerInteractTools);
     await h.callTool('gemini_interact', { input: 'describe', video_url: 'https://www.youtube.com/watch?v=xyz', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: 'https://www.youtube.com/watch?v=xyz' }));
+    await h.close();
+  });
+});
+
+describe('gemini_interact from_clipboard', () => {
+  it('passes clipboard image to client.interact when from_clipboard:true', async () => {
+    const spy = vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'clip-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'edit this', from_clipboard: true, output_dir: dir });
+    expect(res.isError).toBeFalsy();
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({
+      images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/jpeg' })]),
+    }));
     await h.close();
   });
 });
