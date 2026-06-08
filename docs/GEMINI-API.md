@@ -97,10 +97,28 @@ decodable JPEG written to disk).
   `{text}` part alongside the `inlineData` part (common on Pro for captions/
   explanations; Flash often returns image only — verified: flash returned image,
   no text). Collect text parts and surface them; still require ≥1 image.
-- Other documented-but-unused: Google Search grounding (`tools:[{google_search}]`),
-  video-to-image (3.1 Flash; YouTube/Files API), SynthID watermark on ALL outputs.
+- SynthID watermark on ALL outputs.
 - Composition cap: up to ~14 reference images (model-dependent: Pro 6 objects +
   5 characters; 3.1 Flash 10 objects + 4 characters).
+
+### Google Search grounding (verified 2026-06-08)
+Top-level `tools` array (sibling of `contents`/`generationConfig`):
+```jsonc
+{ "contents":[...], "generationConfig":{"responseModalities":["IMAGE"]},
+  "tools":[{ "google_search": {} }] }   // 200 + image; grounds on live web data
+```
+Response adds `candidates[0].groundingMetadata`:
+`{ webSearchQueries: string[], groundingChunks: [{ web: { uri, title } }], searchEntryPoint }`.
+Surface `webSearchQueries` (queries) + `groundingChunks[].web` (sources: `{uri,title}`).
+
+### Video-to-image (verified 2026-06-08)
+A `contents[].parts` entry referencing a public YouTube URL (Flash models; verified
+on `gemini-3.1-flash-image`):
+```jsonc
+{ "parts":[ {"text":"<prompt>"},
+            {"file_data":{"file_uri":"https://www.youtube.com/watch?v=…","mime_type":"video/mp4"}} ] }
+```
+(Files API uploads for non-YouTube video are a separate upload flow — out of scope.)
 
 ## Interactions API — BETA (verified 2026-06-08)
 
@@ -139,5 +157,8 @@ explicit, separate tool.
   Server is NOT auto-stateful — the caller threads the id.
 - **Errors:** `{ "error": { "message": "...", "code": "invalid_request" } }`
   (string `code`, unlike generateContent's numeric status).
+- **Grounding** (verified): top-level `"tools":[{"type":"google_search"}]` — note the
+  `type` field (vs generateContent's `{"google_search":{}}`). 200 + image.
+- **Video input** (verified): an `input` entry `{"type":"video","uri":"https://www.youtube.com/watch?v=…","mime_type":"video/mp4"}` (alongside the text part). 200 + image on `gemini-3.1-flash-image`.
 - MCP mapping: a `gemini_interact` tool returns the `id` so a follow-up call can
   pass `previous_interaction_id` — stateless MCP, stateful conversation.
