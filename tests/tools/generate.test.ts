@@ -91,6 +91,24 @@ describe('gemini_generate_image filename param', () => {
   });
 });
 
+describe('gemini_generate_image thinking_level passthrough', () => {
+  it('passes thinking_level to client.generate as thinkingLevel', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_generate_image', { prompt: 'leaf', thinking_level: 'minimal', output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ thinkingLevel: 'minimal' }));
+    await h.close();
+  });
+
+  it('omits thinkingLevel from generate call when thinking_level not provided', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_generate_image', { prompt: 'leaf', output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.not.objectContaining({ thinkingLevel: expect.anything() }));
+    await h.close();
+  });
+});
+
 describe('gemini_edit_image images_base64 + optional images', () => {
   it('accepts images_base64 without images', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);

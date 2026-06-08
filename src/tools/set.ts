@@ -31,7 +31,7 @@ export function registerSetTools(server: McpServer): void {
       }
       const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
-      const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size };
+      const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level };
       const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
 
       // 1. master (optionally seeded from reference images)

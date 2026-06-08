@@ -21,6 +21,7 @@ export const sharedImageSchema = {
   output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),
   inline: z.boolean().optional().describe('Return base64 images inline instead of writing to disk'),
   seed: z.number().int().optional().describe('Seed for reproducible generation; random if omitted'),
+  thinking_level: z.enum(['minimal', 'high']).optional().describe('Reasoning depth (Gemini 3 models); higher can help complex/structural edits'),
 };
 
 /** A generated image plus the base filename (no extension) to write it under. */

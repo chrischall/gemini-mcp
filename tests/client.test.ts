@@ -115,4 +115,31 @@ describe('generate', () => {
     const sent = JSON.parse(cap.calls[0].init.body as string);
     expect(sent.generationConfig.seed).toBeUndefined();
   });
+
+  it('includes generationConfig.thinkingConfig.thinkingLevel when thinkingLevel is provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'leaf', thinkingLevel: 'minimal' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'minimal' });
+  });
+
+  it('accepts thinkingLevel "high"', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'leaf', thinkingLevel: 'high' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'high' });
+  });
+
+  it('omits thinkingConfig from generationConfig when thinkingLevel not provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'leaf' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.generationConfig.thinkingConfig).toBeUndefined();
+  });
 });

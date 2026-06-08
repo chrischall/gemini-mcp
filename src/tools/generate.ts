@@ -38,6 +38,7 @@ export function registerGenerateTools(server: McpServer): void {
           aspectRatio: args.aspect_ratio,
           imageSize: args.image_size,
           seed: seed + i,
+          thinkingLevel: args.thinking_level,
         });
         named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
       }
@@ -77,6 +78,7 @@ export function registerGenerateTools(server: McpServer): void {
         aspectRatio: args.aspect_ratio,
         imageSize: args.image_size,
         seed,
+        thinkingLevel: args.thinking_level,
       });
       return emit([{ image: img, base: slug }], args, buildMeta(model, seed, args));
     },
