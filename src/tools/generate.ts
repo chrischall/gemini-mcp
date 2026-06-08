@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
-import { client } from '../client.js';
+import { client, type GroundingResult } from '../client.js';
 import { slugify, baseName, loadImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, type NamedImage } from './shared.js';
 
@@ -30,7 +30,9 @@ export function registerGenerateTools(server: McpServer): void {
       const refInputs = await loadImageInputs(args.images, args.images_base64);
       const named: NamedImage[] = [];
       let capturedText: string | undefined;
-      let capturedGrounding: import('../client.js').GroundingResult | undefined;
+      // For count>1, surface the FIRST call's grounding (each call grounds
+      // independently; one representative set of sources beats concatenating N).
+      let capturedGrounding: GroundingResult | undefined;
       for (let i = 0; i < count; i++) {
         // Distinct seed per image (seed+0 for the single-image case == echoed seed)
         // so count>1 yields N *different* images, not N duplicates.

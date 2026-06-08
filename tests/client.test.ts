@@ -249,6 +249,26 @@ describe('generate', () => {
     const out = await c.generate({ prompt: 'leaf' });
     expect(out.grounding).toBeUndefined();
   });
+
+  it('skips groundingChunks entries that have no .web (defensive parse)', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fixture = {
+      candidates: [{
+        content: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'abc123' } }] },
+        groundingMetadata: {
+          webSearchQueries: ['q'],
+          groundingChunks: [
+            { web: { uri: 'https://a.example', title: 'A' } },
+            { retrievedContext: { text: 'no web key here' } }, // must be dropped
+            {},                                                  // must be dropped
+          ],
+        },
+      }],
+    };
+    const c = new GeminiClient({ fetchImpl: capturingFetch(fixture).fn });
+    const out = await c.generate({ prompt: 'leaf' });
+    expect(out.grounding!.sources).toEqual([{ uri: 'https://a.example', title: 'A' }]);
+  });
 });
 
 // ---------------------------------------------------------------------------

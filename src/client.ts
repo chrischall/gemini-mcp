@@ -12,10 +12,16 @@ const SERVICE = 'Gemini';
 
 export interface GeneratedImage { base64: string; mimeType: string; }
 
+/** A single grounding source. Both fields optional — defensive against a beta
+ * API omitting one (the doc shows `{uri, title}` always present). */
+export interface GroundingSource { uri?: string; title?: string }
 export interface GroundingResult {
   queries?: string[];
-  sources?: { uri?: string; title?: string }[];
+  sources?: GroundingSource[];
 }
+/** Raw `candidates[].groundingMetadata` shape we read from. */
+interface GroundingChunk { web?: GroundingSource }
+interface GroundingMeta { webSearchQueries?: string[]; groundingChunks?: GroundingChunk[] }
 
 export interface GenerateResult { images: GeneratedImage[]; text?: string; grounding?: GroundingResult; }
 
@@ -113,8 +119,6 @@ export class GeminiClient {
     if (opts.thinkingLevel !== undefined) generationConfig.thinkingConfig = { thinkingLevel: opts.thinkingLevel };
     const requestBody: Record<string, unknown> = { contents: [{ parts }], generationConfig };
     if (opts.googleSearch) requestBody.tools = [{ google_search: {} }];
-    type GroundingChunk = { web?: { uri?: string; title?: string } };
-    type GroundingMeta = { webSearchQueries?: string[]; groundingChunks?: GroundingChunk[] };
     const data = await this.call<{ candidates?: Array<{ content?: { parts?: Array<Record<string, unknown>> }; groundingMetadata?: GroundingMeta }> }>(
       'POST',
       `/models/${model}:generateContent`,
@@ -145,7 +149,7 @@ export class GeminiClient {
     let grounding: GroundingResult | undefined;
     if (groundingMeta) {
       const queries = (groundingMeta.webSearchQueries ?? []).filter(Boolean);
-      const sources = (groundingMeta.groundingChunks ?? []).map((c) => c.web).filter((w): w is { uri?: string; title?: string } => !!w);
+      const sources = (groundingMeta.groundingChunks ?? []).map((c) => c.web).filter((w): w is GroundingSource => !!w);
       if (queries.length > 0 || sources.length > 0) {
         grounding = {};
         if (queries.length > 0) grounding.queries = queries;
