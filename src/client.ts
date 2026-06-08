@@ -159,7 +159,7 @@ export class GeminiClient {
         const parsed = JSON.parse(text) as { error?: { message?: string } };
         if (parsed.error?.message) message = parsed.error.message;
       } catch { /* use raw text */ }
-      throw new McpToolError(`Gemini Interactions API: ${truncateErrorMessage(message)}`);
+      throw new McpToolError(`Gemini Interactions API ${res.status}: ${truncateErrorMessage(message)}`);
     }
 
     type StepPart = { type: string; mime_type?: string; data?: string; text?: string };

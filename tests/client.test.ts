@@ -369,8 +369,8 @@ describe('interact', () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const errorBody = { error: { message: 'Invalid request', code: 'invalid_request' } };
     const c = new GeminiClient({ fetchImpl: mockFetch(errorBody, false, 400) });
-    // assert the EXTRACTED error.message lands in the thrown error, not just the prefix
-    await expect(c.interact({ input: 'x' })).rejects.toThrow(/Gemini Interactions API: Invalid request/);
+    // assert the status code AND the extracted error.message land in the thrown error
+    await expect(c.interact({ input: 'x' })).rejects.toThrow(/Gemini Interactions API 400: Invalid request/);
   });
 
   it('throws when no API key is set (deferred config)', async () => {
