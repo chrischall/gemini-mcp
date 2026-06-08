@@ -129,7 +129,7 @@ gemini_generate_set(
 → returns master + 5 variations
 ```
 
-**Use a reference photo by value (no file needed):**
+**Use a reference photo by value (when you have the bytes):**
 ```
 gemini_edit_image(
   prompt: "place this house on a vintage travel-poster background",
@@ -137,6 +137,8 @@ gemini_edit_image(
 )
 → returns path to the edited image
 ```
+`images_base64` is for bytes you actually have — a file you `Read`/encode, a URL
+you fetch, or a `data:` URI the user pastes as **text**.
 
 **Iterate on ONE image conversationally (multi-turn):**
 ```
@@ -147,7 +149,15 @@ r2 = gemini_interact(input: "add a sleeping cat on the chair",
    → refined image that preserves r1; returns a NEW interaction_id
 ```
 Prefer this over re-running `gemini_edit_image` when you're making a *series* of incremental edits — the model keeps the prior result in context.
-Pasted/attached images aren't written to disk by the host, so pass their bytes via `images_base64` (a `data:` URI or raw base64) instead of a path.
+**⚠️ Chat-pasted/attached images can't be fed to these tools directly.** A pasted
+image reaches the assistant as a *vision* block — the assistant can SEE it but
+never receives the original bytes, and the host doesn't write it to disk. So
+neither `images` (no file exists) nor `images_base64` (the bytes can't be
+reconstructed from a downscaled vision rendering) is obtainable from a paste.
+To use a real reference photo, the **user** must make the bytes available: save
+the file and give its **path** (→ `images`), drop it into the project dir, paste
+it as a **`data:` URI in text**, or host it at a **URL** (fetch → base64 →
+`images_base64`). This is a host/Cowork limitation, not an MCP one.
 
 ## Notes
 
