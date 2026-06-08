@@ -12,7 +12,12 @@ const SERVICE = 'Gemini';
 
 export interface GeneratedImage { base64: string; mimeType: string; }
 
-export interface GenerateResult { images: GeneratedImage[]; text?: string; }
+export interface GroundingResult {
+  queries?: string[];
+  sources?: { uri?: string; title?: string }[];
+}
+
+export interface GenerateResult { images: GeneratedImage[]; text?: string; grounding?: GroundingResult; }
 
 export interface InteractOpts {
   input: string;
@@ -22,6 +27,8 @@ export interface InteractOpts {
   imageSize?: string;
   thinkingLevel?: 'minimal' | 'high';
   previousInteractionId?: string;
+  googleSearch?: boolean;
+  videoUrl?: string;
 }
 
 export interface InteractResult { id: string; images: GeneratedImage[]; text?: string; }
@@ -34,6 +41,8 @@ export interface GenerateOpts {
   imageSize?: string;
   seed?: number;
   thinkingLevel?: 'minimal' | 'high';
+  googleSearch?: boolean;
+  videoUrl?: string;
 }
 
 export class GeminiClient {
@@ -90,6 +99,9 @@ export class GeminiClient {
     for (const img of opts.images ?? []) {
       parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
     }
+    if (opts.videoUrl) {
+      parts.push({ file_data: { file_uri: opts.videoUrl, mime_type: 'video/mp4' } });
+    }
     const generationConfig: Record<string, unknown> = { responseModalities: ['TEXT', 'IMAGE'] };
     if (opts.aspectRatio || opts.imageSize) {
       const imageConfig: Record<string, string> = {};
@@ -99,13 +111,18 @@ export class GeminiClient {
     }
     if (opts.seed !== undefined) generationConfig.seed = opts.seed;
     if (opts.thinkingLevel !== undefined) generationConfig.thinkingConfig = { thinkingLevel: opts.thinkingLevel };
-    const data = await this.call<{ candidates?: Array<{ content?: { parts?: Array<Record<string, unknown>> } }> }>(
+    const requestBody: Record<string, unknown> = { contents: [{ parts }], generationConfig };
+    if (opts.googleSearch) requestBody.tools = [{ google_search: {} }];
+    type GroundingChunk = { web?: { uri?: string; title?: string } };
+    type GroundingMeta = { webSearchQueries?: string[]; groundingChunks?: GroundingChunk[] };
+    const data = await this.call<{ candidates?: Array<{ content?: { parts?: Array<Record<string, unknown>> }; groundingMetadata?: GroundingMeta }> }>(
       'POST',
       `/models/${model}:generateContent`,
-      { contents: [{ parts }], generationConfig },
+      requestBody,
     );
     const images: GeneratedImage[] = [];
     const textParts: string[] = [];
+    let groundingMeta: GroundingMeta | undefined;
     for (const cand of data.candidates ?? []) {
       for (const part of cand.content?.parts ?? []) {
         const inline = (part.inline_data ?? part.inlineData) as { data?: string; mime_type?: string; mimeType?: string } | undefined;
@@ -115,6 +132,7 @@ export class GeminiClient {
           textParts.push(part.text);
         }
       }
+      if (cand.groundingMetadata) groundingMeta = cand.groundingMetadata;
     }
     if (images.length === 0) {
       throw new McpToolError(`${SERVICE} returned no image`, {
@@ -122,7 +140,20 @@ export class GeminiClient {
       });
     }
     const text = textParts.join('\n') || undefined;
-    return { images, text };
+
+    // Parse grounding metadata if present
+    let grounding: GroundingResult | undefined;
+    if (groundingMeta) {
+      const queries = (groundingMeta.webSearchQueries ?? []).filter(Boolean);
+      const sources = (groundingMeta.groundingChunks ?? []).map((c) => c.web).filter((w): w is { uri?: string; title?: string } => !!w);
+      if (queries.length > 0 || sources.length > 0) {
+        grounding = {};
+        if (queries.length > 0) grounding.queries = queries;
+        if (sources.length > 0) grounding.sources = sources;
+      }
+    }
+
+    return { images, text, grounding };
   }
 
   async interact(opts: InteractOpts): Promise<InteractResult> {
@@ -133,6 +164,9 @@ export class GeminiClient {
     for (const img of opts.images ?? []) {
       inputParts.push({ type: 'image', mime_type: img.mimeType, data: img.base64 });
     }
+    if (opts.videoUrl) {
+      inputParts.push({ type: 'video', uri: opts.videoUrl, mime_type: 'video/mp4' });
+    }
 
     const responseFormat: Record<string, unknown> = { type: 'image', mime_type: 'image/jpeg' };
     if (opts.aspectRatio) responseFormat.aspect_ratio = opts.aspectRatio;
@@ -141,6 +175,7 @@ export class GeminiClient {
     const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
     if (opts.thinkingLevel !== undefined) body.generation_config = { thinking_level: opts.thinkingLevel };
     if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
+    if (opts.googleSearch) body.tools = [{ type: 'google_search' }];
 
     const res = await this.fetchImpl(INTERACTIONS_URL, {
       method: 'POST',

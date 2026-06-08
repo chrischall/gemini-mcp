@@ -174,6 +174,81 @@ describe('generate', () => {
     const sent = JSON.parse(cap.calls[0].init.body as string);
     expect(sent.generationConfig.thinkingConfig).toBeUndefined();
   });
+
+  it('includes top-level tools:[{google_search:{}}] when googleSearch is true', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'leaf', googleSearch: true });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.tools).toEqual([{ google_search: {} }]);
+  });
+
+  it('omits tools from body when googleSearch is not set', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'leaf' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.tools).toBeUndefined();
+  });
+
+  it('includes file_data video part when videoUrl is set', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'describe this video', videoUrl: 'https://www.youtube.com/watch?v=abc123' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    const parts: unknown[] = sent.contents[0].parts;
+    expect(parts[0]).toEqual({ text: 'describe this video' });
+    expect(parts).toContainEqual({ file_data: { file_uri: 'https://www.youtube.com/watch?v=abc123', mime_type: 'video/mp4' } });
+  });
+
+  it('parses grounding from groundingMetadata in response', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fixtureWithGrounding = {
+      candidates: [{
+        content: {
+          parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'abc123' } }],
+        },
+        groundingMetadata: {
+          webSearchQueries: ['current weather in SF'],
+          groundingChunks: [
+            { web: { uri: 'https://weather.com/sf', title: 'SF Weather' } },
+            { web: { uri: 'https://example.com', title: 'Example' } },
+          ],
+        },
+      }],
+    };
+    const c = new GeminiClient({ fetchImpl: capturingFetch(fixtureWithGrounding).fn });
+    const out = await c.generate({ prompt: 'weather image', googleSearch: true });
+    expect(out.grounding).toBeDefined();
+    expect(out.grounding!.queries).toEqual(['current weather in SF']);
+    expect(out.grounding!.sources).toEqual([
+      { uri: 'https://weather.com/sf', title: 'SF Weather' },
+      { uri: 'https://example.com', title: 'Example' },
+    ]);
+  });
+
+  it('omits grounding from result when groundingMetadata is absent', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const c = new GeminiClient({ fetchImpl: capturingFetch(genFixture).fn });
+    const out = await c.generate({ prompt: 'leaf' });
+    expect(out.grounding).toBeUndefined();
+  });
+
+  it('omits grounding when webSearchQueries is empty and no groundingChunks', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fixtureEmptyGrounding = {
+      candidates: [{
+        content: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'abc123' } }] },
+        groundingMetadata: { webSearchQueries: [], groundingChunks: [] },
+      }],
+    };
+    const c = new GeminiClient({ fetchImpl: capturingFetch(fixtureEmptyGrounding).fn });
+    const out = await c.generate({ prompt: 'leaf' });
+    expect(out.grounding).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -377,5 +452,33 @@ describe('interact', () => {
     delete process.env.GEMINI_API_KEY;
     const c = new GeminiClient();
     await expect(c.interact({ input: 'x' })).rejects.toThrow(/GEMINI_API_KEY/);
+  });
+
+  it('includes top-level tools:[{type:"google_search"}] when googleSearch is true', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a circle', googleSearch: true });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.tools).toEqual([{ type: 'google_search' }]);
+  });
+
+  it('omits tools from interact body when googleSearch is not set', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a circle' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.tools).toBeUndefined();
+  });
+
+  it('includes video input entry when videoUrl is set', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'describe this video', videoUrl: 'https://www.youtube.com/watch?v=xyz' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.input[0]).toEqual({ type: 'text', text: 'describe this video' });
+    expect(sent.input).toContainEqual({ type: 'video', uri: 'https://www.youtube.com/watch?v=xyz', mime_type: 'video/mp4' });
   });
 });
