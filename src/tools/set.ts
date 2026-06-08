@@ -44,6 +44,8 @@ export function registerSetTools(server: McpServer): void {
       });
       const named: NamedImage[] = [{ image: master, base: `${slug}-master` }];
 
+      // Only the master's text is surfaced (below). Per-scene text is intentionally
+      // dropped — a set returns one combined result and merging N captions is noise.
       // 2. scene prompts (explicit, or N repeats of master_prompt for variations)
       const scenePrompts = args.scenes ?? Array.from({ length: args.count ?? 0 }, () => args.master_prompt);
       const mode = args.reference_mode ?? 'master';

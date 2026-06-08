@@ -339,20 +339,22 @@ describe('interact', () => {
     expect(result.text).toBe('Here you go.');
   });
 
-  it('collects text from steps[].summary as well as content', async () => {
+  it('surfaces ONLY model_output text — thought-step reasoning is dropped', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const fixture = {
       id: 'sum-id',
       steps: [
-        { type: 'thought', summary: [{ type: 'text', text: 'I thought about it.' }] },
-        { type: 'model_output', content: [{ type: 'image', mime_type: 'image/jpeg', data: 'img' }] },
+        // internal reasoning — must NOT leak to the caller
+        { type: 'thought', summary: [{ type: 'text', text: 'internal reasoning' }, { type: 'image', mime_type: 'image/jpeg', data: 'draft' }] },
+        { type: 'model_output', content: [{ type: 'text', text: 'A teal circle.' }, { type: 'image', mime_type: 'image/jpeg', data: 'img' }] },
       ],
     };
     const cap = capturingFetch(fixture);
     const c = new GeminiClient({ fetchImpl: cap.fn });
     const result = await c.interact({ input: 'circle' });
-    expect(result.images).toHaveLength(1);
-    expect(result.text).toBe('I thought about it.');
+    expect(result.images).toHaveLength(1);       // the thought "draft" image is excluded
+    expect(result.images[0].base64).toBe('img');
+    expect(result.text).toBe('A teal circle.');  // not "internal reasoning"
   });
 
   it('throws McpToolError with "no image" when steps contain no image part', async () => {
@@ -367,7 +369,8 @@ describe('interact', () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const errorBody = { error: { message: 'Invalid request', code: 'invalid_request' } };
     const c = new GeminiClient({ fetchImpl: mockFetch(errorBody, false, 400) });
-    await expect(c.interact({ input: 'x' })).rejects.toThrow(/Gemini Interactions API/);
+    // assert the EXTRACTED error.message lands in the thrown error, not just the prefix
+    await expect(c.interact({ input: 'x' })).rejects.toThrow(/Gemini Interactions API: Invalid request/);
   });
 
   it('throws when no API key is set (deferred config)', async () => {

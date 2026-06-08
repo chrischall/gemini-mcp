@@ -166,9 +166,15 @@ export class GeminiClient {
     type Step = { type: string; content?: StepPart[]; summary?: StepPart[] };
     const data = await res.json() as { id: string; steps?: Step[] };
 
+    // Only surface the `model_output` step — that's the caller-facing result.
+    // `thought` steps hold internal reasoning (and, with includeThoughts, draft
+    // "thinking" images); collecting those would leak reasoning into `text` and
+    // pollute the returned images. The verified contract puts the output image
+    // in `model_output`.
     const images: GeneratedImage[] = [];
     const textParts: string[] = [];
     for (const step of data.steps ?? []) {
+      if (step.type !== 'model_output') continue;
       for (const parts of [step.content ?? [], step.summary ?? []]) {
         for (const part of parts) {
           if (part.type === 'image' && part.data) {
@@ -181,7 +187,9 @@ export class GeminiClient {
     }
 
     if (images.length === 0) {
-      throw new McpToolError('Gemini returned no image');
+      throw new McpToolError('Gemini returned no image', {
+        hint: 'The request may have been blocked by safety filters — try rephrasing the prompt.',
+      });
     }
 
     const resultText = textParts.join('\n') || undefined;
