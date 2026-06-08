@@ -85,3 +85,59 @@ generateContent — so `filterImageModels` excludes anything matching `/imagen/i
 
 Both text→image and image+text→image (edit) were verified end-to-end (200, real
 decodable JPEG written to disk).
+
+## Additional generateContent knobs (verified 2026-06-08)
+
+- **`imageConfig.imageSize: "512"`** (0.5K) — accepted on `gemini-3.1-flash-image`
+  (Flash only; not Pro). 200 + image. Add to the size enum.
+- **`generationConfig.thinkingConfig.thinkingLevel`** = `"minimal"` | `"high"`
+  (plus `includeThoughts: bool`) — accepted on Flash (200 + image). Pro's headline
+  "Thinking" feature uses the same field. Real quality/cost lever.
+- **`responseModalities: ["TEXT","IMAGE"]`** — accepted; the model MAY return a
+  `{text}` part alongside the `inlineData` part (common on Pro for captions/
+  explanations; Flash often returns image only — verified: flash returned image,
+  no text). Collect text parts and surface them; still require ≥1 image.
+- Other documented-but-unused: Google Search grounding (`tools:[{google_search}]`),
+  video-to-image (3.1 Flash; YouTube/Files API), SynthID watermark on ALL outputs.
+- Composition cap: up to ~14 reference images (model-dependent: Pro 6 objects +
+  5 characters; 3.1 Flash 10 objects + 4 characters).
+
+## Interactions API — BETA (verified 2026-06-08)
+
+The forward-looking multi-turn API. **Beta + "breaking changes (May 2026)" flagged;
+Google says use `generateContent` for stable production.** We expose it as an
+explicit, separate tool.
+
+- **Endpoint:** `POST https://generativelanguage.googleapis.com/v1beta/interactions`
+- **Headers:** `x-goog-api-key`, `content-type: application/json`, and
+  **`Api-Revision: 2026-05-20`** (required).
+- **Request** (snake_case — NOT the generateContent shape):
+  ```jsonc
+  {
+    "model": "gemini-3.1-flash-image",
+    "input": [
+      { "type": "text", "text": "<prompt>" },
+      { "type": "image", "mime_type": "image/png", "data": "<BASE64>" } // 0..N inputs
+    ],
+    "response_format": {
+      "type": "image",
+      "mime_type": "image/jpeg",   // ⚠️ ONLY image/jpeg accepted (png 400s)
+      "aspect_ratio": "1:1",
+      "image_size": "1K"
+    },
+    "generation_config": { "thinking_level": "minimal" },   // optional
+    "previous_interaction_id": "<prior .id>"                 // optional — multi-turn
+  }
+  ```
+- **Response:** `{ id, status, model, object, created, updated, usage, steps: [...] }`.
+  `steps[]` entries are `{type:"thought"|"model_output", content?:[parts], summary?:[parts]}`.
+  Image parts are `{ type:"image", mime_type:"image/jpeg", data:"<BASE64>" }`; text
+  parts are `{type:"text", text}`. The **output image** is the image part in the
+  `model_output` step. Collect image+text parts across `content`/`summary`.
+- **Multi-turn:** pass the prior response's `id` as `previous_interaction_id`;
+  returns a NEW `id` + the edited image (verified: turn 2 edited turn 1's leaf).
+  Server is NOT auto-stateful — the caller threads the id.
+- **Errors:** `{ "error": { "message": "...", "code": "invalid_request" } }`
+  (string `code`, unlike generateContent's numeric status).
+- MCP mapping: a `gemini_interact` tool returns the `id` so a follow-up call can
+  pass `previous_interaction_id` — stateless MCP, stateful conversation.
