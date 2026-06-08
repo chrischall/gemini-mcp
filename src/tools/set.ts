@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { McpToolError } from '@chrischall/mcp-utils';
+import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
+import { resolveModel } from '../models.js';
 import { client, type GeneratedImage } from '../client.js';
-import { slugify, baseName } from '../images.js';
+import { slugify, baseName, loadImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, type NamedImage } from './shared.js';
 
 export function registerSetTools(server: McpServer): void {
@@ -18,6 +19,8 @@ export function registerSetTools(server: McpServer): void {
         count: z.number().int().positive().max(8).optional().describe('Number of variations of master_prompt (when scenes omitted)'),
         reference_mode: z.enum(['master', 'chain']).optional().describe('master: every image references the master (default). chain: each references the previous.'),
         basename: z.string().optional().describe('Base filename prefix for output images (default: slugified master_prompt)'),
+        master_images: z.array(z.string().min(1)).optional().describe('Reference image paths passed to the master generation call'),
+        master_images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs for master generation'),
         ...sharedImageSchema,
       },
     },
@@ -27,11 +30,18 @@ export function registerSetTools(server: McpServer): void {
         throw new McpToolError('Provide exactly one of `scenes` or `count`.');
       }
       const seed = pickSeed(args.seed);
+      const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size };
       const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
 
-      // 1. master
-      const [master] = await client.generate({ prompt: args.master_prompt, seed, ...cfg });
+      // 1. master (optionally seeded from reference images)
+      const masterRefInputs = await loadImageInputs(args.master_images, args.master_images_base64);
+      const [master] = await client.generate({
+        prompt: args.master_prompt,
+        images: masterRefInputs.length > 0 ? masterRefInputs : undefined,
+        seed,
+        ...cfg,
+      });
       const named: NamedImage[] = [{ image: master, base: `${slug}-master` }];
 
       // 2. scene prompts (explicit, or N repeats of master_prompt for variations)
@@ -52,7 +62,10 @@ export function registerSetTools(server: McpServer): void {
         scenes.forEach((img, i) => named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` }));
       }
 
-      return emit(named, args);
+      const meta: Record<string, unknown> = { model, seed };
+      if (args.aspect_ratio) meta.aspect_ratio = args.aspect_ratio;
+      if (args.image_size) meta.image_size = args.image_size;
+      return emit(named, args, meta);
     },
   );
 }

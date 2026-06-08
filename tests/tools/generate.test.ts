@@ -32,11 +32,35 @@ describe('gemini_generate_image', () => {
     await h.close();
   });
 
-  it('inline returns image content blocks, writes nothing', async () => {
+  it('inline returns meta text block then image content blocks, writes nothing', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
     const h = await createTestHarness(registerGenerateTools);
     const res = await h.callTool('gemini_generate_image', { prompt: 'leaf', inline: true });
-    expect(res.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' });
+    // With Feature D, meta is always emitted; content[0] = text meta, content[1] = image
+    expect(res.content[0].type).toBe('text');
+    expect(res.content[1]).toMatchObject({ type: 'image', mimeType: 'image/png' });
+    await h.close();
+  });
+});
+
+describe('gemini_generate_image metadata', () => {
+  it('includes model and seed in result', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', { prompt: 'a red leaf', output_dir: dir, seed: 7 });
+    const data = parseToolResult<{ images: string[]; seed: number; model: string }>(res);
+    expect(data.seed).toBe(7);
+    expect(typeof data.model).toBe('string');
+    await h.close();
+  });
+});
+
+describe('gemini_generate_image with reference inputs', () => {
+  it('passes images_base64 as input images to generate', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_generate_image', { prompt: 'style transfer', images_base64: [PNG], output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]) }));
     await h.close();
   });
 });
@@ -61,6 +85,24 @@ describe('gemini_generate_image filename param', () => {
     const res = await h.callTool('gemini_generate_image', { prompt: 'red leaf', output_dir: dir });
     const data = parseToolResult<{ images: string[] }>(res);
     expect(basename(data.images[0])).toBe('red-leaf.png');
+    await h.close();
+  });
+});
+
+describe('gemini_edit_image images_base64 + optional images', () => {
+  it('accepts images_base64 without images', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', images_base64: [PNG], output_dir: dir });
+    expect(res.isError).toBeFalsy();
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]) }));
+    await h.close();
+  });
+
+  it('throws when neither images nor images_base64 provided', async () => {
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', output_dir: dir });
+    expect(res.isError).toBe(true);
     await h.close();
   });
 });

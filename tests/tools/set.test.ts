@@ -49,6 +49,39 @@ describe('gemini_generate_set (master mode)', () => {
   });
 });
 
+describe('gemini_generate_set master_images_base64', () => {
+  it('passes master_images_base64 as input images to the master generate call', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerSetTools);
+    await h.callTool('gemini_generate_set', {
+      master_prompt: 'a cartoon fox',
+      scenes: ['waving'],
+      master_images_base64: [PNG],
+      output_dir: dir,
+    });
+    // First call (master) should have images; subsequent scene calls also have images (the master output)
+    expect(spy.mock.calls[0][0].images).toHaveLength(1);
+    await h.close();
+  });
+});
+
+describe('gemini_generate_set metadata', () => {
+  it('includes model and seed in result', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerSetTools);
+    const res = await h.callTool('gemini_generate_set', {
+      master_prompt: 'fox',
+      scenes: ['waving'],
+      output_dir: dir,
+      seed: 100,
+    });
+    const data = parseToolResult<{ images: string[]; seed: number; model: string }>(res);
+    expect(data.seed).toBe(100);
+    expect(typeof data.model).toBe('string');
+    await h.close();
+  });
+});
+
 describe('gemini_generate_set basename param', () => {
   it('uses caller-supplied basename instead of slugified master_prompt', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);

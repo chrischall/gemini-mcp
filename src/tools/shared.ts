@@ -34,15 +34,25 @@ export function pickSeed(seed?: number): number {
 /**
  * Either return images inline (base64 content blocks) or write them to disk and
  * return their paths as a text result. `inline` wins when true.
+ * Optional `meta` is merged into the disk-path JSON result, or prepended as a
+ * text block in inline mode (only if meta has keys).
  */
-export async function emit(named: NamedImage[], opts: { inline?: boolean; output_dir?: string }): Promise<CallToolResult> {
+export async function emit(
+  named: NamedImage[],
+  opts: { inline?: boolean; output_dir?: string },
+  meta?: Record<string, unknown>,
+): Promise<CallToolResult> {
   if (opts.inline) {
-    return {
-      content: named.map((n) => ({ type: 'image' as const, data: n.image.base64, mimeType: n.image.mimeType })),
-    };
+    const imageBlocks = named.map((n) => ({ type: 'image' as const, data: n.image.base64, mimeType: n.image.mimeType }));
+    if (meta && Object.keys(meta).length > 0) {
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(meta, null, 2) }, ...imageBlocks],
+      };
+    }
+    return { content: imageBlocks };
   }
   const dir = resolveOutputDir(opts.output_dir);
   const images: string[] = [];
   for (const n of named) images.push(await writeImage(dir, n.base, n.image.base64, n.image.mimeType));
-  return textResult({ images });
+  return textResult({ images, ...meta });
 }
