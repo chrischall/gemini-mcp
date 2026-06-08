@@ -83,6 +83,7 @@ export function registerInteractTools(server: McpServer): void {
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const meta: Record<string, unknown> = { model, interaction_id: r.id };
       if (r.text) meta.text = r.text;
+      if (r.grounding) meta.grounding = r.grounding;
 
       const slug = args.filename ? baseName(args.filename) : slugify(args.input);
       const named: NamedImage[] = r.images.map((image, i) => ({

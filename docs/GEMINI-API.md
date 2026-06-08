@@ -158,7 +158,11 @@ explicit, separate tool.
 - **Errors:** `{ "error": { "message": "...", "code": "invalid_request" } }`
   (string `code`, unlike generateContent's numeric status).
 - **Grounding** (verified): top-level `"tools":[{"type":"google_search"}]` — note the
-  `type` field (vs generateContent's `{"google_search":{}}`). 200 + image.
+  `type` field (vs generateContent's `{"google_search":{}}`). 200 + image. The response
+  adds two steps: `google_search_call` (`{arguments:{queries:[…]}, search_type}`) and
+  `google_search_result` (`result[].search_suggestions` = HTML chips, NOT clean source
+  URIs). So surface the **queries** (`google_search_call.arguments.queries`) only — no
+  `{uri,title}` source list like generateContent's `groundingChunks`.
 - **Video input** (verified): an `input` entry `{"type":"video","uri":"https://www.youtube.com/watch?v=…","mime_type":"video/mp4"}` (alongside the text part). 200 + image on `gemini-3.1-flash-image`.
 - MCP mapping: a `gemini_interact` tool returns the `id` so a follow-up call can
   pass `previous_interaction_id` — stateless MCP, stateful conversation.

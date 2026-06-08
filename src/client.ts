@@ -37,7 +37,7 @@ export interface InteractOpts {
   videoUrl?: string;
 }
 
-export interface InteractResult { id: string; images: GeneratedImage[]; text?: string; }
+export interface InteractResult { id: string; images: GeneratedImage[]; text?: string; grounding?: GroundingResult; }
 
 export interface GenerateOpts {
   prompt: string;
@@ -202,7 +202,7 @@ export class GeminiClient {
     }
 
     type StepPart = { type: string; mime_type?: string; data?: string; text?: string };
-    type Step = { type: string; content?: StepPart[]; summary?: StepPart[] };
+    type Step = { type: string; content?: StepPart[]; summary?: StepPart[]; arguments?: { queries?: string[] } };
     const data = await res.json() as { id: string; steps?: Step[] };
 
     // Only surface the `model_output` step — that's the caller-facing result.
@@ -212,7 +212,16 @@ export class GeminiClient {
     // in `model_output`.
     const images: GeneratedImage[] = [];
     const textParts: string[] = [];
+    const searchQueries: string[] = [];
     for (const step of data.steps ?? []) {
+      // Grounding queries live on the `google_search_call` step's arguments.
+      // (The `google_search_result` step only carries HTML `search_suggestions`
+      // chips — no clean source uri/title list like generateContent's
+      // groundingChunks — so interact surfaces queries only, not sources.)
+      if (step.type === 'google_search_call') {
+        for (const q of step.arguments?.queries ?? []) if (q?.trim()) searchQueries.push(q);
+        continue;
+      }
       if (step.type !== 'model_output') continue;
       for (const parts of [step.content ?? [], step.summary ?? []]) {
         for (const part of parts) {
@@ -232,7 +241,8 @@ export class GeminiClient {
     }
 
     const resultText = textParts.join('\n') || undefined;
-    return { id: data.id, images, text: resultText };
+    const grounding = searchQueries.length > 0 ? { queries: searchQueries } : undefined;
+    return { id: data.id, images, text: resultText, grounding };
   }
 }
 

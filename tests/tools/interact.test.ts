@@ -31,6 +31,19 @@ describe('gemini_interact', () => {
     await h.close();
   });
 
+  it('surfaces grounding in meta when the client returns it', async () => {
+    vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'gs',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+      grounding: { queries: ['sf weather'] },
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'weather', google_search: true, output_dir: dir });
+    const data = parseToolResult<{ grounding?: { queries?: string[] } }>(res);
+    expect(data.grounding).toEqual({ queries: ['sf weather'] });
+    await h.close();
+  });
+
   it('passes previous_interaction_id through to client.interact', async () => {
     const spy = vi.spyOn(client, 'interact').mockResolvedValue({
       id: 'new-id',

@@ -483,6 +483,28 @@ describe('interact', () => {
     expect(sent.tools).toEqual([{ type: 'google_search' }]);
   });
 
+  it('parses grounding queries from the google_search_call step', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fixture = {
+      id: 'gs-id',
+      steps: [
+        { type: 'google_search_call', search_type: 'web_search', arguments: { queries: ['weather in SF', 'sf forecast'] } },
+        { type: 'google_search_result', result: [{ search_suggestions: '<style>…</style>' }] },
+        { type: 'model_output', content: [{ type: 'image', mime_type: 'image/jpeg', data: 'img' }] },
+      ],
+    };
+    const c = new GeminiClient({ fetchImpl: capturingFetch(fixture).fn });
+    const r = await c.interact({ input: 'sf weather infographic', googleSearch: true });
+    expect(r.grounding).toEqual({ queries: ['weather in SF', 'sf forecast'] });
+  });
+
+  it('omits grounding when there is no google_search_call step', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const c = new GeminiClient({ fetchImpl: capturingFetch(makeInteractFixture()).fn });
+    const r = await c.interact({ input: 'a circle' });
+    expect(r.grounding).toBeUndefined();
+  });
+
   it('omits tools from interact body when googleSearch is not set', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = capturingFetch(makeInteractFixture());
