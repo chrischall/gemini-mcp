@@ -7,7 +7,7 @@
   },
   "metadata": {
     "description": "MCP server for Google Gemini image generation and editing — generate and edit images via the Gemini API",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "plugins": [
     {
@@ -15,7 +15,7 @@
       "displayName": "Gemini Images",
       "source": "./",
       "description": "Generate and edit images with Google Gemini image models (Nano Banana / Nano Banana Pro) via natural language prompts",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "author": {
         "name": "Chris Hall"
       },
