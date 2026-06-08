@@ -175,3 +175,204 @@ describe('generate', () => {
     expect(sent.generationConfig.thinkingConfig).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// interact()
+// ---------------------------------------------------------------------------
+
+/** A minimal Interactions API success response with one image in steps[]. */
+function makeInteractFixture(id = 'interact-id-1', extraSteps: unknown[] = []): unknown {
+  return {
+    id,
+    status: 'completed',
+    model: 'gemini-3.1-flash-image',
+    object: 'interaction',
+    created: 1_000_000,
+    updated: 1_000_001,
+    usage: {},
+    steps: [
+      {
+        type: 'thought',
+        summary: [{ type: 'text', text: 'thinking…' }],
+      },
+      {
+        type: 'model_output',
+        content: [
+          { type: 'image', mime_type: 'image/jpeg', data: 'abc123' },
+        ],
+      },
+      ...extraSteps,
+    ],
+  };
+}
+
+describe('interact', () => {
+  it('POSTs to /v1beta/interactions with the Api-Revision header', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a red circle' });
+    expect(cap.calls[0].url).toMatch(/\/v1beta\/interactions$/);
+    expect((cap.calls[0].init.headers as Record<string, string>)['Api-Revision']).toBe('2026-05-20');
+    expect((cap.calls[0].init.headers as Record<string, string>)['x-goog-api-key']).toBe('test-key');
+  });
+
+  it('sets response_format.mime_type to image/jpeg', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a circle' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.response_format.mime_type).toBe('image/jpeg');
+    expect(sent.response_format.type).toBe('image');
+  });
+
+  it('includes aspect_ratio in response_format when provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a circle', aspectRatio: '16:9' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.response_format.aspect_ratio).toBe('16:9');
+  });
+
+  it('omits aspect_ratio from response_format when not provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a circle' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.response_format.aspect_ratio).toBeUndefined();
+  });
+
+  it('includes image_size in response_format when provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a circle', imageSize: '2K' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.response_format.image_size).toBe('2K');
+  });
+
+  it('includes previous_interaction_id when provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'now add a square', previousInteractionId: 'prior-id-42' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.previous_interaction_id).toBe('prior-id-42');
+  });
+
+  it('omits previous_interaction_id when not provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a circle' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.previous_interaction_id).toBeUndefined();
+  });
+
+  it('maps input images to {type, mime_type, data} parts in the input array', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({
+      input: 'edit this',
+      images: [{ base64: 'QQ==', mimeType: 'image/png' }],
+    });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.input[0]).toEqual({ type: 'text', text: 'edit this' });
+    expect(sent.input[1]).toEqual({ type: 'image', mime_type: 'image/png', data: 'QQ==' });
+  });
+
+  it('sends only a text part when no images provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'generate a circle' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.input).toEqual([{ type: 'text', text: 'generate a circle' }]);
+  });
+
+  it('includes generation_config.thinking_level when thinkingLevel provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'circle', thinkingLevel: 'high' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.generation_config).toEqual({ thinking_level: 'high' });
+  });
+
+  it('omits generation_config when thinkingLevel not provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'circle' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.generation_config).toBeUndefined();
+  });
+
+  it('parses id and image from steps[].content', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture('my-id-99'));
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    const result = await c.interact({ input: 'circle' });
+    expect(result.id).toBe('my-id-99');
+    expect(result.images).toHaveLength(1);
+    expect(result.images[0]).toEqual({ base64: 'abc123', mimeType: 'image/jpeg' });
+  });
+
+  it('collects text parts from steps[] into result.text', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fixture = {
+      id: 'txt-id',
+      steps: [
+        { type: 'model_output', content: [
+          { type: 'image', mime_type: 'image/jpeg', data: 'imgdata' },
+          { type: 'text', text: 'Here you go.' },
+        ]},
+      ],
+    };
+    const cap = capturingFetch(fixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    const result = await c.interact({ input: 'circle' });
+    expect(result.text).toBe('Here you go.');
+  });
+
+  it('collects text from steps[].summary as well as content', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fixture = {
+      id: 'sum-id',
+      steps: [
+        { type: 'thought', summary: [{ type: 'text', text: 'I thought about it.' }] },
+        { type: 'model_output', content: [{ type: 'image', mime_type: 'image/jpeg', data: 'img' }] },
+      ],
+    };
+    const cap = capturingFetch(fixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    const result = await c.interact({ input: 'circle' });
+    expect(result.images).toHaveLength(1);
+    expect(result.text).toBe('I thought about it.');
+  });
+
+  it('throws McpToolError with "no image" when steps contain no image part', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fixture = { id: 'blocked', steps: [{ type: 'model_output', content: [{ type: 'text', text: 'blocked' }] }] };
+    const cap = capturingFetch(fixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await expect(c.interact({ input: 'x' })).rejects.toThrow(/no image/i);
+  });
+
+  it('throws McpToolError with API message on non-2xx', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const errorBody = { error: { message: 'Invalid request', code: 'invalid_request' } };
+    const c = new GeminiClient({ fetchImpl: mockFetch(errorBody, false, 400) });
+    await expect(c.interact({ input: 'x' })).rejects.toThrow(/Gemini Interactions API/);
+  });
+
+  it('throws when no API key is set (deferred config)', async () => {
+    delete process.env.GEMINI_API_KEY;
+    const c = new GeminiClient();
+    await expect(c.interact({ input: 'x' })).rejects.toThrow(/GEMINI_API_KEY/);
+  });
+});

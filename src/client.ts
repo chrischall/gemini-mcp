@@ -7,11 +7,24 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 await loadDotenvSafely({ path: join(__dirname, '..', '.env'), override: false });
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'; // v1 lacks gemini-3-pro-image; confirmed via Task 5
+const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 const SERVICE = 'Gemini';
 
 export interface GeneratedImage { base64: string; mimeType: string; }
 
 export interface GenerateResult { images: GeneratedImage[]; text?: string; }
+
+export interface InteractOpts {
+  input: string;
+  images?: { base64: string; mimeType: string }[];
+  model?: string;
+  aspectRatio?: string;
+  imageSize?: string;
+  thinkingLevel?: 'minimal' | 'high';
+  previousInteractionId?: string;
+}
+
+export interface InteractResult { id: string; images: GeneratedImage[]; text?: string; }
 
 export interface GenerateOpts {
   prompt: string;
@@ -110,6 +123,69 @@ export class GeminiClient {
     }
     const text = textParts.join('\n') || undefined;
     return { images, text };
+  }
+
+  async interact(opts: InteractOpts): Promise<InteractResult> {
+    const key = this.requireKey();
+    const model = resolveModel(opts.model, readEnvVar('GEMINI_IMAGE_MODEL'));
+
+    const inputParts: unknown[] = [{ type: 'text', text: opts.input }];
+    for (const img of opts.images ?? []) {
+      inputParts.push({ type: 'image', mime_type: img.mimeType, data: img.base64 });
+    }
+
+    const responseFormat: Record<string, unknown> = { type: 'image', mime_type: 'image/jpeg' };
+    if (opts.aspectRatio) responseFormat.aspect_ratio = opts.aspectRatio;
+    if (opts.imageSize) responseFormat.image_size = opts.imageSize;
+
+    const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
+    if (opts.thinkingLevel !== undefined) body.generation_config = { thinking_level: opts.thinkingLevel };
+    if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
+
+    const res = await this.fetchImpl(INTERACTIONS_URL, {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': key,
+        'content-type': 'application/json',
+        'Api-Revision': '2026-05-20',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      let message = text;
+      try {
+        const parsed = JSON.parse(text) as { error?: { message?: string } };
+        if (parsed.error?.message) message = parsed.error.message;
+      } catch { /* use raw text */ }
+      throw new McpToolError(`Gemini Interactions API: ${truncateErrorMessage(message)}`);
+    }
+
+    type StepPart = { type: string; mime_type?: string; data?: string; text?: string };
+    type Step = { type: string; content?: StepPart[]; summary?: StepPart[] };
+    const data = await res.json() as { id: string; steps?: Step[] };
+
+    const images: GeneratedImage[] = [];
+    const textParts: string[] = [];
+    for (const step of data.steps ?? []) {
+      for (const parts of [step.content ?? [], step.summary ?? []]) {
+        for (const part of parts) {
+          if (part.type === 'image' && part.data) {
+            images.push({ base64: part.data, mimeType: part.mime_type ?? 'image/jpeg' });
+          } else if (part.type === 'text' && part.text?.trim()) {
+            textParts.push(part.text);
+          }
+        }
+      }
+    }
+
+    if (images.length === 0) {
+      throw new McpToolError('Gemini returned no image');
+    }
+
+    const resultText = textParts.join('\n') || undefined;
+    return { id: data.id, images, text: resultText };
   }
 }
 
