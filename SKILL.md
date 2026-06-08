@@ -82,14 +82,14 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 ### Image Generation
 | Tool | Description |
 |------|-------------|
-| `gemini_generate_image(prompt, count?, images?, images_base64?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Generate image(s) from a text prompt (optionally image-conditioned via `images`/`images_base64`) |
-| `gemini_edit_image(prompt, images?, images_base64?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Edit or compose input image(s) — by **path** (`images`) or **value** (`images_base64`: data URI or raw base64) — with a text instruction. Requires ≥1 input |
-| `gemini_generate_set(master_prompt, scenes? \| count?, reference_mode?, master_images?, master_images_base64?, seed?, basename?, model?, thinking_level?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it |
+| `gemini_generate_image(prompt, count?, images?, images_base64?, video_url?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Generate image(s) from a text prompt (optionally image-conditioned via `images`/`images_base64`, or video-conditioned via `video_url`) |
+| `gemini_edit_image(prompt, images?, images_base64?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Edit or compose input image(s) — by **path** (`images`) or **value** (`images_base64`: data URI or raw base64) — with a text instruction. Requires ≥1 input |
+| `gemini_generate_set(master_prompt, scenes? \| count?, reference_mode?, master_images?, master_images_base64?, google_search?, seed?, basename?, model?, thinking_level?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it |
 
 ### Multi-turn (Interactions API — Beta)
 | Tool | Description |
 |------|-------------|
-| `gemini_interact(input, previous_interaction_id?, images?, images_base64?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` to **iteratively refine the same image** conversationally — the recommended way to make incremental edits. Output is **JPEG**. (Beta API.) |
+| `gemini_interact(input, previous_interaction_id?, images?, images_base64?, video_url?, google_search?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` to **iteratively refine the same image** conversationally — the recommended way to make incremental edits. Output is **JPEG**. (Beta API.) |
 
 ## Workflows
 
@@ -157,6 +157,8 @@ Pasted/attached images aren't written to disk by the host, so pass their bytes v
 - **No edit-strength control.** Gemini exposes no denoise/strength knob, and Nano Banana over-preserves the input — big structural edits ("move/remove/shrink", add a mat border) are often ignored. Workarounds: reroll with a different `seed`, raise `thinking_level` to `high`, use forceful wording, do layout changes (padding/borders) externally, or use `gemini_interact` multi-turn.
 - **`thinking_level`** (`minimal`/`high`, Gemini 3 models) controls reasoning depth — `high` can improve complex compositions/edits at higher latency/cost.
 - **Model text.** When the model returns a caption/explanation (mostly Gemini 3 **Pro**), it's surfaced as `text` in the result metadata.
+- **`google_search: true`** grounds the image in live Google Search (current events, weather, real data — great for infographics). The result metadata includes `grounding` with the `queries` run and the `sources` (`{uri, title}`) used.
+- **`video_url`** (a public YouTube URL, on `gemini_generate_image` / `gemini_interact`) generates an image from a video reference — **requires a Flash model** (e.g. `model: "gemini-3.1-flash-image"`). Non-YouTube video (Files API upload) is not supported.
 - **`gemini_interact`** is the multi-turn path: it returns an `interaction_id`; thread it back via `previous_interaction_id` for conversational refinement. Output is **JPEG only**. It's a **Beta** API (separate from the stable `generate`/`edit`/`set` tools).
 - `output_dir` per-call overrides `$GEMINI_OUTPUT_DIR` overrides cwd. `inline: true` returns bytes (with a metadata text block) instead of writing.
 - `count` and `scenes` are mutually exclusive in `gemini_generate_set`; `reference_mode: "chain"` references the previous image instead of the master.
