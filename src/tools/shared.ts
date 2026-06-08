@@ -22,6 +22,7 @@ export const sharedImageSchema = {
   inline: z.boolean().optional().describe('Return base64 images inline instead of writing to disk'),
   seed: z.number().int().optional().describe('Seed for reproducible generation; random if omitted'),
   thinking_level: z.enum(['minimal', 'high']).optional().describe('Reasoning depth (Gemini 3 models); higher can help complex/structural edits'),
+  google_search: z.boolean().optional().describe('Ground the image in live Google Search results (current events, weather, data)'),
 };
 
 /** A generated image plus the base filename (no extension) to write it under. */

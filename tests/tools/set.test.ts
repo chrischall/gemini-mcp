@@ -100,6 +100,46 @@ describe('gemini_generate_set basename param', () => {
   });
 });
 
+describe('gemini_generate_set google_search passthrough', () => {
+  it('passes google_search:true to client.generate as googleSearch', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerSetTools);
+    await h.callTool('gemini_generate_set', {
+      master_prompt: 'fox',
+      scenes: ['waving'],
+      google_search: true,
+      output_dir: dir,
+    });
+    // All calls (master + scene) should have googleSearch
+    for (const call of spy.mock.calls) {
+      expect(call[0]).toMatchObject({ googleSearch: true });
+    }
+    await h.close();
+  });
+
+  it('surfaces meta.grounding from master call when client returns grounding', async () => {
+    let callCount = 0;
+    vi.spyOn(client, 'generate').mockImplementation(async () => {
+      callCount++;
+      // Only master (first call) returns grounding
+      const grounding = callCount === 1
+        ? { queries: ['fox facts'], sources: [{ uri: 'https://example.com', title: 'Foxes' }] }
+        : undefined;
+      return { images: [{ base64: PNG, mimeType: 'image/png' }], grounding };
+    });
+    const h = await createTestHarness(registerSetTools);
+    const res = await h.callTool('gemini_generate_set', {
+      master_prompt: 'fox',
+      scenes: ['waving'],
+      google_search: true,
+      output_dir: dir,
+    });
+    const data = parseToolResult<{ grounding?: { queries?: string[] } }>(res);
+    expect(data.grounding?.queries).toEqual(['fox facts']);
+    await h.close();
+  });
+});
+
 // Task 13: lock chain-mode referencing + count-variation behavior
 describe('gemini_generate_set (chain mode + count)', () => {
   it('chain mode references the previous image each step', async () => {

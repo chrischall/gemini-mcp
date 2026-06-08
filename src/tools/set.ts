@@ -31,17 +31,18 @@ export function registerSetTools(server: McpServer): void {
       }
       const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
-      const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level };
+      const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level, googleSearch: args.google_search };
       const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
 
       // 1. master (optionally seeded from reference images)
       const masterRefInputs = await loadImageInputs(args.master_images, args.master_images_base64);
-      const { images: [master], text: masterText } = await client.generate({
+      const masterResult = await client.generate({
         prompt: args.master_prompt,
         images: masterRefInputs.length > 0 ? masterRefInputs : undefined,
         seed,
         ...cfg,
       });
+      const { images: [master], text: masterText } = masterResult;
       const named: NamedImage[] = [{ image: master, base: `${slug}-master` }];
 
       // Only the master's text is surfaced (below). Per-scene text is intentionally
@@ -66,6 +67,7 @@ export function registerSetTools(server: McpServer): void {
 
       const meta = buildMeta(model, seed, args);
       if (masterText) meta.text = masterText;
+      if (masterResult.grounding) meta.grounding = masterResult.grounding;
       return emit(named, args, meta);
     },
   );

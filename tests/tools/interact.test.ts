@@ -180,4 +180,26 @@ describe('gemini_interact', () => {
     expect(data.seed).toBeUndefined();
     await h.close();
   });
+
+  it('passes google_search:true to client.interact as googleSearch', async () => {
+    const spy = vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'gs-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    await h.callTool('gemini_interact', { input: 'circle', google_search: true, output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ googleSearch: true }));
+    await h.close();
+  });
+
+  it('passes video_url to client.interact as videoUrl', async () => {
+    const spy = vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'vid-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    await h.callTool('gemini_interact', { input: 'describe', video_url: 'https://www.youtube.com/watch?v=xyz', output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: 'https://www.youtube.com/watch?v=xyz' }));
+    await h.close();
+  });
 });

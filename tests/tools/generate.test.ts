@@ -147,6 +147,68 @@ describe('gemini_edit_image images_base64 + optional images', () => {
   });
 });
 
+describe('gemini_generate_image google_search + video_url passthrough', () => {
+  it('passes google_search:true to client.generate as googleSearch', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_generate_image', { prompt: 'leaf', google_search: true, output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ googleSearch: true }));
+    await h.close();
+  });
+
+  it('passes video_url to client.generate as videoUrl', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_generate_image', { prompt: 'leaf', video_url: 'https://www.youtube.com/watch?v=abc', output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: 'https://www.youtube.com/watch?v=abc' }));
+    await h.close();
+  });
+
+  it('surfaces meta.grounding when client returns grounding', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({
+      images: [{ base64: PNG, mimeType: 'image/png' }],
+      grounding: { queries: ['SF weather'], sources: [{ uri: 'https://weather.com', title: 'Weather' }] },
+    });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', { prompt: 'leaf', google_search: true, output_dir: dir });
+    const data = parseToolResult<{ grounding?: { queries?: string[]; sources?: unknown[] } }>(res);
+    expect(data.grounding?.queries).toEqual(['SF weather']);
+    expect(data.grounding?.sources).toHaveLength(1);
+    await h.close();
+  });
+
+  it('omits meta.grounding when client returns no grounding', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', { prompt: 'leaf', output_dir: dir });
+    const data = parseToolResult<{ grounding?: unknown }>(res);
+    expect(data.grounding).toBeUndefined();
+    await h.close();
+  });
+});
+
+describe('gemini_edit_image google_search passthrough', () => {
+  it('passes google_search:true to client.generate as googleSearch', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_edit_image', { prompt: 'make it blue', images_base64: [PNG], google_search: true, output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ googleSearch: true }));
+    await h.close();
+  });
+
+  it('surfaces meta.grounding on edit when client returns grounding', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({
+      images: [{ base64: PNG, mimeType: 'image/png' }],
+      grounding: { queries: ['blue color'], sources: [] },
+    });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', images_base64: [PNG], google_search: true, output_dir: dir });
+    const data = parseToolResult<{ grounding?: { queries?: string[] } }>(res);
+    expect(data.grounding?.queries).toEqual(['blue color']);
+    await h.close();
+  });
+});
+
 describe('gemini_edit_image', () => {
   it('reads input images, passes them to generate, returns a path', async () => {
     const inPath = join(dir, 'src.png');

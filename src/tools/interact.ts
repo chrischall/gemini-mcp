@@ -55,6 +55,15 @@ export function registerInteractTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Return base64 images inline instead of writing to disk'),
+        google_search: z
+          .boolean()
+          .optional()
+          .describe('Ground the image in live Google Search results (current events, weather, data)'),
+        video_url: z
+          .string()
+          .url()
+          .optional()
+          .describe('Public YouTube URL as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
       },
     },
     async (args) => {
@@ -67,6 +76,8 @@ export function registerInteractTools(server: McpServer): void {
         imageSize: args.image_size,
         thinkingLevel: args.thinking_level,
         previousInteractionId: args.previous_interaction_id,
+        googleSearch: args.google_search,
+        videoUrl: args.video_url,
       });
 
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
