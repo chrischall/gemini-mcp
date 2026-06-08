@@ -2,13 +2,29 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pickSeed, emit } from '../../src/tools/shared.js';
+import { pickSeed, emit, IMAGE_SIZES, sharedImageSchema } from '../../src/tools/shared.js';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-shared-')); });
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
+
+describe('IMAGE_SIZES', () => {
+  it('includes 512 as the first entry (Flash-only 0.5K size)', () => {
+    expect(IMAGE_SIZES).toContain('512');
+    expect(IMAGE_SIZES[0]).toBe('512');
+  });
+
+  it('includes the full set 512, 1K, 2K, 4K', () => {
+    expect(IMAGE_SIZES).toEqual(['512', '1K', '2K', '4K']);
+  });
+
+  it('sharedImageSchema image_size enum accepts 512', () => {
+    const result = sharedImageSchema.image_size.parse('512');
+    expect(result).toBe('512');
+  });
+});
 
 describe('pickSeed', () => {
   it('returns the provided seed when given', () => {
