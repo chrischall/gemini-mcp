@@ -31,6 +31,19 @@ describe('gemini_interact', () => {
     await h.close();
   });
 
+  it('surfaces grounding in meta when the client returns it', async () => {
+    vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'gs',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+      grounding: { queries: ['sf weather'] },
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'weather', google_search: true, output_dir: dir });
+    const data = parseToolResult<{ grounding?: { queries?: string[] } }>(res);
+    expect(data.grounding).toEqual({ queries: ['sf weather'] });
+    await h.close();
+  });
+
   it('passes previous_interaction_id through to client.interact', async () => {
     const spy = vi.spyOn(client, 'interact').mockResolvedValue({
       id: 'new-id',
@@ -178,6 +191,28 @@ describe('gemini_interact', () => {
     const data = parseToolResult<{ interaction_id?: string; seed?: number }>(res);
     expect(data.interaction_id).toBe('chain-id');
     expect(data.seed).toBeUndefined();
+    await h.close();
+  });
+
+  it('passes google_search:true to client.interact as googleSearch', async () => {
+    const spy = vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'gs-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    await h.callTool('gemini_interact', { input: 'circle', google_search: true, output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ googleSearch: true }));
+    await h.close();
+  });
+
+  it('passes video_url to client.interact as videoUrl', async () => {
+    const spy = vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'vid-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    await h.callTool('gemini_interact', { input: 'describe', video_url: 'https://www.youtube.com/watch?v=xyz', output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: 'https://www.youtube.com/watch?v=xyz' }));
     await h.close();
   });
 });

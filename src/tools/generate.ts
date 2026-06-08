@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
-import { client } from '../client.js';
+import { client, type GroundingResult } from '../client.js';
 import { slugify, baseName, loadImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, type NamedImage } from './shared.js';
 
@@ -18,6 +18,7 @@ export function registerGenerateTools(server: McpServer): void {
         filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
         images: z.array(z.string().min(1)).optional().describe('Paths to reference input images (image-conditioned generation)'),
         images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs'),
+        video_url: z.string().url().optional().describe('Public YouTube URL as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
         ...sharedImageSchema,
       },
     },
@@ -29,10 +30,13 @@ export function registerGenerateTools(server: McpServer): void {
       const refInputs = await loadImageInputs(args.images, args.images_base64);
       const named: NamedImage[] = [];
       let capturedText: string | undefined;
+      // For count>1, surface the FIRST call's grounding (each call grounds
+      // independently; one representative set of sources beats concatenating N).
+      let capturedGrounding: GroundingResult | undefined;
       for (let i = 0; i < count; i++) {
         // Distinct seed per image (seed+0 for the single-image case == echoed seed)
         // so count>1 yields N *different* images, not N duplicates.
-        const { images: [img], text } = await client.generate({
+        const result = await client.generate({
           prompt: args.prompt,
           images: refInputs.length > 0 ? refInputs : undefined,
           model: args.model,
@@ -40,12 +44,17 @@ export function registerGenerateTools(server: McpServer): void {
           imageSize: args.image_size,
           seed: seed + i,
           thinkingLevel: args.thinking_level,
+          googleSearch: args.google_search,
+          videoUrl: args.video_url,
         });
+        const { images: [img], text } = result;
         if (text && !capturedText) capturedText = text;
+        if (result.grounding && !capturedGrounding) capturedGrounding = result.grounding;
         named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
       }
       const meta = buildMeta(model, seed, args);
       if (capturedText) meta.text = capturedText;
+      if (capturedGrounding) meta.grounding = capturedGrounding;
       return emit(named, args, meta);
     },
   );
@@ -75,7 +84,7 @@ export function registerGenerateTools(server: McpServer): void {
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
       const inputs = await loadImageInputs(args.images, args.images_base64);
-      const { images: [img], text } = await client.generate({
+      const result = await client.generate({
         prompt: args.prompt,
         images: inputs,
         model: args.model,
@@ -83,9 +92,12 @@ export function registerGenerateTools(server: McpServer): void {
         imageSize: args.image_size,
         seed,
         thinkingLevel: args.thinking_level,
+        googleSearch: args.google_search,
       });
+      const { images: [img], text } = result;
       const meta = buildMeta(model, seed, args);
       if (text) meta.text = text;
+      if (result.grounding) meta.grounding = result.grounding;
       return emit([{ image: img, base: slug }], args, meta);
     },
   );
