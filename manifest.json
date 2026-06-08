@@ -1,0 +1,94 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/mcpb-manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "gemini-mcp",
+  "display_name": "Gemini Images",
+  "version": "0.1.0",
+  "description": "Generate and edit images with Google Gemini image models (Nano Banana / Nano Banana Pro) via natural language prompts",
+  "author": {
+    "name": "Chris Chall",
+    "email": "chris.c.hall@gmail.com",
+    "url": "https://github.com/chrischall"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrischall/gemini-mcp"
+  },
+  "homepage": "https://github.com/chrischall/gemini-mcp",
+  "support": "https://github.com/chrischall/gemini-mcp/issues",
+  "license": "MIT",
+  "keywords": [
+    "gemini",
+    "nano-banana",
+    "image-generation",
+    "image-editing",
+    "text-to-image",
+    "google-gemini",
+    "mcp"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/bundle.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/bundle.js"
+      ],
+      "env": {
+        "GEMINI_API_KEY": "${user_config.gemini_api_key}",
+        "GEMINI_IMAGE_MODEL": "${user_config.gemini_image_model}",
+        "GEMINI_OUTPUT_DIR": "${user_config.gemini_output_dir}"
+      }
+    }
+  },
+  "user_config": {
+    "gemini_api_key": {
+      "type": "string",
+      "title": "Gemini API Key",
+      "description": "Your Google Gemini API key (aistudio.google.com/apikey)",
+      "required": true,
+      "sensitive": true
+    },
+    "gemini_image_model": {
+      "type": "string",
+      "title": "Gemini Image Model",
+      "description": "Override the default image model (default: gemini-3-pro-image)",
+      "required": false,
+      "sensitive": false
+    },
+    "gemini_output_dir": {
+      "type": "string",
+      "title": "Output Directory",
+      "description": "Default directory for generated images (default: current working directory)",
+      "required": false,
+      "sensitive": false
+    }
+  },
+  "tools": [
+    {
+      "name": "gemini_list_models",
+      "description": "List available Gemini image models and the current default"
+    },
+    {
+      "name": "gemini_generate_image",
+      "description": "Generate image(s) from a text prompt"
+    },
+    {
+      "name": "gemini_edit_image",
+      "description": "Edit or compose one or more input images with a text instruction"
+    },
+    {
+      "name": "gemini_generate_set",
+      "description": "Generate a master image plus N consistent images referencing it"
+    }
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

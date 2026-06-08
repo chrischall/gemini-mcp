@@ -1,0 +1,19 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "inlineData": {
+              "mimeType": "image/png",
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+            }
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "modelVersion": "gemini-3-pro-image"
+}
