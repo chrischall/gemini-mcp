@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, loadImageInputs, baseName } from '../src/images.js';
+import { join, resolve } from 'node:path';
+import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, loadImageInputs, baseName, resolveImagePath } from '../src/images.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-img-')); });
@@ -162,5 +162,53 @@ describe('resolveOutputDir', () => {
     delete process.env.GEMINI_OUTPUT_DIR;
     expect(resolveOutputDir('/tmp/x')).toBe('/tmp/x');
     expect(resolveOutputDir(undefined)).toBe(process.cwd());
+  });
+});
+
+describe('resolveImagePath', () => {
+  afterEach(() => { delete process.env.GEMINI_INPUT_DIR; });
+
+  it('returns an absolute path that exists as-is', () => {
+    const p = join(dir, 'abs.png');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    expect(resolveImagePath(p)).toBe(p);
+  });
+
+  it('resolves a bare filename against GEMINI_INPUT_DIR when set', () => {
+    const p = join(dir, 'ref.png');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    process.env.GEMINI_INPUT_DIR = dir;
+    expect(resolveImagePath('ref.png')).toBe(join(dir, 'ref.png'));
+  });
+
+  it('resolves a bare filename relative to cwd when GEMINI_INPUT_DIR not set', () => {
+    // Write a file in cwd that we can reference by bare name
+    const filename = 'gemini-test-tmp-resolveImagePath-cwd.png';
+    const p = join(process.cwd(), filename);
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    try {
+      delete process.env.GEMINI_INPUT_DIR;
+      expect(resolveImagePath(filename)).toBe(resolve(filename));
+    } finally {
+      rmSync(p);
+    }
+  });
+
+  it('throws a helpful error with hint when file is not found', () => {
+    delete process.env.GEMINI_INPUT_DIR;
+    expect(() => resolveImagePath('does-not-exist.png')).toThrow(/Image not found/);
+  });
+
+  it('mentions GEMINI_INPUT_DIR in the error when it was searched', () => {
+    process.env.GEMINI_INPUT_DIR = dir;
+    expect(() => resolveImagePath('does-not-exist.png')).toThrow(/GEMINI_INPUT_DIR/);
+  });
+
+  it('readImageAsInline uses resolveImagePath — bare filename resolves via GEMINI_INPUT_DIR', async () => {
+    const p = join(dir, 'via-env.png');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    process.env.GEMINI_INPUT_DIR = dir;
+    const result = await readImageAsInline('via-env.png');
+    expect(result.mimeType).toBe('image/png');
   });
 });

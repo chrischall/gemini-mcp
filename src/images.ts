@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
-import { readEnvVar } from '@chrischall/mcp-utils';
+import { existsSync } from 'node:fs';
+import { join, resolve, isAbsolute } from 'node:path';
+import { readEnvVar, McpToolError } from '@chrischall/mcp-utils';
 
 /** URL/file-safe slug from a prompt; never empty. */
 export function slugify(text: string, max = 40): string {
@@ -55,9 +56,33 @@ export async function writeImage(dir: string, base: string, base64: string, mime
   return resolve(path);
 }
 
+/**
+ * Resolve an image path, checking (in order):
+ *  1. Absolute path that exists → returned as-is.
+ *  2. `GEMINI_INPUT_DIR` env var is set → look for `join(inputDir, p)`.
+ *  3. Relative to cwd → `resolve(p)`.
+ * Throws a helpful `McpToolError` if none are found.
+ */
+export function resolveImagePath(p: string): string {
+  if (isAbsolute(p) && existsSync(p)) return p;
+  const inputDir = readEnvVar('GEMINI_INPUT_DIR');
+  if (inputDir) {
+    const candidate = join(inputDir, p);
+    if (existsSync(candidate)) return candidate;
+  }
+  const cwd = resolve(p);
+  if (existsSync(cwd)) return cwd;
+  const hint = 'Set GEMINI_INPUT_DIR to a directory containing your images, or pass an absolute path.';
+  throw new McpToolError(
+    `Image not found: ${p}` + (inputDir ? ` (also searched GEMINI_INPUT_DIR=${inputDir})` : ''),
+    { hint },
+  );
+}
+
 /** Read an image file into `{ base64, mimeType }` for an inline_data part. */
 export async function readImageAsInline(path: string): Promise<{ base64: string; mimeType: string }> {
-  const buf = await readFile(path);
+  const resolved = resolveImagePath(path);
+  const buf = await readFile(resolved);
   const mimeType = sniffMimeBytes(buf);
   return { base64: buf.toString('base64'), mimeType };
 }
@@ -94,6 +119,21 @@ export async function loadImageInputs(
   const fromPaths = await Promise.all(paths.map((p) => readImageAsInline(p)));
   const fromBase64s = base64s.map((b) => decodeImageInput(b));
   return [...fromPaths, ...fromBase64s];
+}
+
+/**
+ * Aggregate image inputs from all sources: clipboard (macOS only), file paths, and base64 strings.
+ * Clipboard image is prepended if `from_clipboard` is true.
+ */
+export async function gatherImageInputs(opts: {
+  images?: string[];
+  images_base64?: string[];
+  from_clipboard?: boolean;
+}): Promise<{ base64: string; mimeType: string }[]> {
+  const { readClipboardImage } = await import('./clipboard.js');
+  const clipboardImages = opts.from_clipboard ? [await readClipboardImage()] : [];
+  const fileImages = await loadImageInputs(opts.images, opts.images_base64);
+  return [...clipboardImages, ...fileImages];
 }
 
 /** Caller-supplied filename → safe base name (no extension). */
