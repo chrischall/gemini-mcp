@@ -17,6 +17,7 @@ export interface GenerateOpts {
   model?: string;
   aspectRatio?: string;
   imageSize?: string;
+  seed?: number;
 }
 
 export class GeminiClient {
@@ -80,6 +81,7 @@ export class GeminiClient {
       if (opts.imageSize) imageConfig.imageSize = opts.imageSize;
       generationConfig.imageConfig = imageConfig;
     }
+    if (opts.seed !== undefined) generationConfig.seed = opts.seed;
     const data = await this.call<{ candidates?: Array<{ content?: { parts?: Array<Record<string, unknown>> } }> }>(
       'POST',
       `/models/${model}:generateContent`,

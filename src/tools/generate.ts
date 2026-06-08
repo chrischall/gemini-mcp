@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { client } from '../client.js';
 import { slugify, readImageAsInline } from '../images.js';
-import { emit, sharedImageSchema, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, type NamedImage } from './shared.js';
 
 export function registerGenerateTools(server: McpServer): void {
   server.registerTool(
@@ -18,6 +18,7 @@ export function registerGenerateTools(server: McpServer): void {
     },
     async (args) => {
       const count = args.count ?? 1;
+      const seed = pickSeed(args.seed);
       const slug = slugify(args.prompt);
       const named: NamedImage[] = [];
       for (let i = 0; i < count; i++) {
@@ -26,6 +27,7 @@ export function registerGenerateTools(server: McpServer): void {
           model: args.model,
           aspectRatio: args.aspect_ratio,
           imageSize: args.image_size,
+          seed,
         });
         named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
       }
@@ -46,6 +48,7 @@ export function registerGenerateTools(server: McpServer): void {
       },
     },
     async (args) => {
+      const seed = pickSeed(args.seed);
       const inputs = await Promise.all(args.images.map((p) => readImageAsInline(p)));
       const [img] = await client.generate({
         prompt: args.prompt,
@@ -53,6 +56,7 @@ export function registerGenerateTools(server: McpServer): void {
         model: args.model,
         aspectRatio: args.aspect_ratio,
         imageSize: args.image_size,
+        seed,
       });
       return emit([{ image: img, base: slugify(args.prompt) }], args);
     },

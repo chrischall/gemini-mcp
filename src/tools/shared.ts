@@ -20,10 +20,16 @@ export const sharedImageSchema = {
   image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution'),
   output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),
   inline: z.boolean().optional().describe('Return base64 images inline instead of writing to disk'),
+  seed: z.number().int().optional().describe('Seed for reproducible generation; random if omitted'),
 };
 
 /** A generated image plus the base filename (no extension) to write it under. */
 export interface NamedImage { image: GeneratedImage; base: string; }
+
+/** Return the provided seed, or pick a random one in [0, 2_147_483_647). */
+export function pickSeed(seed?: number): number {
+  return seed ?? Math.floor(Math.random() * 2_147_483_647);
+}
 
 /**
  * Either return images inline (base64 content blocks) or write them to disk and

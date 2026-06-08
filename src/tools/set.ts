@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError } from '@chrischall/mcp-utils';
 import { client, type GeneratedImage } from '../client.js';
 import { slugify } from '../images.js';
-import { emit, sharedImageSchema, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, type NamedImage } from './shared.js';
 
 export function registerSetTools(server: McpServer): void {
   server.registerTool(
@@ -25,11 +25,12 @@ export function registerSetTools(server: McpServer): void {
       if ((args.scenes && args.count) || (!args.scenes && !args.count)) {
         throw new McpToolError('Provide exactly one of `scenes` or `count`.');
       }
+      const seed = pickSeed(args.seed);
       const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size };
       const slug = slugify(args.master_prompt);
 
       // 1. master
-      const [master] = await client.generate({ prompt: args.master_prompt, ...cfg });
+      const [master] = await client.generate({ prompt: args.master_prompt, seed, ...cfg });
       const named: NamedImage[] = [{ image: master, base: `${slug}-master` }];
 
       // 2. scene prompts (explicit, or N repeats of master_prompt for variations)
@@ -39,13 +40,13 @@ export function registerSetTools(server: McpServer): void {
       if (mode === 'chain') {
         let ref: GeneratedImage = master;
         for (let i = 0; i < scenePrompts.length; i++) {
-          const [img] = await client.generate({ prompt: scenePrompts[i], images: [ref], ...cfg });
+          const [img] = await client.generate({ prompt: scenePrompts[i], images: [ref], seed: seed + i + 1, ...cfg });
           named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` });
           ref = img;
         }
       } else {
         const scenes = await Promise.all(
-          scenePrompts.map((p) => client.generate({ prompt: p, images: [master], ...cfg }).then((r) => r[0])),
+          scenePrompts.map((p, i) => client.generate({ prompt: p, images: [master], seed: seed + i + 1, ...cfg }).then((r) => r[0])),
         );
         scenes.forEach((img, i) => named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` }));
       }

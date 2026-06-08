@@ -97,4 +97,22 @@ describe('generate', () => {
     const c = new GeminiClient({ fetchImpl: capturingFetch({ candidates: [{ content: { parts: [{ text: 'blocked' }] } }] }).fn });
     await expect(c.generate({ prompt: 'x' })).rejects.toThrow(/no image/i);
   });
+
+  it('includes generationConfig.seed in request body when seed is provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'leaf', seed: 42 });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.generationConfig.seed).toBe(42);
+  });
+
+  it('omits seed from generationConfig when not provided', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'leaf' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.generationConfig.seed).toBeUndefined();
+  });
 });
