@@ -1,5 +1,5 @@
 {
-  "name": "gemini-mcp",
+  "name": "gemini-image-mcp",
   "version": "0.1.0",
   "mcpName": "io.github.chrischall/gemini-mcp",
   "description": "Gemini image-generation MCP server for Claude — developed and maintained by AI (Claude Code)",
@@ -8,7 +8,7 @@
   "license": "MIT",
   "keywords": ["mcp", "model-context-protocol", "claude", "ai", "gemini", "nano-banana", "image-generation", "image-editing", "text-to-image", "google-gemini"],
   "type": "module",
-  "bin": { "gemini-mcp": "dist/index.js" },
+  "bin": { "gemini-image-mcp": "dist/index.js" },
   "files": ["dist", ".claude-plugin", "SKILL.md", ".mcp.json", "server.json"],
   "scripts": {
     "build": "tsc && npm run bundle",

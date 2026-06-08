@@ -1,13 +1,13 @@
 ---
 name: gemini-mcp
-description: Generate and edit images with Google Gemini image models via MCP. Use when the user asks to generate, create, or edit images using Gemini or Nano Banana models, wants to produce a consistent set of images from a prompt, or needs to compose/blend multiple images. Triggers on phrases like "generate an image of", "edit this image with Gemini", "create a set of consistent images", "use Nano Banana to make", or any request to produce images via the Gemini image API. Requires gemini-mcp installed and the gemini server registered (see Setup below).
+description: Generate and edit images with Google Gemini image models via MCP. Use when the user asks to generate, create, or edit images using Gemini or Nano Banana models, wants to produce a consistent set of images from a prompt, or needs to compose/blend multiple images. Triggers on phrases like "generate an image of", "edit this image with Gemini", "create a set of consistent images", "use Nano Banana to make", or any request to produce images via the Gemini image API. Requires the gemini-image-mcp package installed and the gemini server registered (see Setup below).
 ---
 
 # gemini-mcp
 
 MCP server for Google Gemini image generation and editing — natural-language image creation via the Gemini API (Nano Banana / Nano Banana Pro models).
 
-- **npm:** [npmjs.com/package/gemini-mcp](https://www.npmjs.com/package/gemini-mcp)
+- **npm:** [npmjs.com/package/gemini-image-mcp](https://www.npmjs.com/package/gemini-image-mcp)
 - **Source:** [github.com/chrischall/gemini-mcp](https://github.com/chrischall/gemini-mcp)
 
 ## Setup
@@ -21,7 +21,7 @@ Add to `.mcp.json` in your project or `~/.claude/mcp.json`:
   "mcpServers": {
     "gemini": {
       "command": "npx",
-      "args": ["-y", "gemini-mcp"],
+      "args": ["-y", "gemini-image-mcp"],
       "env": {
         "GEMINI_API_KEY": "your-api-key-here"
       }

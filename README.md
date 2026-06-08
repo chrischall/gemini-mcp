@@ -28,7 +28,7 @@ Developed and maintained by AI (Claude Code).
   "mcpServers": {
     "gemini": {
       "command": "npx",
-      "args": ["-y", "gemini-mcp"],
+      "args": ["-y", "gemini-image-mcp"],
       "env": {
         "GEMINI_API_KEY": "your-api-key-here"
       }
