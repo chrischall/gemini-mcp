@@ -1,16 +1,40 @@
 {
   "name": "@chrischall/gemini-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "mcpName": "io.github.chrischall/gemini-mcp",
   "description": "Gemini image-generation MCP server for Claude — developed and maintained by AI (Claude Code)",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
-  "repository": { "type": "git", "url": "git+https://github.com/chrischall/gemini-mcp.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrischall/gemini-mcp.git"
+  },
   "license": "MIT",
-  "keywords": ["mcp", "model-context-protocol", "claude", "ai", "gemini", "nano-banana", "image-generation", "image-editing", "text-to-image", "google-gemini"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "ai",
+    "gemini",
+    "nano-banana",
+    "image-generation",
+    "image-editing",
+    "text-to-image",
+    "google-gemini"
+  ],
   "type": "module",
-  "publishConfig": { "access": "public" },
-  "bin": { "gemini-mcp": "dist/index.js" },
-  "files": ["dist", ".claude-plugin", "SKILL.md", ".mcp.json", "server.json"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "gemini-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    ".claude-plugin",
+    "SKILL.md",
+    ".mcp.json",
+    "server.json"
+  ],
   "scripts": {
     "build": "tsc && npm run bundle",
     "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --external:dotenv --outfile=dist/bundle.js",
