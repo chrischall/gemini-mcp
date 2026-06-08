@@ -36,7 +36,7 @@ export function registerSetTools(server: McpServer): void {
 
       // 1. master (optionally seeded from reference images)
       const masterRefInputs = await loadImageInputs(args.master_images, args.master_images_base64);
-      const [master] = await client.generate({
+      const { images: [master], text: masterText } = await client.generate({
         prompt: args.master_prompt,
         images: masterRefInputs.length > 0 ? masterRefInputs : undefined,
         seed,
@@ -51,18 +51,20 @@ export function registerSetTools(server: McpServer): void {
       if (mode === 'chain') {
         let ref: GeneratedImage = master;
         for (let i = 0; i < scenePrompts.length; i++) {
-          const [img] = await client.generate({ prompt: scenePrompts[i], images: [ref], seed: seed + i + 1, ...cfg });
+          const { images: [img] } = await client.generate({ prompt: scenePrompts[i], images: [ref], seed: seed + i + 1, ...cfg });
           named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` });
           ref = img;
         }
       } else {
         const scenes = await Promise.all(
-          scenePrompts.map((p, i) => client.generate({ prompt: p, images: [master], seed: seed + i + 1, ...cfg }).then((r) => r[0])),
+          scenePrompts.map((p, i) => client.generate({ prompt: p, images: [master], seed: seed + i + 1, ...cfg }).then((r) => r.images[0])),
         );
         scenes.forEach((img, i) => named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` }));
       }
 
-      return emit(named, args, buildMeta(model, seed, args));
+      const meta = buildMeta(model, seed, args);
+      if (masterText) meta.text = masterText;
+      return emit(named, args, meta);
     },
   );
 }

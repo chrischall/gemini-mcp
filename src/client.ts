@@ -11,6 +11,8 @@ const SERVICE = 'Gemini';
 
 export interface GeneratedImage { base64: string; mimeType: string; }
 
+export interface GenerateResult { images: GeneratedImage[]; text?: string; }
+
 export interface GenerateOpts {
   prompt: string;
   images?: { base64: string; mimeType: string }[];
@@ -69,13 +71,13 @@ export class GeminiClient {
     return filterImageModels(data.models ?? []);
   }
 
-  async generate(opts: GenerateOpts): Promise<GeneratedImage[]> {
+  async generate(opts: GenerateOpts): Promise<GenerateResult> {
     const model = resolveModel(opts.model, readEnvVar('GEMINI_IMAGE_MODEL'));
     const parts: unknown[] = [{ text: opts.prompt }];
     for (const img of opts.images ?? []) {
       parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
     }
-    const generationConfig: Record<string, unknown> = { responseModalities: ['IMAGE'] };
+    const generationConfig: Record<string, unknown> = { responseModalities: ['TEXT', 'IMAGE'] };
     if (opts.aspectRatio || opts.imageSize) {
       const imageConfig: Record<string, string> = {};
       if (opts.aspectRatio) imageConfig.aspectRatio = opts.aspectRatio;
@@ -89,19 +91,25 @@ export class GeminiClient {
       `/models/${model}:generateContent`,
       { contents: [{ parts }], generationConfig },
     );
-    const out: GeneratedImage[] = [];
+    const images: GeneratedImage[] = [];
+    const textParts: string[] = [];
     for (const cand of data.candidates ?? []) {
       for (const part of cand.content?.parts ?? []) {
         const inline = (part.inline_data ?? part.inlineData) as { data?: string; mime_type?: string; mimeType?: string } | undefined;
-        if (inline?.data) out.push({ base64: inline.data, mimeType: inline.mime_type ?? inline.mimeType ?? 'image/jpeg' });
+        if (inline?.data) {
+          images.push({ base64: inline.data, mimeType: inline.mime_type ?? inline.mimeType ?? 'image/jpeg' });
+        } else if (typeof part.text === 'string' && part.text.trim()) {
+          textParts.push(part.text);
+        }
       }
     }
-    if (out.length === 0) {
+    if (images.length === 0) {
       throw new McpToolError(`${SERVICE} returned no image`, {
         hint: 'The request may have been blocked by safety filters — try rephrasing the prompt.',
       });
     }
-    return out;
+    const text = textParts.join('\n') || undefined;
+    return { images, text };
   }
 }
 

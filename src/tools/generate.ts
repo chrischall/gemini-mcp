@@ -28,10 +28,11 @@ export function registerGenerateTools(server: McpServer): void {
       const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
       const refInputs = await loadImageInputs(args.images, args.images_base64);
       const named: NamedImage[] = [];
+      let capturedText: string | undefined;
       for (let i = 0; i < count; i++) {
         // Distinct seed per image (seed+0 for the single-image case == echoed seed)
         // so count>1 yields N *different* images, not N duplicates.
-        const [img] = await client.generate({
+        const { images: [img], text } = await client.generate({
           prompt: args.prompt,
           images: refInputs.length > 0 ? refInputs : undefined,
           model: args.model,
@@ -40,9 +41,12 @@ export function registerGenerateTools(server: McpServer): void {
           seed: seed + i,
           thinkingLevel: args.thinking_level,
         });
+        if (text && !capturedText) capturedText = text;
         named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
       }
-      return emit(named, args, buildMeta(model, seed, args));
+      const meta = buildMeta(model, seed, args);
+      if (capturedText) meta.text = capturedText;
+      return emit(named, args, meta);
     },
   );
 
@@ -71,7 +75,7 @@ export function registerGenerateTools(server: McpServer): void {
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
       const inputs = await loadImageInputs(args.images, args.images_base64);
-      const [img] = await client.generate({
+      const { images: [img], text } = await client.generate({
         prompt: args.prompt,
         images: inputs,
         model: args.model,
@@ -80,7 +84,9 @@ export function registerGenerateTools(server: McpServer): void {
         seed,
         thinkingLevel: args.thinking_level,
       });
-      return emit([{ image: img, base: slug }], args, buildMeta(model, seed, args));
+      const meta = buildMeta(model, seed, args);
+      if (text) meta.text = text;
+      return emit([{ image: img, base: slug }], args, meta);
     },
   );
 }

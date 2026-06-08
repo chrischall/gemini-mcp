@@ -84,15 +84,47 @@ describe('generate', () => {
     expect(sent.contents[0].parts[0]).toEqual({ text: 'a leaf' });
     expect(sent.contents[0].parts[1]).toEqual({ inline_data: { mime_type: 'image/png', data: 'QQ==' } });
     expect(sent.generationConfig.responseModalities).toContain('IMAGE');
+    expect(sent.generationConfig.responseModalities).toContain('TEXT');
     expect(sent.generationConfig.imageConfig).toEqual({ aspectRatio: '1:1', imageSize: '1K' });
 
-    // response: image extracted
-    expect(out.length).toBeGreaterThan(0);
-    expect(out[0].base64.length).toBeGreaterThan(0);
-    expect(out[0].mimeType).toMatch(/^image\//);
+    // response: new shape { images, text? }
+    expect(out.images.length).toBeGreaterThan(0);
+    expect(out.images[0].base64.length).toBeGreaterThan(0);
+    expect(out.images[0].mimeType).toMatch(/^image\//);
   });
 
   it('throws when no image part is returned', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const c = new GeminiClient({ fetchImpl: capturingFetch({ candidates: [{ content: { parts: [{ text: 'blocked' }] } }] }).fn });
+    await expect(c.generate({ prompt: 'x' })).rejects.toThrow(/no image/i);
+  });
+
+  it('returns text parts alongside images when the model provides them', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fixtureWithText = {
+      candidates: [{
+        content: {
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: 'abc123' } },
+            { text: 'Here is the generated image.' },
+          ],
+        },
+      }],
+    };
+    const c = new GeminiClient({ fetchImpl: capturingFetch(fixtureWithText).fn });
+    const out = await c.generate({ prompt: 'a leaf' });
+    expect(out.images).toHaveLength(1);
+    expect(out.text).toBe('Here is the generated image.');
+  });
+
+  it('omits text from result when model returns no text parts', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const c = new GeminiClient({ fetchImpl: capturingFetch(genFixture).fn });
+    const out = await c.generate({ prompt: 'leaf' });
+    expect(out.text).toBeUndefined();
+  });
+
+  it('still throws when result has only text and no image (safety blocked)', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const c = new GeminiClient({ fetchImpl: capturingFetch({ candidates: [{ content: { parts: [{ text: 'blocked' }] } }] }).fn });
     await expect(c.generate({ prompt: 'x' })).rejects.toThrow(/no image/i);
