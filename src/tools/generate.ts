@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { client } from '../client.js';
-import { slugify, readImageAsInline } from '../images.js';
+import { slugify, readImageAsInline, baseName } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, type NamedImage } from './shared.js';
 
 export function registerGenerateTools(server: McpServer): void {
@@ -13,13 +13,14 @@ export function registerGenerateTools(server: McpServer): void {
       inputSchema: {
         prompt: z.string().min(1).describe('Text prompt describing the image'),
         count: z.number().int().positive().max(8).optional().describe('Number of independent images (default 1)'),
+        filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
         ...sharedImageSchema,
       },
     },
     async (args) => {
       const count = args.count ?? 1;
       const seed = pickSeed(args.seed);
-      const slug = slugify(args.prompt);
+      const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
       const named: NamedImage[] = [];
       for (let i = 0; i < count; i++) {
         const [img] = await client.generate({
@@ -44,11 +45,13 @@ export function registerGenerateTools(server: McpServer): void {
       inputSchema: {
         prompt: z.string().min(1).describe('Instruction describing the edit or composition'),
         images: z.array(z.string().min(1)).min(1).describe('Paths to input image file(s) (1 = edit, 2+ = compose)'),
+        filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
         ...sharedImageSchema,
       },
     },
     async (args) => {
       const seed = pickSeed(args.seed);
+      const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
       const inputs = await Promise.all(args.images.map((p) => readImageAsInline(p)));
       const [img] = await client.generate({
         prompt: args.prompt,
@@ -58,7 +61,7 @@ export function registerGenerateTools(server: McpServer): void {
         imageSize: args.image_size,
         seed,
       });
-      return emit([{ image: img, base: slugify(args.prompt) }], args);
+      return emit([{ image: img, base: slug }], args);
     },
   );
 }

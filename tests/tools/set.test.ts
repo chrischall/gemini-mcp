@@ -49,6 +49,24 @@ describe('gemini_generate_set (master mode)', () => {
   });
 });
 
+describe('gemini_generate_set basename param', () => {
+  it('uses caller-supplied basename instead of slugified master_prompt', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue([{ base64: PNG, mimeType: 'image/png' }]);
+    const h = await createTestHarness(registerSetTools);
+    const res = await h.callTool('gemini_generate_set', {
+      master_prompt: 'a cartoon fox',
+      scenes: ['scene 1'],
+      basename: 'my-fox-set',
+      output_dir: dir,
+    });
+    const data = parseToolResult<{ images: string[] }>(res);
+    // master file should use basename
+    expect(basename(data.images[0])).toContain('my-fox-set-master');
+    expect(basename(data.images[1])).toContain('my-fox-set-01');
+    await h.close();
+  });
+});
+
 // Task 13: lock chain-mode referencing + count-variation behavior
 describe('gemini_generate_set (chain mode + count)', () => {
   it('chain mode references the previous image each step', async () => {

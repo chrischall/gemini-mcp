@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError } from '@chrischall/mcp-utils';
 import { client, type GeneratedImage } from '../client.js';
-import { slugify } from '../images.js';
+import { slugify, baseName } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, type NamedImage } from './shared.js';
 
 export function registerSetTools(server: McpServer): void {
@@ -17,6 +17,7 @@ export function registerSetTools(server: McpServer): void {
         scenes: z.array(z.string().min(1)).min(1).max(8).optional().describe('Per-image prompts (1-8); each references the master'),
         count: z.number().int().positive().max(8).optional().describe('Number of variations of master_prompt (when scenes omitted)'),
         reference_mode: z.enum(['master', 'chain']).optional().describe('master: every image references the master (default). chain: each references the previous.'),
+        basename: z.string().optional().describe('Base filename prefix for output images (default: slugified master_prompt)'),
         ...sharedImageSchema,
       },
     },
@@ -27,7 +28,7 @@ export function registerSetTools(server: McpServer): void {
       }
       const seed = pickSeed(args.seed);
       const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size };
-      const slug = slugify(args.master_prompt);
+      const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
 
       // 1. master
       const [master] = await client.generate({ prompt: args.master_prompt, seed, ...cfg });
