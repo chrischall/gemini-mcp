@@ -25,9 +25,7 @@ afterEach(() => {
 });
 
 describe('readClipboardImage (darwin)', () => {
-  it('calls osascript then sips and returns base64 JPEG', async () => {
-    if (process.platform !== 'darwin') return; // skip non-mac CI
-
+  it.skipIf(process.platform !== 'darwin')('calls osascript then sips and returns base64 JPEG', async () => {
     const calls: Array<{ cmd: string; args: string[] }> = [];
 
     // Fake runner: osascript writes PNG bytes to the temp path, sips writes JPEG to out path
@@ -69,9 +67,7 @@ describe('readClipboardImage (darwin)', () => {
     expect(sipsCall!.args).toContain('jpeg');
   });
 
-  it('throws "No image found on the clipboard" when osascript rejects', async () => {
-    if (process.platform !== 'darwin') return;
-
+  it.skipIf(process.platform !== 'darwin')('throws "No image found on the clipboard" when osascript rejects', async () => {
     const failRunner: Runner = async (cmd) => {
       if (cmd === 'osascript') throw new Error('clipboard empty');
     };
@@ -80,9 +76,7 @@ describe('readClipboardImage (darwin)', () => {
     await expect(readClipboardImage(failRunner)).rejects.toThrow(/No image found on the clipboard/);
   });
 
-  it('cleans up temp files even when sips fails', async () => {
-    if (process.platform !== 'darwin') return;
-
+  it.skipIf(process.platform !== 'darwin')('cleans up temp files even when sips fails', async () => {
     let pngPath = '';
     const failRunner: Runner = async (cmd, args) => {
       if (cmd === 'osascript') {
@@ -98,7 +92,7 @@ describe('readClipboardImage (darwin)', () => {
     };
 
     const { readClipboardImage } = await importClipboard();
-    await expect(readClipboardImage(failRunner)).rejects.toThrow();
+    await expect(readClipboardImage(failRunner)).rejects.toThrow(/Failed to convert the clipboard image/);
     // PNG temp file should be cleaned up
     if (pngPath) {
       const { existsSync } = await import('node:fs');

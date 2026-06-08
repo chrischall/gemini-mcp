@@ -34,6 +34,11 @@ export async function readClipboardImage(run: Runner = defaultRun): Promise<{ ba
     });
   }
 
+  // Unique temp paths under tmpdir() — OS-controlled (/var/folders/…/T or /tmp on
+  // macOS), digits+alnum id, no user input. Commands run via execFile (no shell),
+  // so the only string-interpolated value (the path, in the AppleScript literal)
+  // can't reach a shell; a quote-bearing TMPDIR would just yield a parse error,
+  // caught as "No image found" below.
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const png = join(tmpdir(), `gemini-clip-${id}.png`);
   const jpg = join(tmpdir(), `gemini-clip-${id}.jpg`);
@@ -53,7 +58,13 @@ export async function readClipboardImage(run: Runner = defaultRun): Promise<{ ba
     }
 
     // Step 2: downscale + convert to JPEG via sips
-    await run('sips', ['-Z', '2048', '-s', 'format', 'jpeg', png, '--out', jpg]);
+    try {
+      await run('sips', ['-Z', '2048', '-s', 'format', 'jpeg', png, '--out', jpg]);
+    } catch {
+      throw new McpToolError('Failed to convert the clipboard image', {
+        hint: 'The clipboard may contain a non-standard image format.',
+      });
+    }
 
     // Step 3: read JPEG → base64
     const buf = await readFile(jpg);

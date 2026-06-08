@@ -199,6 +199,11 @@ describe('resolveImagePath', () => {
     expect(() => resolveImagePath('does-not-exist.png')).toThrow(/Image not found/);
   });
 
+  it('throws for an absolute path that does not exist (no silent pass-through)', () => {
+    delete process.env.GEMINI_INPUT_DIR;
+    expect(() => resolveImagePath('/nonexistent/abs/foo.png')).toThrow(/Image not found/);
+  });
+
   it('mentions GEMINI_INPUT_DIR in the error when it was searched', () => {
     process.env.GEMINI_INPUT_DIR = dir;
     expect(() => resolveImagePath('does-not-exist.png')).toThrow(/GEMINI_INPUT_DIR/);

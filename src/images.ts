@@ -67,6 +67,8 @@ export function resolveImagePath(p: string): string {
   if (isAbsolute(p) && existsSync(p)) return p;
   const inputDir = readEnvVar('GEMINI_INPUT_DIR');
   if (inputDir) {
+    // NOTE: a `../`-bearing `p` can escape inputDir. Acceptable for a local,
+    // single-user MCP — the caller already has the user's own filesystem access.
     const candidate = join(inputDir, p);
     if (existsSync(candidate)) return candidate;
   }
@@ -130,8 +132,11 @@ export async function gatherImageInputs(opts: {
   images_base64?: string[];
   from_clipboard?: boolean;
 }): Promise<{ base64: string; mimeType: string }[]> {
-  const { readClipboardImage } = await import('./clipboard.js');
-  const clipboardImages = opts.from_clipboard ? [await readClipboardImage()] : [];
+  // Only load the clipboard module when actually requested (keeps the child_process
+  // path off the default code path).
+  const clipboardImages = opts.from_clipboard
+    ? [await (await import('./clipboard.js')).readClipboardImage()]
+    : [];
   const fileImages = await loadImageInputs(opts.images, opts.images_base64);
   return [...clipboardImages, ...fileImages];
 }
