@@ -1,16 +1,16 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.chrischall/gemini-image-mcp",
+  "name": "io.github.chrischall/gemini-mcp",
   "description": "Generate and edit images with Google Gemini (Nano Banana / Nano Banana Pro) image models.",
   "repository": {
-    "url": "https://github.com/chrischall/gemini-image-mcp",
+    "url": "https://github.com/chrischall/gemini-mcp",
     "source": "github"
   },
   "version": "0.1.0",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "gemini-image-mcp",
+      "identifier": "@chrischall/gemini-mcp",
       "version": "0.1.0",
       "transport": {
         "type": "stdio"

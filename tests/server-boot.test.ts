@@ -82,7 +82,7 @@ const MIN_TOOLS = 4;
 
 describe('server boot (built artifacts)', () => {
   it('bundled .mcpb (dist/bundle.js) boots WITHOUT node_modules and lists tools', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gemini-image-mcpb-'));
+    const dir = mkdtempSync(join(tmpdir(), 'gemini-mcpb-'));
     try {
       copyFileSync(BUNDLE, join(dir, 'bundle.js'));
       const tools = await listToolsViaStdio(join(dir, 'bundle.js'), dir);

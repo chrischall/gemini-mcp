@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "gemini-image-mcp",
+  "name": "gemini-mcp",
   "owner": {
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com"
@@ -11,7 +11,7 @@
   },
   "plugins": [
     {
-      "name": "gemini-image-mcp",
+      "name": "gemini-mcp",
       "displayName": "Gemini Images",
       "source": "./",
       "description": "Generate and edit images with Google Gemini image models (Nano Banana / Nano Banana Pro) via natural language prompts",
@@ -19,8 +19,8 @@
       "author": {
         "name": "Chris Hall"
       },
-      "homepage": "https://github.com/chrischall/gemini-image-mcp",
-      "repository": "https://github.com/chrischall/gemini-image-mcp",
+      "homepage": "https://github.com/chrischall/gemini-mcp",
+      "repository": "https://github.com/chrischall/gemini-mcp",
       "license": "MIT",
       "keywords": [
         "gemini",

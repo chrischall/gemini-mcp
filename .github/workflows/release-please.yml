@@ -85,7 +85,7 @@ jobs:
           import zipfile, pathlib, os
 
           version = os.environ["VERSION"]
-          skill_name = "gemini-image-mcp"
+          skill_name = "gemini-mcp"
           out = pathlib.Path(f"{skill_name}-{version}.skill")
 
           with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -97,7 +97,7 @@ jobs:
       - name: Build .mcpb bundle
         run: |
           npx @anthropic-ai/mcpb pack
-          mv gemini-image-mcp.mcpb "gemini-image-mcp-${VERSION}.mcpb"
+          mv gemini-mcp.mcpb "gemini-mcp-${VERSION}.mcpb"
 
       # Idempotent: skip if this version is already on the registry.
       - name: Publish to npm
@@ -143,7 +143,7 @@ jobs:
           # SKILL.md to a clean temp dir and publish that as a standalone skill.
           SKILL_DIR=$(mktemp -d)
           cp SKILL.md "$SKILL_DIR/"
-          npx --yes clawhub publish "$SKILL_DIR" --version "${VERSION}" --slug gemini-image-mcp
+          npx --yes clawhub publish "$SKILL_DIR" --version "${VERSION}" --slug gemini-mcp
 
       # release-please already created the GitHub Release with CHANGELOG
       # content; just attach the build artifacts. --clobber so re-running
@@ -153,6 +153,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ needs.release-please.outputs.tag_name }}" \
-            "gemini-image-mcp-${VERSION}.skill" \
-            "gemini-image-mcp-${VERSION}.mcpb" \
+            "gemini-mcp-${VERSION}.skill" \
+            "gemini-mcp-${VERSION}.mcpb" \
             --clobber
