@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,10 +44,91 @@ describe('listModels', () => {
     expect(models.map((m) => m.id)).not.toContain('imagen-4.0-generate-001');
   });
 
-  it('maps a non-2xx to a redacted McpToolError', async () => {
+  it('maps a non-2xx to a redacted, status-carrying error', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const c = new GeminiClient({ fetchImpl: mockFetch({ error: 'nope' }, false, 403) });
-    await expect(c.listModels()).rejects.toThrow(/Gemini API 403/);
+    await expect(c.listModels()).rejects.toThrow(/Gemini error 403/);
+  });
+});
+
+describe('shared-client timeout & 429 retry', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('bounds every generateContent request with an abort signal (60s timeout)', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'leaf' });
+    expect(cap.calls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('bounds every interactions request with an abort signal (60s timeout)', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a circle' });
+    expect(cap.calls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('times out a hung request after 60s (image generation can run 30s+, so not sooner)', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const fn = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () =>
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+        );
+      })) as unknown as typeof fetch;
+    const c = new GeminiClient({ fetchImpl: fn });
+    const outcome = c.listModels().then(
+      () => 'resolved',
+      (e: Error) => e.message,
+    );
+    // Just under the budget: still pending (60s, NOT 30s — image gen runs 30s+).
+    await vi.advanceTimersByTimeAsync(59_999);
+    const sentinel = Symbol('pending');
+    expect(await Promise.race([outcome, Promise.resolve(sentinel)])).toBe(sentinel);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await outcome).toMatch(/timed out after 60000ms/);
+  });
+
+  it('retries a 429 once after 2s on the generateContent path (free tier rate-limits aggressively)', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let n = 0;
+    const fn = (async () => {
+      n += 1;
+      if (n === 1) return { ok: false, status: 429, text: async () => 'rate limited' };
+      return { ok: true, status: 200, json: async () => genFixture, text: async () => JSON.stringify(genFixture) };
+    }) as unknown as typeof fetch;
+    const c = new GeminiClient({ fetchImpl: fn });
+    const p = c.generate({ prompt: 'leaf' });
+    p.catch(() => {}); // settled-result tracking under fake timers
+    await vi.advanceTimersByTimeAsync(2000);
+    const out = await p;
+    expect(out.images.length).toBeGreaterThan(0);
+    expect(n).toBe(2);
+  });
+
+  it('retries a 429 once after 2s on the interactions path', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const fixture = makeInteractFixture();
+    let n = 0;
+    const fn = (async () => {
+      n += 1;
+      if (n === 1) return { ok: false, status: 429, text: async () => 'rate limited' };
+      return { ok: true, status: 200, json: async () => fixture, text: async () => JSON.stringify(fixture) };
+    }) as unknown as typeof fetch;
+    const c = new GeminiClient({ fetchImpl: fn });
+    const p = c.interact({ input: 'a circle' });
+    p.catch(() => {});
+    await vi.advanceTimersByTimeAsync(2000);
+    const out = await p;
+    expect(out.images).toHaveLength(1);
+    expect(n).toBe(2);
   });
 });
 
@@ -57,7 +138,7 @@ function capturingFetch(body: unknown): { fn: typeof fetch; calls: { url: string
   const calls: { url: string; init: RequestInit }[] = [];
   const fn = (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
-    return { ok: true, status: 200, json: async () => body, text: async () => '' };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   }) as unknown as typeof fetch;
   return { fn, calls };
 }
@@ -460,12 +541,12 @@ describe('interact', () => {
     await expect(c.interact({ input: 'x' })).rejects.toThrow(/no image/i);
   });
 
-  it('throws McpToolError with API message on non-2xx', async () => {
+  it('throws a status-carrying error including the API message on non-2xx', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const errorBody = { error: { message: 'Invalid request', code: 'invalid_request' } };
     const c = new GeminiClient({ fetchImpl: mockFetch(errorBody, false, 400) });
-    // assert the status code AND the extracted error.message land in the thrown error
-    await expect(c.interact({ input: 'x' })).rejects.toThrow(/Gemini Interactions API 400: Invalid request/);
+    // assert the status code AND the upstream error.message land in the thrown error
+    await expect(c.interact({ input: 'x' })).rejects.toThrow(/Gemini Interactions error 400[\s\S]*Invalid request/);
   });
 
   it('throws when no API key is set (deferred config)', async () => {

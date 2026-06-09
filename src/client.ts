@@ -1,14 +1,20 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadDotenvSafely, readEnvVar, McpToolError, truncateErrorMessage } from '@chrischall/mcp-utils';
+import { loadDotenvSafely, readEnvVar, McpToolError, createApiClient, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, type GeminiModel, type RawModel } from './models.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 await loadDotenvSafely({ path: join(__dirname, '..', '.env'), override: false });
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'; // v1 lacks gemini-3-pro-image; confirmed via Task 5
-const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 const SERVICE = 'Gemini';
+const INTERACTIONS_SERVICE = 'Gemini Interactions';
+// Required revision header for the beta Interactions API (verified 2026-06-08;
+// see docs/GEMINI-API.md) — load-bearing, requests 400 without it.
+const API_REVISION = '2026-05-20';
+// Per-request abort budget. Image generation routinely runs 30s+ on the Pro
+// model, so this is deliberately 60s (NOT the fleet's usual 15–30s).
+const REQUEST_TIMEOUT_MS = 60_000;
 
 export interface GeneratedImage { base64: string; mimeType: string; }
 
@@ -54,7 +60,8 @@ export interface GenerateOpts {
 export class GeminiClient {
   private readonly apiKey: string | null;
   private readonly configError: Error | null;
-  private readonly fetchImpl: typeof fetch;
+  private readonly api: ApiClient;
+  private readonly interactionsApi: ApiClient;
 
   constructor(opts: { fetchImpl?: typeof fetch } = {}) {
     const key = readEnvVar('GEMINI_API_KEY');
@@ -67,7 +74,27 @@ export class GeminiClient {
       this.apiKey = key;
       this.configError = null;
     }
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    // Both paths share: the key in the `x-goog-api-key` header (Gemini does not
+    // use `Authorization: Bearer`), a 60s abort budget, and the default 429
+    // retry (once after 2s — the free tier rate-limits aggressively).
+    // `getToken` calls requireKey() so key resolution stays at REQUEST time:
+    // the server boots without a key and the actionable config error (with its
+    // aistudio hint) surfaces on the first tool call, not at startup.
+    const shared = {
+      tokenHeader: 'x-goog-api-key',
+      getToken: () => this.requireKey(),
+      timeout: REQUEST_TIMEOUT_MS,
+      fetchImpl: opts.fetchImpl ?? fetch,
+    };
+    this.api = createApiClient({ baseUrl: BASE_URL, serviceName: SERVICE, ...shared });
+    // Separate client for the beta Interactions API: same base URL, but every
+    // request must carry the Api-Revision header (and errors name the API).
+    this.interactionsApi = createApiClient({
+      baseUrl: BASE_URL,
+      serviceName: INTERACTIONS_SERVICE,
+      baseHeaders: { 'Api-Revision': API_REVISION },
+      ...shared,
+    });
   }
 
   private requireKey(): string {
@@ -81,17 +108,7 @@ export class GeminiClient {
   }
 
   private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const key = this.requireKey();
-    const res = await this.fetchImpl(`${BASE_URL}${path}`, {
-      method,
-      headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new McpToolError(`${SERVICE} API ${res.status}: ${truncateErrorMessage(text)}`);
-    }
-    return (await res.json()) as T;
+    return this.api.fetchJson<T>(method, path, body !== undefined ? { body } : {});
   }
 
   async listModels(): Promise<GeminiModel[]> {
@@ -161,7 +178,6 @@ export class GeminiClient {
   }
 
   async interact(opts: InteractOpts): Promise<InteractResult> {
-    const key = this.requireKey();
     const model = resolveModel(opts.model, readEnvVar('GEMINI_IMAGE_MODEL'));
 
     const inputParts: unknown[] = [{ type: 'text', text: opts.input }];
@@ -181,29 +197,11 @@ export class GeminiClient {
     if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
     if (opts.googleSearch) body.tools = [{ type: 'google_search' }];
 
-    const res = await this.fetchImpl(INTERACTIONS_URL, {
-      method: 'POST',
-      headers: {
-        'x-goog-api-key': key,
-        'content-type': 'application/json',
-        'Api-Revision': '2026-05-20',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      let message = text;
-      try {
-        const parsed = JSON.parse(text) as { error?: { message?: string } };
-        if (parsed.error?.message) message = parsed.error.message;
-      } catch { /* use raw text */ }
-      throw new McpToolError(`Gemini Interactions API ${res.status}: ${truncateErrorMessage(message)}`);
-    }
-
     type StepPart = { type: string; mime_type?: string; data?: string; text?: string };
     type Step = { type: string; content?: StepPart[]; summary?: StepPart[]; arguments?: { queries?: string[] } };
-    const data = await res.json() as { id: string; steps?: Step[] };
+    const data = await this.interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', {
+      body,
+    });
 
     // Only surface the `model_output` step — that's the caller-facing result.
     // `thought` steps hold internal reasoning (and, with includeThoughts, draft

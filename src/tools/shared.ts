@@ -15,7 +15,14 @@ export const IMAGE_SIZES = ['512', '1K', '2K', '4K'] as const;
  * into each tool's `inputSchema`.
  */
 export const sharedImageSchema = {
-  model: z.string().optional().describe('Model id override (default: server default; see gemini_list_models)'),
+  // Bare id only: the model is interpolated into the URL path
+  // (`/models/${model}:generateContent`), so slashes/colons/queries must be
+  // rejected to keep a crafted value from escaping the path segment.
+  model: z
+    .string()
+    .regex(/^[\w.-]+$/, 'must be a bare model id (letters, digits, ".", "_", "-")')
+    .optional()
+    .describe('Model id override (default: server default; see gemini_list_models)'),
   aspect_ratio: z.enum(ASPECT_RATIOS).optional().describe('Output aspect ratio'),
   image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution (512 = 0.5K, Flash-only)'),
   output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),
