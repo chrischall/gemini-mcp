@@ -26,6 +26,21 @@ describe('IMAGE_SIZES', () => {
   });
 });
 
+describe('sharedImageSchema model', () => {
+  it('accepts real model ids', () => {
+    expect(sharedImageSchema.model.safeParse('gemini-3-pro-image').success).toBe(true);
+    expect(sharedImageSchema.model.safeParse('gemini-2.5-flash-image').success).toBe(true);
+    expect(sharedImageSchema.model.safeParse('nano-banana-pro-preview').success).toBe(true);
+    expect(sharedImageSchema.model.safeParse(undefined).success).toBe(true); // optional
+  });
+
+  it('rejects model values that could escape the URL path segment', () => {
+    expect(sharedImageSchema.model.safeParse('../../v1beta/other').success).toBe(false);
+    expect(sharedImageSchema.model.safeParse('models/x:predict?key=').success).toBe(false);
+    expect(sharedImageSchema.model.safeParse('a b').success).toBe(false);
+  });
+});
+
 describe('pickSeed', () => {
   it('returns the provided seed when given', () => {
     expect(pickSeed(42)).toBe(42);
