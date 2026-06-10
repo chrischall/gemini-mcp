@@ -1,0 +1,260 @@
+# CLAUDE.md — gemini-mcp
+
+Guidance for Claude working in this repo.
+
+## TL;DR
+
+v0.5.0: Google **Gemini** image-generation MCP server. Wraps the Generative
+Language REST API (`https://generativelanguage.googleapis.com/v1beta`) and
+exposes 5 tools to Claude over stdio: text→image and image→image generation,
+multi-turn conversational editing, consistent image *sets*, and model listing
+(Nano Banana / Nano Banana Pro family). Inputs can come from file paths, raw
+base64 / data URIs, a public YouTube URL (video→image), or the macOS clipboard.
+
+Auth is a Google **API key** (`GEMINI_API_KEY`) sent in the `x-goog-api-key`
+header — Gemini does **not** use `Authorization: Bearer`. Because the model is
+baked into the URL path (`/models/{model}:generateContent`) rather than the body,
+this is the bearer/direct-API archetype with a custom twist: a thin `call()`
+wrapper over the fleet-shared `createApiClient` (configured with a non-Bearer
+`tokenHeader`), not a hand-rolled fetch and not a stock Bearer client.
+
+## Environment
+
+```
+GEMINI_API_KEY=<key>        # Required. Create at https://aistudio.google.com/apikey
+GEMINI_IMAGE_MODEL=<id>     # Optional. Default model override (bare id, e.g. gemini-3.1-flash-image)
+GEMINI_OUTPUT_DIR=<dir>     # Optional. Where generated images are written (default: cwd)
+GEMINI_INPUT_DIR=<dir>      # Optional. Base dir searched for relative input image paths
+```
+
+Loaded via `loadDotenvSafely` from `.env` next to `dist/` (failure swallowed —
+mcpb bundles omit `dotenv`; the host provides env). `readEnvVar` (from
+`@chrischall/mcp-utils`) treats blank, `"undefined"`, `"null"`, and unsubstituted
+`${FOO}` placeholders as unset. The four vars map to `manifest.json`'s
+`user_config` (`gemini_api_key`, `gemini_image_model`, `gemini_input_dir`,
+`gemini_output_dir`).
+
+## Architecture
+
+```
+src/
+  index.ts        # entry — runMcp({ name, version, banner, tools: [register*Tools…] })
+                  #   from @chrischall/mcp-utils; connects stdio transport
+  version.ts      # VERSION const (// x-release-please-version)
+  client.ts       # GeminiClient — module-level singleton `client`; builds two
+                  #   createApiClient instances (generateContent + Interactions);
+                  #   exposes call(), listModels(), generate(), interact()
+  models.ts       # DEFAULT_IMAGE_MODEL, resolveModel() (per-call → env → default),
+                  #   filterImageModels() (keep *image* models, drop imagen-*)
+  images.ts       # input loading (paths/base64/data-URI, MIME sniff, clipboard
+                  #   aggregation) + output writing (slugify, uniquePath, writeImage,
+                  #   resolveOutputDir, resolveImagePath)
+  clipboard.ts    # readClipboardImage() — macOS-only osascript+sips clipboard grab
+  tools/
+    models.ts     # gemini_list_models                       (registerModelTools)
+    generate.ts   # gemini_generate_image, gemini_edit_image (registerGenerateTools)
+    set.ts        # gemini_generate_set                       (registerSetTools)
+    interact.ts   # gemini_interact                           (registerInteractTools)
+    shared.ts     # ASPECT_RATIOS, IMAGE_SIZES, sharedImageSchema, pickSeed,
+                  #   buildMeta, and emit() (inline-vs-write-to-disk result wrapper)
+
+tests/            # vitest, 1:1-ish mirror of src/ + tools/. fetch is mocked
+                  #   (fetchImpl injected into GeminiClient); clipboard uses an
+                  #   injectable Runner so tests never shell out. server-boot.test.ts
+                  #   asserts the server boots without GEMINI_API_KEY;
+                  #   version-sync.test.ts asserts all version files agree.
+```
+
+Each `tools/*.ts` exports a `register<Name>Tools(server)` function that calls
+`server.registerTool(name, { description, annotations, inputSchema }, handler)`
+(high-level `McpServer` API with zod schemas). The tool handlers import the
+shared `client` singleton directly — `index.ts` only wires the `register*` list
+into `runMcp`.
+
+### The custom `call()` client
+
+`GeminiClient` constructs **two** `createApiClient` instances sharing
+`{ tokenHeader: 'x-goog-api-key', getToken, timeout: 60_000, fetchImpl }`:
+
+- `this.api` — plain client for `:generateContent` and `GET /models`.
+- `this.interactionsApi` — same base URL but adds the `Api-Revision` header
+  (required by the beta Interactions API).
+
+`call<T>(method, path, body?)` is the thin wrapper: it just forwards to
+`this.api.fetchJson(...)`. The model id is interpolated into `path`
+(`/models/${model}:generateContent`), which is why it isn't `createApiClient`'s
+default Bearer flow on its own — but the auth/timeout/retry plumbing is still the
+shared util, configured non-Bearer.
+
+## Tool surface
+
+| Tool | File | Endpoint / model | Kind |
+| --- | --- | --- | --- |
+| `gemini_list_models` | `tools/models.ts` | `GET /v1beta/models?pageSize=200` (filtered to image models) | read |
+| `gemini_generate_image` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (×`count`) | write (binary-out) |
+| `gemini_edit_image` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (input images required) | write (binary-out) |
+| `gemini_generate_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode) | write (binary-out) |
+| `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (beta; `Api-Revision` header) | write (binary-out) |
+
+**Binary output.** All four generation tools return images either written to disk
+(default) or inline base64. `emit()` (in `tools/shared.ts`) decides: with
+`inline: true` it returns `{ type: 'image', data, mimeType }` content blocks;
+otherwise it `writeImage()`s each to `resolveOutputDir(output_dir)` (per-call
+`output_dir` → `$GEMINI_OUTPUT_DIR` → cwd), de-duplicating with `uniquePath`
+(`name.png`, `name-2.png`, …), and returns the absolute paths plus a metadata
+object (`model`, `seed`, optional `text`, `grounding`, `interaction_id`).
+
+**Image inputs** (`gatherImageInputs`) come from `images` (file paths),
+`images_base64` (raw base64 or `data:` URIs, MIME sniffed from bytes), and
+`from_clipboard` (macOS only — see Quirks, issue #13). `gemini_edit_image`
+requires at least one input source.
+
+**`google_search`** grounds generation in live Google Search; surfaced sources
+(`generateContent`) or queries (`interact`) are echoed in the result metadata.
+
+## Conventions
+
+- All tools prefixed `gemini_*`.
+- **TDD.** Write a failing test before implementation. `fetch` is mocked by
+  injecting `fetchImpl` into `GeminiClient`; clipboard via an injectable `Runner`.
+  No real API calls and no real shell-outs in tests.
+- **Errors.** Throw `McpToolError` (from `@chrischall/mcp-utils`) with an
+  actionable `hint` (e.g. missing key → aistudio link; no image returned → "try
+  rephrasing, safety filter"). HTTP error *bodies* are redacted and truncated for
+  you — `createApiClient.fetchJson` runs `truncateErrorMessage` (Bearer/JWT
+  redaction THEN length cap) on the response text before throwing. Don't hand-roll
+  body trimming.
+- **Result wrapper.** Use `emit()` / `textResult()`; don't hand-roll `content`
+  arrays. `emit()` owns the inline-vs-disk branch.
+- **Binary-output-to-disk is NOT confirm-gated.** Writing a generated image is a
+  *local* file write, not a remote mutation, so there's no confirmation token /
+  `readOnlyHint`-style gate. (Generation tools set `readOnlyHint: false` only
+  because they call a paid remote API, not because they touch remote state.)
+- ESM + NodeNext: imports use `.js` extensions even for `.ts` source.
+- **stdio transport**: logs/banner go to **stderr** only — stdout is reserved for
+  JSON-RPC. `runMcp` handles this.
+
+## Quirks
+
+- **Non-Bearer auth.** The key rides the `x-goog-api-key` header, configured via
+  `createApiClient`'s `tokenHeader`. Do not switch to `Authorization: Bearer` —
+  Gemini ignores it and the request 401s.
+- **Model in the URL path.** `…/models/${model}:generateContent`. The `model`
+  input is regex-validated (`/^[\w.-]+$/`, bare id only) precisely so a crafted
+  value with slashes/colons/queries can't escape the path segment. Keep that guard.
+- **v1beta, not v1.** `BASE_URL` is pinned to `/v1beta` because `v1` lacks
+  `gemini-3-pro-image` (confirmed in source). Don't "upgrade" it to `/v1`.
+- **Two APIs, two request shapes.**
+  - `generateContent` (generate/edit/set): snake_case request parts
+    (`inline_data.mime_type`, `file_data.file_uri`, `tools: [{ google_search: {} }]`)
+    but a `generationConfig` in camelCase (`responseModalities`, `imageConfig`,
+    `thinkingConfig`).
+  - `interactions` (interact): a different body entirely — `input` parts typed
+    `{ type: 'text' | 'image' | 'video' }`, `response_format`,
+    `previous_interaction_id`, and a `steps[]` response. Only the `model_output`
+    step is surfaced; `thought` steps (internal reasoning / draft images) are
+    dropped on purpose.
+- **Response casing is defensive.** `generateContent` responses are read tolerant
+  of both `inline_data`/`mime_type` (snake) and `inlineData`/`mimeType` (camel) —
+  the beta has shipped both. Preserve the `part.inline_data ?? part.inlineData`
+  fallbacks.
+- **`Api-Revision` header is load-bearing.** The Interactions client sends
+  `Api-Revision: 2026-05-20`; without it the beta API 400s (verified; see
+  `docs/GEMINI-API.md`). The plain `generateContent` client does **not** send it.
+- **Premium endpoints need a funded account.** `gemini-3-pro-image` and the
+  Interactions API are paid; a free-tier key gets HTTP 429 with `limit: 0` (a
+  quota-of-zero, not real throttling). Verify response shapes against a funded key
+  before trusting them.
+- **60s timeout (not the fleet 15–30s).** Pro-model image generation routinely
+  runs 30s+, so `REQUEST_TIMEOUT_MS = 60_000`. The shared client retries 429 once
+  after 2s (mcp-utils default) — the free tier rate-limits aggressively.
+- **`from_clipboard` is macOS-only (issue #13).** `readClipboardImage` shells out
+  to `osascript` (clipboard PNG → temp file) then `sips` (downscale ≤2048px →
+  JPEG); non-darwin throws an actionable `McpToolError`. The clipboard module is
+  dynamically imported only when `from_clipboard` is set, keeping `child_process`
+  off the default path.
+- **`imagen-*` excluded.** `filterImageModels` keeps Gemini image models but drops
+  `imagen-*` — those use a different `:predict` API this server doesn't implement.
+
+## Versioning
+
+`VERSION` lives in `src/version.ts` (`// x-release-please-version`). release-please
+owns the bump and keeps these in sync via `extra-files` in
+`release-please-config.json`:
+
+1. `package.json` → `"version"` (release-type `node`)
+2. `package-lock.json` → kept in sync by release-please's node handler
+3. `src/version.ts` → `VERSION` const
+4. `manifest.json` → `"version"`
+5. `server.json` → `"version"` and `packages[*].version`
+6. `.claude-plugin/plugin.json` → `"version"`
+7. `.claude-plugin/marketplace.json` → `metadata.version` + `plugins[*].version`
+
+`.release-please-manifest.json` tracks the last released version. `tests/version-sync.test.ts`
+fails CI if any of the files above drift apart.
+
+### Release flow
+
+Commits land on `main` via PR. release-please (`.github/workflows/release-please.yml`,
+authed with `RELEASE_PAT` so the release PR triggers downstream CI) opens/updates a
+release PR as Conventional-Commit messages (`feat:`, `fix:`, …) accumulate. Merging
+that PR creates the `v<VERSION>` tag + GitHub Release; the `publish` job then builds,
+packs a `.skill` zip + `.mcpb` bundle, `npm publish --provenance` (idempotent — skips
+if the version is already on npm), and publishes to the MCP Registry via
+`mcp-publisher` (OIDC).
+
+### Important
+
+Do NOT manually bump versions or create tags unless the user explicitly asks.
+release-please owns versioning.
+
+## Publishing constraints
+
+The MCP Registry's [server.schema.json](https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json)
+caps `server.json`'s `description` at **100 characters**. Over that fails
+`mcp-publisher publish` with HTTP 422. The other description fields
+(`manifest.json`, `.claude-plugin/*`) have no published length cap. Sanity-check
+before changing it:
+
+```bash
+jq -r '.description | length' server.json
+```
+
+## Pull requests & release notes
+
+**Default workflow: branch + PR, even for solo work.** Direct pushes to `main`
+skip review *and* the auto-generated release-notes block. Apply exactly one label
+per PR so it files under the right release-notes section: `enhancement` →
+Features, `bug` → Bug Fixes, `security`, `refactor`, `documentation`, `test`,
+`dependencies`, `ci`/`github_actions` → CI & Build, none → Other Changes,
+`ignore-for-release` → hidden. The **PR title** becomes the changelog bullet —
+write it user-facing (`gemini_interact: surface google_search queries`), not
+internal shorthand.
+
+**Don't run `gh pr merge` yourself.** `pr-auto-review.yml` reviews every PR
+(except the release PR) and adds `ready-to-merge` on a `pass`; `auto-merge.yml`
+then arms `gh pr merge --auto --squash` (squash-merge only; the moment CI is
+green it merges). Opening with `gh pr create --label <label>` is the whole job.
+On a `warn`/`fail` verdict you've decided to ship anyway, add the label yourself.
+**Release PRs are the one manual touch** — add `ready-to-merge` when ready to ship.
+
+Because PRs auto-merge as soon as auto-review passes, **don't open a PR until the
+feature is genuinely complete** — push commits to the branch first, or open a
+GitHub draft (auto-review skips drafts) for a checkpoint review without shipping.
+
+## What not to do
+
+- **Don't env-configure your way around billing.** Premium models / the
+  Interactions API require a funded Google account; a free key returns 429
+  `limit: 0`. Don't paper over that with retries or fallbacks — surface the
+  actionable error.
+- **Don't trust premium endpoint shapes you haven't seen.** Verify
+  `gemini-3-pro-image` and Interactions response shapes against a funded account
+  before relying on new fields; the beta casing has changed before (hence the
+  snake/camel fallbacks).
+- **Don't switch to `Authorization: Bearer`** or drop the `Api-Revision` header —
+  both break the respective APIs.
+- **Don't "upgrade" `BASE_URL` to `/v1`** — it lacks the Pro image model.
+- **Don't register tools that can't be tested against a mocked `fetchImpl`** (and a
+  mocked clipboard `Runner`). All network/shell access must be injectable.
+- **Don't bump versions speculatively.** release-please owns that.
