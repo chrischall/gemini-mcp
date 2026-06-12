@@ -4,7 +4,7 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client, type GroundingResult } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
 
 export function registerGenerateTools(server: McpServer): void {
   server.registerTool(
@@ -18,7 +18,8 @@ export function registerGenerateTools(server: McpServer): void {
         filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
         images: z.array(z.string().min(1)).optional().describe('Paths to reference input images (image-conditioned generation)'),
         images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs'),
-        video_url: z.string().url().optional().describe('Public YouTube URL as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
+        video_url: z.string().url().optional().describe('Public YouTube URL (or a previously uploaded Files API uri) as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
+        video_path: videoPathSchema,
         ...sharedImageSchema,
       },
     },
@@ -28,6 +29,9 @@ export function registerGenerateTools(server: McpServer): void {
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
       const refInputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
+      // Upload ONCE (before the count loop) — every generate call references
+      // the same files/… uri.
+      const video = await resolveVideoInput(args);
       const named: NamedImage[] = [];
       let capturedText: string | undefined;
       // For count>1, surface the FIRST call's grounding (each call grounds
@@ -45,7 +49,8 @@ export function registerGenerateTools(server: McpServer): void {
           seed: seed + i,
           thinkingLevel: args.thinking_level,
           googleSearch: args.google_search,
-          videoUrl: args.video_url,
+          videoUrl: video.videoUrl,
+          videoMimeType: video.videoMimeType,
         });
         const { images: [img], text } = result;
         if (text && !capturedText) capturedText = text;
@@ -55,6 +60,7 @@ export function registerGenerateTools(server: McpServer): void {
       const meta = buildMeta(model, seed, args);
       if (capturedText) meta.text = capturedText;
       if (capturedGrounding) meta.grounding = capturedGrounding;
+      if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
       return emit(named, args, meta);
     },
   );

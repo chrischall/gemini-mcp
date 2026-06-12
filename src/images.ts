@@ -57,13 +57,13 @@ export async function writeImage(dir: string, base: string, base64: string, mime
 }
 
 /**
- * Resolve an image path, checking (in order):
+ * Resolve an input file path, checking (in order):
  *  1. Absolute path that exists → returned as-is.
  *  2. `GEMINI_INPUT_DIR` env var is set → look for `join(inputDir, p)`.
  *  3. Relative to cwd → `resolve(p)`.
- * Throws a helpful `McpToolError` if none are found.
+ * Throws a helpful `McpToolError` (labelled `kind`) if none are found.
  */
-export function resolveImagePath(p: string): string {
+function resolveInputPath(p: string, kind: 'Image' | 'Video'): string {
   if (isAbsolute(p) && existsSync(p)) return p;
   const inputDir = readEnvVar('GEMINI_INPUT_DIR');
   if (inputDir) {
@@ -74,11 +74,48 @@ export function resolveImagePath(p: string): string {
   }
   const cwd = resolve(p);
   if (existsSync(cwd)) return cwd;
-  const hint = 'Set GEMINI_INPUT_DIR to a directory containing your images, or pass an absolute path.';
+  const hint = `Set GEMINI_INPUT_DIR to a directory containing your ${kind.toLowerCase()}s, or pass an absolute path.`;
   throw new McpToolError(
-    `Image not found: ${p}` + (inputDir ? ` (also searched GEMINI_INPUT_DIR=${inputDir})` : ''),
+    `${kind} not found: ${p}` + (inputDir ? ` (also searched GEMINI_INPUT_DIR=${inputDir})` : ''),
     { hint },
   );
+}
+
+/** Resolve an image path (absolute → GEMINI_INPUT_DIR → cwd). */
+export function resolveImagePath(p: string): string {
+  return resolveInputPath(p, 'Image');
+}
+
+/** Resolve a local video path (absolute → GEMINI_INPUT_DIR → cwd). */
+export function resolveVideoPath(p: string): string {
+  return resolveInputPath(p, 'Video');
+}
+
+/** Video MIME types the Gemini Files API accepts, by file extension
+ * (docs/GEMINI-API.md "Files API — local video upload"). */
+const VIDEO_MIME_BY_EXT: Record<string, string> = {
+  mp4: 'video/mp4',
+  mpeg: 'video/mpeg',
+  mpg: 'video/mpg',
+  mov: 'video/mov',
+  avi: 'video/avi',
+  flv: 'video/x-flv',
+  webm: 'video/webm',
+  wmv: 'video/wmv',
+  '3gp': 'video/3gpp',
+  '3gpp': 'video/3gpp',
+};
+
+/** MIME type for a video file from its extension; throws for unsupported formats. */
+export function videoMimeType(p: string): string {
+  const ext = p.includes('.') ? p.slice(p.lastIndexOf('.') + 1).toLowerCase() : '';
+  const mime = VIDEO_MIME_BY_EXT[ext];
+  if (!mime) {
+    throw new McpToolError(`Unsupported video format: ${ext ? `.${ext}` : p}`, {
+      hint: `Supported extensions: ${Object.keys(VIDEO_MIME_BY_EXT).map((e) => `.${e}`).join(', ')}`,
+    });
+  }
+  return mime;
 }
 
 /** Read an image file into `{ base64, mimeType }` for an inline_data part. */

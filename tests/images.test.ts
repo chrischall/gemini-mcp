@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, loadImageInputs, baseName, resolveImagePath } from '../src/images.js';
+import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, loadImageInputs, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-img-')); });
@@ -215,5 +215,40 @@ describe('resolveImagePath', () => {
     process.env.GEMINI_INPUT_DIR = dir;
     const result = await readImageAsInline('via-env.png');
     expect(result.mimeType).toBe('image/png');
+  });
+});
+
+describe('videoMimeType', () => {
+  it.each([
+    ['clip.mp4', 'video/mp4'],
+    ['clip.MOV', 'video/mov'],
+    ['clip.webm', 'video/webm'],
+    ['clip.mpeg', 'video/mpeg'],
+    ['clip.mpg', 'video/mpg'],
+    ['clip.avi', 'video/avi'],
+    ['clip.flv', 'video/x-flv'],
+    ['clip.wmv', 'video/wmv'],
+    ['clip.3gp', 'video/3gpp'],
+  ])('maps %s → %s', (name, mime) => {
+    expect(videoMimeType(name)).toBe(mime);
+  });
+
+  it('throws an actionable error for an unsupported extension', () => {
+    expect(() => videoMimeType('clip.mkv')).toThrow(/mkv/);
+    expect(() => videoMimeType('clip')).toThrow(/Unsupported video/i);
+  });
+});
+
+describe('resolveVideoPath', () => {
+  it('resolves via GEMINI_INPUT_DIR like image paths', () => {
+    const p = join(dir, 'via-env.mp4');
+    writeFileSync(p, Buffer.from('x'));
+    process.env.GEMINI_INPUT_DIR = dir;
+    expect(resolveVideoPath('via-env.mp4')).toBe(p);
+  });
+
+  it('throws "Video not found" (not "Image not found") when missing', () => {
+    delete process.env.GEMINI_INPUT_DIR;
+    expect(() => resolveVideoPath('/nonexistent/clip.mp4')).toThrow(/Video not found/);
   });
 });

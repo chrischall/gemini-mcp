@@ -4,7 +4,7 @@ import { readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, type NamedImage } from './shared.js';
+import { emit, ASPECT_RATIOS, IMAGE_SIZES, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
 
 export function registerInteractTools(server: McpServer): void {
   server.registerTool(
@@ -63,7 +63,8 @@ export function registerInteractTools(server: McpServer): void {
           .string()
           .url()
           .optional()
-          .describe('Public YouTube URL as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
+          .describe('Public YouTube URL (or a previously uploaded Files API uri) as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
+        video_path: videoPathSchema,
         from_clipboard: z
           .boolean()
           .optional()
@@ -72,6 +73,7 @@ export function registerInteractTools(server: McpServer): void {
     },
     async (args) => {
       const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
+      const video = await resolveVideoInput(args);
       const r = await client.interact({
         input: args.input,
         images: inputs.length ? inputs : undefined,
@@ -81,13 +83,15 @@ export function registerInteractTools(server: McpServer): void {
         thinkingLevel: args.thinking_level,
         previousInteractionId: args.previous_interaction_id,
         googleSearch: args.google_search,
-        videoUrl: args.video_url,
+        videoUrl: video.videoUrl,
+        videoMimeType: video.videoMimeType,
       });
 
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const meta: Record<string, unknown> = { model, interaction_id: r.id };
       if (r.text) meta.text = r.text;
       if (r.grounding) meta.grounding = r.grounding;
+      if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
 
       const slug = args.filename ? baseName(args.filename) : slugify(args.input);
       const named: NamedImage[] = r.images.map((image, i) => ({

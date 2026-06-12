@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -603,5 +603,177 @@ describe('interact', () => {
     const sent = JSON.parse(cap.calls[0].init.body as string);
     expect(sent.input[0]).toEqual({ type: 'text', text: 'describe this video' });
     expect(sent.input).toContainEqual({ type: 'video', uri: 'https://www.youtube.com/watch?v=xyz', mime_type: 'video/mp4' });
+  });
+});
+
+// ── uploadVideo (Files API resumable upload) ────────────────────────────────
+// Live-verified flow (docs/GEMINI-API.md "Files API — local video upload"):
+//   1. POST /upload/v1beta/files (start) → empty body, x-goog-upload-url header
+//   2. POST <upload-url> (upload, finalize) → { file: { …, state } }
+//   3. GET /v1beta/files/<id> until state ACTIVE (response is UNWRAPPED)
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+type UploadCall = { url: string; init: RequestInit };
+
+/** Sequenced mock fetch for the 3-step upload flow. Each entry describes one response. */
+function uploadFetch(responses: Array<{ status?: number; headers?: Record<string, string>; body?: unknown }>): {
+  fn: typeof fetch;
+  calls: UploadCall[];
+} {
+  const calls: UploadCall[] = [];
+  const fn = (async (url: string, init: RequestInit) => {
+    const r = responses[Math.min(calls.length, responses.length - 1)];
+    calls.push({ url, init });
+    const status = r.status ?? 200;
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      headers: new Headers(r.headers ?? {}),
+      json: async () => r.body,
+      text: async () => (r.body === undefined ? '' : JSON.stringify(r.body)),
+    };
+  }) as unknown as typeof fetch;
+  return { fn, calls };
+}
+
+const UPLOAD_URL = 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=UID&upload_protocol=resumable';
+const FILE_URI = 'https://generativelanguage.googleapis.com/v1beta/files/abc123';
+const fileObj = (state: string) => ({
+  name: 'files/abc123',
+  uri: FILE_URI,
+  mimeType: 'video/mp4',
+  state,
+  expirationTime: '2026-06-14T15:26:39Z',
+});
+
+describe('uploadVideo', () => {
+  let dir: string;
+  let videoPath: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'gemini-upload-'));
+    videoPath = join(dir, 'clip.mp4');
+    writeFileSync(videoPath, Buffer.from('not really mp4 bytes'));
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('runs start → upload,finalize → poll-to-ACTIVE and returns the file uri', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const mock = uploadFetch([
+      { headers: { 'x-goog-upload-url': UPLOAD_URL } },
+      { body: { file: fileObj('PROCESSING') } },
+      { body: fileObj('ACTIVE') }, // poll response is unwrapped
+    ]);
+    const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+    const up = await c.uploadVideo(videoPath, 'video/mp4');
+
+    expect(up).toMatchObject({ uri: FILE_URI, name: 'files/abc123', mimeType: 'video/mp4' });
+    expect(up.expirationTime).toBe('2026-06-14T15:26:39Z');
+    expect(mock.calls).toHaveLength(3);
+
+    // start: /upload/v1beta prefix, resumable protocol headers, api key, display_name body
+    const start = mock.calls[0];
+    expect(start.url).toBe('https://generativelanguage.googleapis.com/upload/v1beta/files');
+    const sh = new Headers(start.init.headers as HeadersInit);
+    expect(sh.get('x-goog-api-key')).toBe('test-key');
+    expect(sh.get('x-goog-upload-protocol')).toBe('resumable');
+    expect(sh.get('x-goog-upload-command')).toBe('start');
+    expect(sh.get('x-goog-upload-header-content-length')).toBe('20');
+    expect(sh.get('x-goog-upload-header-content-type')).toBe('video/mp4');
+    expect(JSON.parse(start.init.body as string)).toEqual({ file: { display_name: 'clip.mp4' } });
+
+    // upload+finalize: posts the BLOB (file-backed, streamed) to the session url
+    const fin = mock.calls[1];
+    expect(fin.url).toBe(UPLOAD_URL);
+    const fh = new Headers(fin.init.headers as HeadersInit);
+    expect(fh.get('x-goog-upload-offset')).toBe('0');
+    expect(fh.get('x-goog-upload-command')).toBe('upload, finalize');
+    expect(fin.init.body).toBeInstanceOf(Blob);
+    expect((fin.init.body as Blob).size).toBe(20);
+
+    // poll: GET the files/<id> resource on the normal /v1beta base
+    expect(mock.calls[2].url).toBe('https://generativelanguage.googleapis.com/v1beta/files/abc123');
+    expect(mock.calls[2].init.method).toBe('GET');
+  });
+
+  it('skips polling when finalize already reports ACTIVE', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const mock = uploadFetch([
+      { headers: { 'x-goog-upload-url': UPLOAD_URL } },
+      { body: { file: fileObj('ACTIVE') } },
+    ]);
+    const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+    const up = await c.uploadVideo(videoPath, 'video/mp4');
+    expect(up.uri).toBe(FILE_URI);
+    expect(mock.calls).toHaveLength(2);
+  });
+
+  it('throws an actionable error when the start response lacks x-goog-upload-url', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const mock = uploadFetch([{ headers: {} }]);
+    const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+    await expect(c.uploadVideo(videoPath, 'video/mp4')).rejects.toThrow(/upload/i);
+  });
+
+  it('throws a redacted error on a non-2xx start response', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const mock = uploadFetch([{ status: 403, body: { error: { message: 'denied' } } }]);
+    const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+    await expect(c.uploadVideo(videoPath, 'video/mp4')).rejects.toThrow(/403/);
+  });
+
+  it('throws when processing ends in FAILED', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const mock = uploadFetch([
+      { headers: { 'x-goog-upload-url': UPLOAD_URL } },
+      { body: { file: fileObj('PROCESSING') } },
+      { body: fileObj('FAILED') },
+    ]);
+    const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+    await expect(c.uploadVideo(videoPath, 'video/mp4')).rejects.toThrow(/FAILED/);
+  });
+
+  it('gives up after the poll budget when the file never leaves PROCESSING', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    let slept = 0;
+    const mock = uploadFetch([
+      { headers: { 'x-goog-upload-url': UPLOAD_URL } },
+      { body: { file: fileObj('PROCESSING') } },
+      { body: fileObj('PROCESSING') }, // repeated for every poll
+    ]);
+    const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => { slept++; } });
+    await expect(c.uploadVideo(videoPath, 'video/mp4')).rejects.toThrow(/still processing/i);
+    expect(slept).toBeGreaterThan(0);
+    expect(slept).toBeLessThan(1000); // bounded, not infinite
+  });
+
+  it('rejects a server-returned file name that is not files/<id> (path-injection guard)', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const mock = uploadFetch([
+      { headers: { 'x-goog-upload-url': UPLOAD_URL } },
+      { body: { file: { ...fileObj('PROCESSING'), name: 'files/../models/evil' } } },
+    ]);
+    const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+    await expect(c.uploadVideo(videoPath, 'video/mp4')).rejects.toThrow(/unexpected file name/i);
+  });
+});
+
+describe('video mime passthrough', () => {
+  it('generate uses videoMimeType for the file_data part when given', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(genFixture);
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generate({ prompt: 'v', videoUrl: FILE_URI, videoMimeType: 'video/webm' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.contents[0].parts).toContainEqual({ file_data: { file_uri: FILE_URI, mime_type: 'video/webm' } });
+  });
+
+  it('interact uses videoMimeType for the video input when given', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'v', videoUrl: FILE_URI, videoMimeType: 'video/webm' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.input).toContainEqual({ type: 'video', uri: FILE_URI, mime_type: 'video/webm' });
   });
 });

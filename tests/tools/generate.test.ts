@@ -302,3 +302,59 @@ describe('gemini_edit_image input-dir resolution via GEMINI_INPUT_DIR', () => {
     await h.close();
   });
 });
+
+describe('gemini_generate_image video_path (Files API upload)', () => {
+  const FILE_URI = 'https://generativelanguage.googleapis.com/v1beta/files/abc123';
+  const uploaded = { name: 'files/abc123', uri: FILE_URI, mimeType: 'video/mp4', expirationTime: '2026-06-14T15:26:39Z' };
+
+  it('uploads the local video then generates with the returned files/ uri', async () => {
+    const videoPath = join(dir, 'clip.mp4');
+    writeFileSync(videoPath, Buffer.from('vid'));
+    const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
+    const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', { prompt: 'flag', video_path: videoPath, output_dir: dir });
+    expect(up).toHaveBeenCalledWith(videoPath, 'video/mp4');
+    expect(gen).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: FILE_URI, videoMimeType: 'video/mp4' }));
+    // meta surfaces the uploaded file so callers can reuse the uri (48h TTL)
+    const data = parseToolResult<{ video_file: { uri: string; expires?: string } }>(res);
+    expect(data.video_file).toMatchObject({ uri: FILE_URI });
+    await h.close();
+  });
+
+  it('uploads ONCE for count > 1', async () => {
+    const videoPath = join(dir, 'clip.mp4');
+    writeFileSync(videoPath, Buffer.from('vid'));
+    const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
+    const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_generate_image', { prompt: 'flag', video_path: videoPath, count: 3, output_dir: dir });
+    expect(up).toHaveBeenCalledTimes(1);
+    expect(gen).toHaveBeenCalledTimes(3);
+    await h.close();
+  });
+
+  it('rejects video_path together with video_url', async () => {
+    const up = vi.spyOn(client, 'uploadVideo');
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', {
+      prompt: 'flag',
+      video_path: '/tmp/clip.mp4',
+      video_url: 'https://www.youtube.com/watch?v=abc',
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/not both/i);
+    expect(up).not.toHaveBeenCalled();
+    await h.close();
+  });
+
+  it('errors before uploading when the video file does not exist', async () => {
+    const up = vi.spyOn(client, 'uploadVideo');
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', { prompt: 'flag', video_path: '/nonexistent/clip.mp4' });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/Video not found/);
+    expect(up).not.toHaveBeenCalled();
+    await h.close();
+  });
+});

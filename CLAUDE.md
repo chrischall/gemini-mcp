@@ -109,6 +109,15 @@ object (`model`, `seed`, optional `text`, `grounding`, `interaction_id`).
 `from_clipboard` (macOS only — see Quirks, issue #13). `gemini_edit_image`
 requires at least one input source.
 
+**Video inputs** (`gemini_generate_image` / `gemini_interact`): `video_url`
+(public YouTube URL, or a previously uploaded `files/…` uri) or `video_path`
+(local file). A `video_path` goes through `resolveVideoInput` (`tools/shared.ts`):
+resolve the path, `client.uploadVideo()` to the Files API (resumable protocol,
+streamed from disk via `fileBlob`/`fs.openAsBlob` — never buffered), poll
+`PROCESSING`→`ACTIVE`, then reference the returned uri. The uploaded file
+(uri/name/expiry, ~48h TTL, 2 GB cap) is echoed as `video_file` in the result
+meta so callers can reuse the uri. Both video params together is an error.
+
 **`google_search`** grounds generation in live Google Search; surfaced sources
 (`generateContent`) or queries (`interact`) are echoed in the result metadata.
 
@@ -173,6 +182,13 @@ requires at least one input source.
   JPEG); non-darwin throws an actionable `McpToolError`. The clipboard module is
   dynamically imported only when `from_clipboard` is set, keeping `child_process`
   off the default path.
+- **The Files API upload is raw `fetch`, not `createApiClient`.** The resumable
+  upload's start step returns the session URL in a *response header*
+  (`x-goog-upload-url`, empty body) and the finalize step posts a binary Blob —
+  neither fits `fetchJson`. The finalize response wraps the File in `{file:…}`;
+  the GET poll returns it **unwrapped** (verified; see `docs/GEMINI-API.md`).
+  The session URL is self-authorizing (no api-key header on finalize). The
+  PROCESSING→ACTIVE poll goes through the shared client.
 - **`imagen-*` excluded.** `filterImageModels` keeps Gemini image models but drops
   `imagen-*` — those use a different `:predict` API this server doesn't implement.
 
