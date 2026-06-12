@@ -236,3 +236,36 @@ describe('gemini_interact from_clipboard', () => {
     await h.close();
   });
 });
+
+describe('gemini_interact video_path (Files API upload)', () => {
+  const FILE_URI = 'https://generativelanguage.googleapis.com/v1beta/files/abc123';
+  const uploaded = { name: 'files/abc123', uri: FILE_URI, mimeType: 'video/webm', expirationTime: '2026-06-14T15:26:39Z' };
+
+  it('uploads the local video then interacts with the returned files/ uri', async () => {
+    const videoPath = join(dir, 'clip.webm');
+    writeFileSync(videoPath, Buffer.from('vid'));
+    const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
+    const spy = vi.spyOn(client, 'interact').mockResolvedValue({ id: 'i1', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'flag', video_path: videoPath, output_dir: dir });
+    expect(up).toHaveBeenCalledWith(videoPath, 'video/webm');
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: FILE_URI, videoMimeType: 'video/webm' }));
+    const data = parseToolResult<{ video_file: { uri: string } }>(res);
+    expect(data.video_file).toMatchObject({ uri: FILE_URI });
+    await h.close();
+  });
+
+  it('rejects video_path together with video_url', async () => {
+    const up = vi.spyOn(client, 'uploadVideo');
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', {
+      input: 'flag',
+      video_path: '/tmp/clip.mp4',
+      video_url: 'https://www.youtube.com/watch?v=abc',
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/not both/i);
+    expect(up).not.toHaveBeenCalled();
+    await h.close();
+  });
+});

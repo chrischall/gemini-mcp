@@ -118,7 +118,79 @@ on `gemini-3.1-flash-image`):
 { "parts":[ {"text":"<prompt>"},
             {"file_data":{"file_uri":"https://www.youtube.com/watch?v=…","mime_type":"video/mp4"}} ] }
 ```
-(Files API uploads for non-YouTube video are a separate upload flow — out of scope.)
+For **local (non-YouTube) video**, upload the bytes to the Files API first and use
+the returned `files/…` URI — see the next section.
+
+### Files API — local video upload (verified 2026-06-12)
+
+Resumable upload protocol, captured live with `curl` against a real key (2s/5KB
+test mp4). Three steps:
+
+**1. Start** — `POST https://generativelanguage.googleapis.com/upload/v1beta/files`
+(note the `/upload/v1beta` prefix — NOT under the normal `/v1beta` base):
+
+```
+x-goog-api-key: $GEMINI_API_KEY
+X-Goog-Upload-Protocol: resumable
+X-Goog-Upload-Command: start
+X-Goog-Upload-Header-Content-Length: <total bytes>
+X-Goog-Upload-Header-Content-Type: video/mp4
+Content-Type: application/json
+
+{"file": {"display_name": "<name>"}}
+```
+
+Response: `200` with an **empty body**; the upload session URL is in the
+**`x-goog-upload-url` response header** (same host, `?upload_id=…&upload_protocol=resumable`).
+Also returned: `x-goog-upload-status: active` and
+`x-goog-upload-chunk-granularity: 8388608` (8 MiB — only matters for chunked
+multi-request uploads; a single-shot `upload, finalize` of any size is fine).
+
+**2. Upload + finalize** — `POST <x-goog-upload-url>` with the raw video bytes
+as the body (no api-key header needed — the session URL is self-authorizing;
+verified: finalize succeeded without it):
+
+```
+Content-Length: <total bytes>
+X-Goog-Upload-Offset: 0
+X-Goog-Upload-Command: upload, finalize
+```
+
+Response: `200`, `x-goog-upload-status: final`, body **wraps the File in `{file:}`**:
+
+```jsonc
+{
+  "file": {
+    "name": "files/3c04ao1lzudw",          // resource name: files/<id>
+    "displayName": "gemini-8-test",
+    "mimeType": "video/mp4",
+    "sizeBytes": "5101",                    // string, not number
+    "createTime": "2026-06-12T15:26:39Z",
+    "expirationTime": "2026-06-14T15:26:39Z", // createTime + 48h TTL (verified)
+    "sha256Hash": "<base64>",
+    "uri": "https://generativelanguage.googleapis.com/v1beta/files/3c04ao1lzudw",
+    "state": "PROCESSING",                  // videos start PROCESSING
+    "source": "UPLOADED"
+  }
+}
+```
+
+**3. Poll until ACTIVE** — `GET /v1beta/files/<id>` (normal base URL,
+`x-goog-api-key` header). ⚠️ The poll response is the File object **unwrapped**
+(no `{file:}` wrapper — unlike finalize). For the tiny test clip, the first poll
+~1s later was already `ACTIVE`, with `videoMetadata: { videoDuration: "2s" }`
+added. Documented states: `PROCESSING` → `ACTIVE` | `FAILED` (a `FAILED` file
+carries an `error` field).
+
+**Using the file** (both verified live, 200 + image, `gemini-3.1-flash-image`):
+- `generateContent`: `{"file_data":{"file_uri":"<file.uri>","mime_type":"video/mp4"}}`
+  — same part shape as the YouTube path, with the `files/…` URI.
+- Interactions: `{"type":"video","uri":"<file.uri>","mime_type":"video/mp4"}`.
+
+**Limits (documented, not load-tested):** 2 GB max per file, 20 GB per project,
+48h TTL (the TTL is verified above — `expirationTime` = `createTime` + 48h).
+Supported video MIME types: `video/mp4`, `video/mpeg`, `video/mov`, `video/avi`,
+`video/x-flv`, `video/mpg`, `video/webm`, `video/wmv`, `video/3gpp`.
 
 ## Interactions API — BETA (verified 2026-06-08)
 

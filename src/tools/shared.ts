@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { textResult } from '@chrischall/mcp-utils';
+import { textResult, McpToolError } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { GeneratedImage } from '../client.js';
-import { writeImage, resolveOutputDir } from '../images.js';
+import { client, type GeneratedImage } from '../client.js';
+import { writeImage, resolveOutputDir, resolveVideoPath, videoMimeType } from '../images.js';
 
 /** Supported output aspect ratios (Gemini image API). */
 export const ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9', '1:4', '4:1', '1:8', '8:1'] as const;
@@ -35,6 +35,42 @@ export const sharedImageSchema = {
 
 /** A generated image plus the base filename (no extension) to write it under. */
 export interface NamedImage { image: GeneratedImage; base: string; }
+
+/** The resolved video reference a tool passes to the client, plus meta to echo. */
+export interface VideoInput {
+  videoUrl?: string;
+  videoMimeType?: string;
+  /** Echoed in result meta so callers can reuse the uploaded uri (~48h TTL). */
+  videoFileMeta?: Record<string, unknown>;
+}
+
+/**
+ * Turn the `video_url` / `video_path` tool args into the client's video opts.
+ * A `video_path` is resolved locally (absolute → $GEMINI_INPUT_DIR → cwd),
+ * uploaded to the Gemini Files API (streamed, never buffered), and waited to
+ * `ACTIVE`; the returned `files/…` uri is what the generate call references.
+ * The uploaded file (uri + expiry) is echoed via `videoFileMeta` so a caller
+ * can pass the uri straight back as `video_url` instead of re-uploading.
+ */
+export async function resolveVideoInput(args: { video_url?: string; video_path?: string }): Promise<VideoInput> {
+  if (args.video_url && args.video_path) {
+    throw new McpToolError('Provide `video_url` OR `video_path`, not both.');
+  }
+  if (!args.video_path) return { videoUrl: args.video_url };
+  const path = resolveVideoPath(args.video_path);
+  const uploaded = await client.uploadVideo(path, videoMimeType(args.video_path));
+  const videoFileMeta: Record<string, unknown> = { uri: uploaded.uri, name: uploaded.name };
+  if (uploaded.expirationTime) videoFileMeta.expires = uploaded.expirationTime;
+  return { videoUrl: uploaded.uri, videoMimeType: uploaded.mimeType, videoFileMeta };
+}
+
+/** Shared zod field for the `video_path` tool param. */
+export const videoPathSchema = z
+  .string()
+  .optional()
+  .describe(
+    'Path to a local video file — uploaded to the Gemini Files API (~48h retention, 2 GB max) and used as the video reference. Alternative to video_url.',
+  );
 
 /**
  * Return the provided seed, or pick a random one. Capped well below INT32_MAX

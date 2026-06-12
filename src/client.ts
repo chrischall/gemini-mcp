@@ -1,6 +1,6 @@
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadDotenvSafely, readEnvVar, McpToolError, createApiClient, type ApiClient } from '@chrischall/mcp-utils';
+import { loadDotenvSafely, readEnvVar, McpToolError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, type GeminiModel, type RawModel } from './models.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -15,6 +15,18 @@ const API_REVISION = '2026-05-20';
 // Per-request abort budget. Image generation routinely runs 30s+ on the Pro
 // model, so this is deliberately 60s (NOT the fleet's usual 15–30s).
 const REQUEST_TIMEOUT_MS = 60_000;
+
+// Files API (local-video upload — docs/GEMINI-API.md "Files API — local video
+// upload", verified 2026-06-12). The resumable upload endpoint lives under
+// `/upload/v1beta`, NOT the normal `/v1beta` base.
+const UPLOAD_BASE_URL = 'https://generativelanguage.googleapis.com/upload/v1beta';
+// Documented Files API per-file cap (2 GB); enforced locally so a too-big video
+// fails fast instead of uploading gigabytes just to be rejected.
+const FILE_MAX_BYTES = 2 * 1024 ** 3;
+// PROCESSING→ACTIVE poll: every 2s for up to 5 minutes. A 2s clip went ACTIVE
+// in ~1s (verified); longer videos take proportionally longer to process.
+const FILE_POLL_INTERVAL_MS = 2_000;
+const FILE_POLL_MAX_ATTEMPTS = 150;
 
 export interface GeneratedImage { base64: string; mimeType: string; }
 
@@ -41,6 +53,29 @@ export interface InteractOpts {
   previousInteractionId?: string;
   googleSearch?: boolean;
   videoUrl?: string;
+  /** MIME type for the video reference (default `video/mp4` — the YouTube path). */
+  videoMimeType?: string;
+}
+
+/** A video uploaded to the Gemini Files API, ready to reference by `uri`. */
+export interface UploadedVideo {
+  /** Resource name, `files/<id>`. */
+  name: string;
+  /** Full URI to pass as the generate `file_uri` / interact `uri`. */
+  uri: string;
+  mimeType: string;
+  /** When the file is deleted server-side (~48h after upload). */
+  expirationTime?: string;
+}
+
+/** Raw File resource (finalize wraps it in `{file:}`; the GET poll does not). */
+interface GeminiFile {
+  name?: string;
+  uri?: string;
+  mimeType?: string;
+  state?: string;
+  expirationTime?: string;
+  error?: { message?: string };
 }
 
 export interface InteractResult { id: string; images: GeneratedImage[]; text?: string; grounding?: GroundingResult; }
@@ -55,6 +90,8 @@ export interface GenerateOpts {
   thinkingLevel?: 'minimal' | 'high';
   googleSearch?: boolean;
   videoUrl?: string;
+  /** MIME type for the video reference (default `video/mp4` — the YouTube path). */
+  videoMimeType?: string;
 }
 
 export class GeminiClient {
@@ -62,8 +99,10 @@ export class GeminiClient {
   private readonly configError: Error | null;
   private readonly api: ApiClient;
   private readonly interactionsApi: ApiClient;
+  private readonly fetchImpl: typeof fetch;
+  private readonly sleep: (ms: number) => Promise<void>;
 
-  constructor(opts: { fetchImpl?: typeof fetch } = {}) {
+  constructor(opts: { fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void> } = {}) {
     const key = readEnvVar('GEMINI_API_KEY');
     if (!key) {
       this.apiKey = null;
@@ -80,11 +119,13 @@ export class GeminiClient {
     // `getToken` calls requireKey() so key resolution stays at REQUEST time:
     // the server boots without a key and the actionable config error (with its
     // aistudio hint) surfaces on the first tool call, not at startup.
+    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     const shared = {
       tokenHeader: 'x-goog-api-key',
       getToken: () => this.requireKey(),
       timeout: REQUEST_TIMEOUT_MS,
-      fetchImpl: opts.fetchImpl ?? fetch,
+      fetchImpl: this.fetchImpl,
     };
     this.api = createApiClient({ baseUrl: BASE_URL, serviceName: SERVICE, ...shared });
     // Separate client for the beta Interactions API: same base URL, but every
@@ -111,6 +152,104 @@ export class GeminiClient {
     return this.api.fetchJson<T>(method, path, body !== undefined ? { body } : {});
   }
 
+  /**
+   * Upload a local video to the Gemini Files API (resumable protocol) and wait
+   * for it to become usable. Three live-verified steps (docs/GEMINI-API.md
+   * "Files API — local video upload"):
+   *
+   *  1. `POST {UPLOAD_BASE_URL}/files` (command `start`) → the upload session
+   *     URL arrives in the `x-goog-upload-url` RESPONSE HEADER (body is empty).
+   *  2. `POST <session url>` (command `upload, finalize`) with the bytes —
+   *     a file-backed Blob (`fileBlob`/`fs.openAsBlob`), so fetch STREAMS the
+   *     video from disk; it is never buffered in memory. Response: `{file:…}`.
+   *  3. Poll `GET /v1beta/files/<id>` while `state` is `PROCESSING`, until
+   *     `ACTIVE` (the poll response is the File object UNWRAPPED).
+   *
+   * These two upload calls are raw `fetchImpl` (not `createApiClient`): step 1
+   * needs the response *header* and step 2 posts a binary body — neither fits
+   * `fetchJson`. The poll DOES go through the shared client (timeout + retry).
+   * Uploads deliberately have no abort timeout: a multi-hundred-MB video can
+   * legitimately take longer than any fixed budget.
+   *
+   * Returned files live ~48h (`expirationTime`); per-file cap is 2 GB
+   * (enforced locally before any bytes are sent).
+   */
+  async uploadVideo(path: string, mimeType: string): Promise<UploadedVideo> {
+    const key = this.requireKey();
+    const blob = await fileBlob(path, { type: mimeType, maxBytes: FILE_MAX_BYTES, label: 'Video' });
+
+    // 1. start — establish the resumable upload session
+    const startPath = '/files';
+    const startRes = await this.fetchImpl(`${UPLOAD_BASE_URL}${startPath}`, {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': key,
+        'X-Goog-Upload-Protocol': 'resumable',
+        'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': String(blob.size),
+        'X-Goog-Upload-Header-Content-Type': mimeType,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ file: { display_name: basename(path) } }),
+    });
+    if (!startRes.ok) {
+      throw new McpToolError(
+        formatApiError(startRes.status, 'POST', `/upload/v1beta${startPath}`, await startRes.text(), { service: SERVICE }),
+      );
+    }
+    const uploadUrl = startRes.headers.get('x-goog-upload-url');
+    if (!uploadUrl) {
+      throw new McpToolError(`${SERVICE} upload start did not return an x-goog-upload-url header`, {
+        hint: 'The Files API resumable-upload contract may have changed — see docs/GEMINI-API.md.',
+      });
+    }
+
+    // 2. upload + finalize — single shot; the session URL is self-authorizing
+    // (no api-key header needed; verified live).
+    const upRes = await this.fetchImpl(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'X-Goog-Upload-Offset': '0',
+        'X-Goog-Upload-Command': 'upload, finalize',
+      },
+      body: blob,
+    });
+    if (!upRes.ok) {
+      throw new McpToolError(
+        formatApiError(upRes.status, 'POST', '/upload/v1beta/files (finalize)', await upRes.text(), { service: SERVICE }),
+      );
+    }
+    let file = ((await upRes.json()) as { file?: GeminiFile }).file ?? {};
+    // The server echoes the resource name (`files/<id>`); it is interpolated
+    // into the poll path below, so reject anything that could escape the
+    // `/files/` segment (same posture as the model-id guard).
+    const name = file.name ?? '';
+    if (!/^files\/[\w-]+$/.test(name)) {
+      throw new McpToolError(`${SERVICE} upload returned an unexpected file name: ${name || '(none)'}`);
+    }
+
+    // 3. poll PROCESSING → ACTIVE
+    for (let attempt = 0; file.state === 'PROCESSING'; attempt++) {
+      if (attempt >= FILE_POLL_MAX_ATTEMPTS) {
+        throw new McpToolError(`${SERVICE} video file ${name} is still processing after ${(FILE_POLL_INTERVAL_MS * FILE_POLL_MAX_ATTEMPTS) / 60_000} minutes`, {
+          hint: 'Very long videos can take a while to process — retry later by passing the file uri as video_url.',
+        });
+      }
+      await this.sleep(FILE_POLL_INTERVAL_MS);
+      file = await this.call<GeminiFile>('GET', `/${name}`);
+    }
+    if (file.state !== 'ACTIVE') {
+      throw new McpToolError(
+        `${SERVICE} video file processing failed (state ${file.state ?? 'unknown'})${file.error?.message ? `: ${file.error.message}` : ''}`,
+        { hint: 'Check the video is a supported format/codec and under 2 GB.' },
+      );
+    }
+    if (!file.uri) {
+      throw new McpToolError(`${SERVICE} did not return a uri for uploaded file ${name}`);
+    }
+    return { name, uri: file.uri, mimeType: file.mimeType ?? mimeType, expirationTime: file.expirationTime };
+  }
+
   async listModels(): Promise<GeminiModel[]> {
     const data = await this.call<{ models?: RawModel[] }>('GET', '/models?pageSize=200');
     return filterImageModels(data.models ?? []);
@@ -123,7 +262,7 @@ export class GeminiClient {
       parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
     }
     if (opts.videoUrl) {
-      parts.push({ file_data: { file_uri: opts.videoUrl, mime_type: 'video/mp4' } });
+      parts.push({ file_data: { file_uri: opts.videoUrl, mime_type: opts.videoMimeType ?? 'video/mp4' } });
     }
     const generationConfig: Record<string, unknown> = { responseModalities: ['TEXT', 'IMAGE'] };
     if (opts.aspectRatio || opts.imageSize) {
@@ -185,7 +324,7 @@ export class GeminiClient {
       inputParts.push({ type: 'image', mime_type: img.mimeType, data: img.base64 });
     }
     if (opts.videoUrl) {
-      inputParts.push({ type: 'video', uri: opts.videoUrl, mime_type: 'video/mp4' });
+      inputParts.push({ type: 'video', uri: opts.videoUrl, mime_type: opts.videoMimeType ?? 'video/mp4' });
     }
 
     const responseFormat: Record<string, unknown> = { type: 'image', mime_type: 'image/jpeg' };
