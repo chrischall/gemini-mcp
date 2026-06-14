@@ -236,6 +236,7 @@ before changing it:
 jq -r '.description | length' server.json
 ```
 
+<!-- pr-workflow:v2 -->
 ## Pull requests & release notes
 
 **Default workflow: branch + PR, even for solo work.** Direct pushes to `main`
@@ -243,9 +244,9 @@ skip review *and* the auto-generated release-notes block. Apply exactly one labe
 per PR so it files under the right release-notes section: `enhancement` →
 Features, `bug` → Bug Fixes, `security`, `refactor`, `documentation`, `test`,
 `dependencies`, `ci`/`github_actions` → CI & Build, none → Other Changes,
-`ignore-for-release` → hidden. The **PR title** becomes the changelog bullet —
-write it user-facing (`gemini_interact: surface google_search queries`), not
-internal shorthand.
+`ignore-for-release` → hidden.
+
+The **PR title MUST be a Conventional Commit**, written user-facing (`fix(scope): …`, `feat(scope): …`), not internal shorthand. Because the repo squash-merges, the PR title *becomes the squash commit's subject line* — the only thing release-please parses to pick the version bump and changelog section. Only `feat` (minor), `fix` (patch), and `!`/`BREAKING CHANGE` (major) cut a release; `perf`/`refactor`/`docs` show in the changelog without bumping; `ci`/`test`/`build`/`chore` are recognised but hidden (see `release-please-config.json` → `changelog-sections`). A title without a conventional type is invisible to release-please — no bump, no changelog line. Prefixes in *individual commits* don't help; squash keeps only the title.
 
 **Don't run `gh pr merge` yourself.** `pr-auto-review.yml` reviews every PR
 (except the release PR) and adds `ready-to-merge` on a `pass`; `auto-merge.yml`
