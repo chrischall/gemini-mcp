@@ -4,7 +4,7 @@ Guidance for Claude working in this repo.
 
 ## TL;DR
 
-v0.5.0: Google **Gemini** image-generation MCP server. Wraps the Generative
+v0.6.0: Google **Gemini** image-generation MCP server. Wraps the Generative
 Language REST API (`https://generativelanguage.googleapis.com/v1beta`) and
 exposes 5 tools to Claude over stdio: text→image and image→image generation,
 multi-turn conversational editing, consistent image *sets*, and model listing
@@ -249,15 +249,41 @@ Features, `bug` → Bug Fixes, `security`, `refactor`, `documentation`, `test`,
 The **PR title MUST be a Conventional Commit**, written user-facing (`fix(scope): …`, `feat(scope): …`), not internal shorthand. Because the repo squash-merges, the PR title *becomes the squash commit's subject line* — the only thing release-please parses to pick the version bump and changelog section. Only `feat` (minor), `fix` (patch), and `!`/`BREAKING CHANGE` (major) cut a release; `perf`/`refactor`/`docs` show in the changelog without bumping; `ci`/`test`/`build`/`chore` are recognised but hidden (see `release-please-config.json` → `changelog-sections`). A title without a conventional type is invisible to release-please — no bump, no changelog line. Prefixes in *individual commits* don't help; squash keeps only the title.
 
 **Don't run `gh pr merge` yourself.** `pr-auto-review.yml` reviews every PR
-(except the release PR) and adds `ready-to-merge` on a `pass`; `auto-merge.yml`
-then arms `gh pr merge --auto --squash` (squash-merge only; the moment CI is
-green it merges). Opening with `gh pr create --label <label>` is the whole job.
-On a `warn`/`fail` verdict you've decided to ship anyway, add the label yourself.
-**Release PRs are the one manual touch** — add `ready-to-merge` when ready to ship.
+(except the release PR) and adds `ready-to-merge` on a `pass` **or** a `warn`
+(nits-only) verdict; `auto-merge.yml` then arms `gh pr merge --auto --squash`
+(squash-merge only; the moment CI is green it merges). A `warn` or `fail` verdict
+also opens/updates an `auto-review-followup` issue capturing the findings (see
+below); only a `fail` blocks the merge. Opening with `gh pr create --label <label>`
+is the whole job. On a `fail` verdict you've decided to ship anyway, add the label
+yourself. **Release PRs are the one manual touch** — add `ready-to-merge` when
+ready to ship.
 
 Because PRs auto-merge as soon as auto-review passes, **don't open a PR until the
 feature is genuinely complete** — push commits to the branch first, or open a
 GitHub draft (auto-review skips drafts) for a checkpoint review without shipping.
+
+### Auto-review follow-up issues
+
+When a PR's auto-review verdict is `warn` or `fail`, the `chrischall/workflows`
+pipeline opens or updates a single `auto-review-followup` issue ("Auto-review
+follow-ups for PR #N") whose checklist captures every finding, and links it from
+the PR's `<!-- auto-review-verdict -->` comment (`📋 Tracking follow-ups: #N`).
+`warn` (nits only) still auto-merges — the issue carries the nits forward, so most
+nits are fixed in a *later* PR; `fail` blocks until the important findings are
+addressed on the PR itself.
+
+When asked to address the auto-review comments / review findings on a PR:
+
+1. Read the verdict comment, open the linked `auto-review-followup` issue, and
+   treat its checklist as the work list (alongside any inline review comments).
+2. Resolve each item, checking off only what you've **verified** is genuinely fixed.
+3. If every item is resolved on the current PR, add `Closes #<issue>` to that PR's
+   body so the merge closes it; if some are deferred, check off only the resolved
+   ones and leave the issue open.
+4. For nits whose `warn` PR already auto-merged, address them in a follow-up PR
+   that references `Closes #<issue>`.
+
+(Mirrors the fleet-wide convention in `~/.claude/CLAUDE.md`.)
 
 ## What not to do
 
