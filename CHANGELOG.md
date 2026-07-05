@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/chrischall/gemini-mcp/compare/v0.6.0...v0.6.1) (2026-07-05)
+
+
+### Documentation
+
+* refresh CLAUDE.md and document auto-review follow-up convention ([#29](https://github.com/chrischall/gemini-mcp/issues/29)) ([bc0875c](https://github.com/chrischall/gemini-mcp/commit/bc0875c671f728fcb9ed97f9d69d97b8d38713e1))
+* require Conventional Commit PR titles for release-please ([#25](https://github.com/chrischall/gemini-mcp/issues/25)) ([6c222e2](https://github.com/chrischall/gemini-mcp/commit/6c222e2e6d91bb31929f05257c6536477561599d))
+
 ## [0.6.0](https://github.com/chrischall/gemini-mcp/compare/v0.5.0...v0.6.0) (2026-06-13)
 
 
