@@ -262,7 +262,7 @@ describe('gemini_edit_image', () => {
     writeFileSync(inPath, Buffer.from(PNG, 'base64'));
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', images: [inPath], output_dir: dir });
+    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', images: [inPath], confirm: true, output_dir: dir });
     expect(parseToolResult<{ images: string[] }>(res).images).toHaveLength(1);
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ images: [{ base64: PNG, mimeType: 'image/png' }] }),
@@ -279,6 +279,7 @@ describe('gemini_edit_image', () => {
       prompt: 'make it blue',
       images: [inPath],
       filename: 'edited-output',
+      confirm: true,
       output_dir: dir,
     });
     const data = parseToolResult<{ images: string[] }>(res);
@@ -317,7 +318,7 @@ describe('gemini_generate_image input-dir resolution via GEMINI_INPUT_DIR', () =
 
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_generate_image', { prompt: 'style transfer', images: ['ref.png'], output_dir: dir });
+    const res = await h.callTool('gemini_generate_image', { prompt: 'style transfer', images: ['ref.png'], confirm: true, output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
@@ -336,7 +337,7 @@ describe('gemini_edit_image input-dir resolution via GEMINI_INPUT_DIR', () => {
 
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', images: ['edit-src.png'], output_dir: dir });
+    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', images: ['edit-src.png'], confirm: true, output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
@@ -355,7 +356,7 @@ describe('gemini_generate_image video_path (Files API upload)', () => {
     const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
     const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_generate_image', { prompt: 'flag', video_path: videoPath, output_dir: dir });
+    const res = await h.callTool('gemini_generate_image', { prompt: 'flag', video_path: videoPath, confirm: true, output_dir: dir });
     expect(up).toHaveBeenCalledWith(videoPath, 'video/mp4');
     expect(gen).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: FILE_URI, videoMimeType: 'video/mp4' }));
     // meta surfaces the uploaded file so callers can reuse the uri (48h TTL)
@@ -370,7 +371,7 @@ describe('gemini_generate_image video_path (Files API upload)', () => {
     const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
     const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerGenerateTools);
-    await h.callTool('gemini_generate_image', { prompt: 'flag', video_path: videoPath, count: 3, output_dir: dir });
+    await h.callTool('gemini_generate_image', { prompt: 'flag', video_path: videoPath, count: 3, confirm: true, output_dir: dir });
     expect(up).toHaveBeenCalledTimes(1);
     expect(gen).toHaveBeenCalledTimes(3);
     await h.close();
@@ -383,6 +384,7 @@ describe('gemini_generate_image video_path (Files API upload)', () => {
       prompt: 'flag',
       video_path: '/tmp/clip.mp4',
       video_url: 'https://www.youtube.com/watch?v=abc',
+      confirm: true,
     });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/not both/i);

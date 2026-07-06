@@ -5,6 +5,10 @@ import { resolveModel } from '../models.js';
 import { client, type GroundingResult } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
+import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
+
+const GENERATE_ENDPOINT = '/v1beta/models/{model}:generateContent';
+const SEND_LOCAL_ACTION = 'Send local file input(s) to the Gemini API';
 
 // generateContent output can't seed an Interactions-API conversation, so
 // results point follow-up edits at gemini_interact instead of an id.
@@ -28,10 +32,16 @@ export function registerGenerateTools(server: McpServer): void {
         images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs'),
         video_url: z.string().url().optional().describe('Public YouTube URL (or a previously uploaded Files API uri) as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
         video_path: videoPathSchema,
+        confirm: schemaConfirm,
         ...sharedImageSchema,
       },
     },
     async (args) => {
+      // Confirm-gate local file inputs: a prompt-injected `images`/`video_path`
+      // could exfiltrate a local file. Pure text-to-image calls (no local input)
+      // are unaffected. Dry-run makes NO API call.
+      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, SEND_LOCAL_ACTION, GENERATE_ENDPOINT, args.images, args.video_path);
+      if (gate) return gate;
       const count = args.count ?? 1;
       const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
@@ -88,6 +98,7 @@ export function registerGenerateTools(server: McpServer): void {
         images: z.array(z.string().min(1)).optional().describe('Paths to input image file(s) (1 = edit, 2+ = compose)'),
         images_base64: z.array(z.string().min(1)).optional().describe('Input images as base64 strings or data URIs'),
         filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
+        confirm: schemaConfirm,
         ...sharedImageSchema,
       },
     },
@@ -97,6 +108,10 @@ export function registerGenerateTools(server: McpServer): void {
       if (!hasPaths && !hasBase64 && !args.from_clipboard) {
         throw new McpToolError('Provide at least one input image via `images`, `images_base64`, or `from_clipboard`.');
       }
+      // Confirm-gate local file inputs (see gemini_generate_image). base64 /
+      // clipboard inputs are not local-path reads and pass through ungated.
+      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, SEND_LOCAL_ACTION, GENERATE_ENDPOINT, args.images);
+      if (gate) return gate;
       const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
