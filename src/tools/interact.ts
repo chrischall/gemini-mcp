@@ -3,7 +3,6 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
-import { resolve } from 'node:path';
 import { slugify, baseName, gatherImageInputs, resolveImagePath } from '../images.js';
 import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
 
@@ -35,7 +34,7 @@ function splitReattachedOutputs(images: string[]): { kept: string[]; dropped: st
   const dropped: string[] = [];
   for (const p of images) {
     let resolved: string | undefined;
-    try { resolved = resolve(resolveImagePath(p)); } catch { /* kept; loading will error actionably */ }
+    try { resolved = resolveImagePath(p); } catch { /* kept; loading will error actionably */ }
     (resolved && writtenOutputs.has(resolved) ? dropped : kept).push(p);
   }
   return { kept, dropped };
@@ -168,7 +167,8 @@ export function registerInteractTools(server: McpServer): void {
         base: r.images.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
       }));
 
-      return emit(named, args, meta, (paths) => { for (const p of paths) writtenOutputs.add(resolve(p)); });
+      // writeImage returns already-resolved absolute paths.
+      return emit(named, args, meta, (paths) => { for (const p of paths) writtenOutputs.add(p); });
     },
   );
 }
