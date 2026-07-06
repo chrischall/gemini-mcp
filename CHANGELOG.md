@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.2](https://github.com/chrischall/gemini-mcp/compare/v0.7.1...v0.7.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **images:** always resolve input paths to absolute; drop redundant resolve() calls ([#48](https://github.com/chrischall/gemini-mcp/issues/48)) ([a998545](https://github.com/chrischall/gemini-mcp/commit/a998545150ca1dfe6721ab8ac8506f4ff3e2a947))
+* **interact:** drop re-attached prior outputs on chained calls; warn in schema and hint ([#46](https://github.com/chrischall/gemini-mcp/issues/46)) ([f4bdc2d](https://github.com/chrischall/gemini-mcp/commit/f4bdc2d14689d280802fa2da298744a3eff17666))
+
 ## [0.7.1](https://github.com/chrischall/gemini-mcp/compare/v0.7.0...v0.7.1) (2026-07-06)
 
 
