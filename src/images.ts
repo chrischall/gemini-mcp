@@ -61,7 +61,9 @@ export async function writeImage(dir: string, base: string, base64: string, mime
  *  1. Absolute path that exists → returned as-is.
  *  2. `GEMINI_INPUT_DIR` env var is set → look for `join(inputDir, p)`.
  *  3. Relative to cwd → `resolve(p)`.
- * Throws a helpful `McpToolError` (labelled `kind`) if none are found.
+ * Always returns an absolute path (callers compare resolved paths — e.g. the
+ * interact re-attach guard — so a relative GEMINI_INPUT_DIR must not leak
+ * through). Throws a helpful `McpToolError` (labelled `kind`) if none are found.
  */
 function resolveInputPath(p: string, kind: 'Image' | 'Video'): string {
   if (isAbsolute(p) && existsSync(p)) return p;
@@ -70,7 +72,7 @@ function resolveInputPath(p: string, kind: 'Image' | 'Video'): string {
     // NOTE: a `../`-bearing `p` can escape inputDir. Acceptable for a local,
     // single-user MCP — the caller already has the user's own filesystem access.
     const candidate = join(inputDir, p);
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(candidate)) return resolve(candidate);
   }
   const cwd = resolve(p);
   if (existsSync(cwd)) return cwd;

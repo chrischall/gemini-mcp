@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, relative, isAbsolute } from 'node:path';
 import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, loadImageInputs, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
 
 let dir: string;
@@ -179,6 +179,15 @@ describe('resolveImagePath', () => {
     writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
     process.env.GEMINI_INPUT_DIR = dir;
     expect(resolveImagePath('ref.png')).toBe(join(dir, 'ref.png'));
+  });
+
+  it('returns an absolute path even when GEMINI_INPUT_DIR is relative', () => {
+    const p = join(dir, 'rel-env.png');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    process.env.GEMINI_INPUT_DIR = relative(process.cwd(), dir);
+    const result = resolveImagePath('rel-env.png');
+    expect(isAbsolute(result)).toBe(true);
+    expect(result).toBe(resolve(dir, 'rel-env.png'));
   });
 
   it('resolves a bare filename relative to cwd when GEMINI_INPUT_DIR not set', () => {
