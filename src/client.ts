@@ -9,9 +9,6 @@ await loadDotenvSafely({ path: join(__dirname, '..', '.env'), override: false })
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'; // v1 lacks gemini-3-pro-image; confirmed via Task 5
 const SERVICE = 'Gemini';
 const INTERACTIONS_SERVICE = 'Gemini Interactions';
-// Required revision header for the beta Interactions API (verified 2026-06-08;
-// see docs/GEMINI-API.md) — load-bearing, requests 400 without it.
-const API_REVISION = '2026-05-20';
 // Per-request abort budget. Image generation routinely runs 30s+ on the Pro
 // model, so this is deliberately 60s (NOT the fleet's usual 15–30s).
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -128,12 +125,13 @@ export class GeminiClient {
       fetchImpl: this.fetchImpl,
     };
     this.api = createApiClient({ baseUrl: BASE_URL, serviceName: SERVICE, ...shared });
-    // Separate client for the beta Interactions API: same base URL, but every
-    // request must carry the Api-Revision header (and errors name the API).
+    // Separate client for the Interactions API so errors name the right API.
+    // The beta-era Api-Revision header is gone: the API went GA and requests
+    // succeed without it (verified live 2026-07-06; see docs/GEMINI-API.md).
+    // Don't re-add a pinned revision — it would freeze us on old semantics.
     this.interactionsApi = createApiClient({
       baseUrl: BASE_URL,
       serviceName: INTERACTIONS_SERVICE,
-      baseHeaders: { 'Api-Revision': API_REVISION },
       ...shared,
     });
   }

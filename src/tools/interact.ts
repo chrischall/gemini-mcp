@@ -17,7 +17,7 @@ export function registerInteractTools(server: McpServer): void {
     {
       description:
         'Preferred tool for iterative or multi-step refinement of a single image — ' +
-        "multi-turn generation/editing via Gemini's Interactions API (Beta). " +
+        "multi-turn generation/editing via Gemini's Interactions API. " +
         'To refine, capture the returned interaction `id` and pass it as `previous_interaction_id` ' +
         'on the next call — do NOT start a new interaction or re-upload the image for each tweak. ' +
         '`continue_last: true` chains from this session\'s most recent interaction without threading the id. ' +

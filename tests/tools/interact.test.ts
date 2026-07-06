@@ -26,6 +26,7 @@ describe('gemini_interact description', () => {
     expect(desc).toMatch(/^Preferred tool for iterative/i);
     expect(desc).toContain('previous_interaction_id');
     expect(desc).toMatch(/do NOT start a new interaction/i);
+    expect(desc).not.toMatch(/beta/i); // Interactions API went GA (verified 2026-07-06)
     await h.close();
   });
 

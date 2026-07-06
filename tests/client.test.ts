@@ -383,13 +383,13 @@ function makeInteractFixture(id = 'interact-id-1', extraSteps: unknown[] = []): 
 }
 
 describe('interact', () => {
-  it('POSTs to /v1beta/interactions with the Api-Revision header', async () => {
+  it('POSTs to /v1beta/interactions without the obsolete Api-Revision header (API is GA)', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = capturingFetch(makeInteractFixture());
     const c = new GeminiClient({ fetchImpl: cap.fn });
     await c.interact({ input: 'a red circle' });
     expect(cap.calls[0].url).toMatch(/\/v1beta\/interactions$/);
-    expect((cap.calls[0].init.headers as Record<string, string>)['Api-Revision']).toBe('2026-05-20');
+    expect((cap.calls[0].init.headers as Record<string, string>)['Api-Revision']).toBeUndefined();
     expect((cap.calls[0].init.headers as Record<string, string>)['x-goog-api-key']).toBe('test-key');
   });
 

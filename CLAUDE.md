@@ -77,8 +77,9 @@ into `runMcp`.
 `{ tokenHeader: 'x-goog-api-key', getToken, timeout: 60_000, fetchImpl }`:
 
 - `this.api` — plain client for `:generateContent` and `GET /models`.
-- `this.interactionsApi` — same base URL but adds the `Api-Revision` header
-  (required by the beta Interactions API).
+- `this.interactionsApi` — same base URL/config; exists so errors name the
+  Interactions API. (The beta-era `Api-Revision` header was dropped when the
+  API went GA — verified 2026-07-06.)
 
 `call<T>(method, path, body?)` is the thin wrapper: it just forwards to
 `this.api.fetchJson(...)`. The model id is interpolated into `path`
@@ -94,7 +95,7 @@ shared util, configured non-Bearer.
 | `gemini_generate_image` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (×`count`) | write (binary-out) |
 | `gemini_edit_image` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (input images required) | write (binary-out) |
 | `gemini_generate_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode) | write (binary-out) |
-| `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (beta; `Api-Revision` header) | write (binary-out) |
+| `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (GA since 2026-07) | write (binary-out) |
 
 **Binary output.** All four generation tools return images either written to disk
 (default) or inline base64. `emit()` (in `tools/shared.ts`) decides: with
@@ -171,9 +172,10 @@ meta so callers can reuse the uri. Both video params together is an error.
   of both `inline_data`/`mime_type` (snake) and `inlineData`/`mimeType` (camel) —
   the beta has shipped both. Preserve the `part.inline_data ?? part.inlineData`
   fallbacks.
-- **`Api-Revision` header is load-bearing.** The Interactions client sends
-  `Api-Revision: 2026-05-20`; without it the beta API 400s (verified; see
-  `docs/GEMINI-API.md`). The plain `generateContent` client does **not** send it.
+- **`Api-Revision` header is gone.** The beta Interactions API required
+  `Api-Revision: 2026-05-20`; the GA API works without it (verified live
+  2026-07-06; see `docs/GEMINI-API.md`). Don't re-add a pinned revision — it
+  would freeze the client on old semantics.
 - **Premium endpoints need a funded account.** `gemini-3-pro-image` and the
   Interactions API are paid; a free-tier key gets HTTP 429 with `limit: 0` (a
   quota-of-zero, not real throttling). Verify response shapes against a funded key
@@ -299,8 +301,9 @@ When asked to address the auto-review comments / review findings on a PR:
   `gemini-3-pro-image` and Interactions response shapes against a funded account
   before relying on new fields; the beta casing has changed before (hence the
   snake/camel fallbacks).
-- **Don't switch to `Authorization: Bearer`** or drop the `Api-Revision` header —
-  both break the respective APIs.
+- **Don't switch to `Authorization: Bearer`** — Gemini ignores it and requests
+  401. (The Interactions `Api-Revision` header is history: required in beta,
+  dropped at GA.)
 - **Don't "upgrade" `BASE_URL` to `/v1`** — it lacks the Pro image model.
 - **Don't register tools that can't be tested against a mocked `fetchImpl`** (and a
   mocked clipboard `Runner`). All network/shell access must be injectable.

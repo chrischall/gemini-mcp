@@ -91,7 +91,7 @@
     },
     {
       "name": "gemini_interact",
-      "description": "Preferred tool for iterative image refinement: multi-turn generation/editing via the Interactions API (Beta) — chain the returned interaction_id via previous_interaction_id"
+      "description": "Preferred tool for iterative image refinement: multi-turn generation/editing via the Interactions API — chain the returned interaction_id via previous_interaction_id"
     }
   ],
   "compatibility": {
