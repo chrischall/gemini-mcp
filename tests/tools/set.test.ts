@@ -193,3 +193,16 @@ describe('gemini_generate_set from_clipboard', () => {
     await h.close();
   });
 });
+
+describe('timeout_ms passthrough', () => {
+  it('gemini_generate_set passes timeout_ms to every client.generate call', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerSetTools);
+    await h.callTool('gemini_generate_set', { master_prompt: 'a fox', count: 2, timeout_ms: 80_000, output_dir: dir });
+    expect(spy).toHaveBeenCalledTimes(3);
+    for (const call of spy.mock.calls) {
+      expect(call[0]).toMatchObject({ timeoutMs: 80_000 });
+    }
+    await h.close();
+  });
+});

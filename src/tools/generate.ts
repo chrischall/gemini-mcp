@@ -4,7 +4,7 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client, type GroundingResult } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, resolveVideoInput, videoPathSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
 
 // generateContent output can't seed an Interactions-API conversation, so
 // results point follow-up edits at gemini_interact instead of an id.
@@ -31,7 +31,7 @@ export function registerGenerateTools(server: McpServer): void {
         ...sharedImageSchema,
       },
     },
-    async (args) => {
+    async (args, extra) => {
       const count = args.count ?? 1;
       const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
@@ -39,32 +39,35 @@ export function registerGenerateTools(server: McpServer): void {
       const refInputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
       // Upload ONCE (before the count loop) — every generate call references
       // the same files/… uri.
-      const video = await resolveVideoInput(args);
+      const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
       const named: NamedImage[] = [];
       let capturedText: string | undefined;
       // For count>1, surface the FIRST call's grounding (each call grounds
       // independently; one representative set of sources beats concatenating N).
       let capturedGrounding: GroundingResult | undefined;
-      for (let i = 0; i < count; i++) {
-        // Distinct seed per image (seed+0 for the single-image case == echoed seed)
-        // so count>1 yields N *different* images, not N duplicates.
-        const result = await client.generate({
-          prompt: args.prompt,
-          images: refInputs.length > 0 ? refInputs : undefined,
-          model: args.model,
-          aspectRatio: args.aspect_ratio,
-          imageSize: args.image_size,
-          seed: seed + i,
-          thinkingLevel: args.thinking_level,
-          googleSearch: args.google_search,
-          videoUrl: video.videoUrl,
-          videoMimeType: video.videoMimeType,
-        });
-        const { images: [img], text } = result;
-        if (text && !capturedText) capturedText = text;
-        if (result.grounding && !capturedGrounding) capturedGrounding = result.grounding;
-        named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
-      }
+      await withProgressHeartbeat(extra, `Generating ${count > 1 ? `${count} images` : 'image'} (${model})`, async () => {
+        for (let i = 0; i < count; i++) {
+          // Distinct seed per image (seed+0 for the single-image case == echoed seed)
+          // so count>1 yields N *different* images, not N duplicates.
+          const result = await client.generate({
+            prompt: args.prompt,
+            images: refInputs.length > 0 ? refInputs : undefined,
+            model: args.model,
+            aspectRatio: args.aspect_ratio,
+            imageSize: args.image_size,
+            seed: seed + i,
+            thinkingLevel: args.thinking_level,
+            googleSearch: args.google_search,
+            videoUrl: video.videoUrl,
+            videoMimeType: video.videoMimeType,
+            timeoutMs: args.timeout_ms,
+          });
+          const { images: [img], text } = result;
+          if (text && !capturedText) capturedText = text;
+          if (result.grounding && !capturedGrounding) capturedGrounding = result.grounding;
+          named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
+        }
+      });
       const meta = buildMeta(model, seed, args);
       if (capturedText) meta.text = capturedText;
       if (capturedGrounding) meta.grounding = capturedGrounding;
@@ -91,7 +94,7 @@ export function registerGenerateTools(server: McpServer): void {
         ...sharedImageSchema,
       },
     },
-    async (args) => {
+    async (args, extra) => {
       const hasPaths = (args.images?.length ?? 0) > 0;
       const hasBase64 = (args.images_base64?.length ?? 0) > 0;
       if (!hasPaths && !hasBase64 && !args.from_clipboard) {
@@ -101,16 +104,18 @@ export function registerGenerateTools(server: McpServer): void {
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
       const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
-      const result = await client.generate({
-        prompt: args.prompt,
-        images: inputs,
-        model: args.model,
-        aspectRatio: args.aspect_ratio,
-        imageSize: args.image_size,
-        seed,
-        thinkingLevel: args.thinking_level,
-        googleSearch: args.google_search,
-      });
+      const result = await withProgressHeartbeat(extra, `Editing image (${model})`, () =>
+        client.generate({
+          prompt: args.prompt,
+          images: inputs,
+          model: args.model,
+          aspectRatio: args.aspect_ratio,
+          imageSize: args.image_size,
+          seed,
+          thinkingLevel: args.thinking_level,
+          googleSearch: args.google_search,
+          timeoutMs: args.timeout_ms,
+        }));
       const { images: [img], text } = result;
       const meta = buildMeta(model, seed, args);
       if (text) meta.text = text;

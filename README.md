@@ -16,6 +16,18 @@ Developed and maintained by AI (Claude Code).
 | `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-3.1-flash-image`) |
 | `GEMINI_OUTPUT_DIR` | No | Default directory for generated images (default: current working directory) |
 | `GEMINI_INPUT_DIR` | No | Directory to resolve bare input-image filenames against (so `images: ["foo.jpg"]` works) |
+| `GEMINI_TIMEOUT_MS` | No | Upstream request timeout in ms (default: `60000`, or `120000` for `image_size: "4K"`); each generation tool also takes a per-call `timeout_ms` |
+| `GEMINI_HEARTBEAT_MS` | No | Progress-notification cadence in ms while a generation runs (default: `10000`; `0` disables) — keeps MCP hosts that reset their timeout on progress from timing out long generations |
+
+### Long generations and client timeouts
+
+4K / Pro-model generations can outrun an MCP host's own `tools/call` timeout (error `-32001`).
+The server sends `notifications/progress` heartbeats so hosts that reset their timeout on
+progress wait it out. If the host still gives up, the server-side generation usually completes
+anyway: the image is written to the output dir, `gemini_interact` also writes an
+`<image>.json` sidecar recording the `interaction_id`, and `continue_last: true` resumes the
+interaction the lost response belonged to — check the output dir before re-issuing a call
+(a re-issue is a second billable generation).
 
 ## Tools
 
