@@ -248,6 +248,19 @@ gone and Google's docs recommend it over `generateContent` for image work.
   chained via `previous_interaction_id` ("make the circle blue") returned a new
   `id` and a correct 512×512 blue-circle JPEG. Response shape unchanged
   (`{id, status, steps:[{type:"thought"|…|"model_output", content, summary}]}`).
+- **The interactions store is eventually consistent** (observed 2026-07-06): a
+  chained call referencing a *freshly created* id intermittently 404s
+  (`{"error":{"message":"Requested entity was not found.","code":"not_found"}}`)
+  while the same id + key resolves fine minutes later (GET and chained POST both
+  succeed; verified against a real failing id from a live session — same key
+  fingerprint, id created moments before the failure). An immediate 3-turn
+  rapid-chain repro went 3/3 OK, so the lag is intermittent/load-dependent.
+  The client retries a chained 404 with backoff (2s, 4s) before surfacing an
+  actionable error. A 404'd call generated nothing, so the retry is free.
+- **Retention** (per the Interactions API docs): interactions are stored 55
+  days on the paid tier, 1 day on the free tier (`store=true` default), and are
+  scoped to the creating API key's project. `store=false` disables
+  `previous_interaction_id` chaining entirely.
 - **Enums re-confirmed from live 400 errors** (the API enumerates supported
   values when given a bogus one — a free way to re-check):
   - `response_format.image_size`: `'512', '1K', '2K', '4K'` — literal `512`,
