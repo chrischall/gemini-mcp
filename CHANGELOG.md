@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/chrischall/gemini-mcp/compare/v0.6.1...v0.7.0) (2026-07-06)
+
+
+### Features
+
+* **interact:** image_search grounding via search_types, plus prompting playbook ([#43](https://github.com/chrischall/gemini-mcp/issues/43)) ([8f82bda](https://github.com/chrischall/gemini-mcp/commit/8f82bda20f76d792a00a8e31937bb32c6bbd6849))
+* **tools:** steer iterative edits to gemini_interact, add continue_last, default to gemini-3.1-flash-image ([#39](https://github.com/chrischall/gemini-mcp/issues/39)) ([529b404](https://github.com/chrischall/gemini-mcp/commit/529b404a575b372c10096758b5185baa7689c148))
+
+
+### Bug Fixes
+
+* **client:** drop obsolete Api-Revision header — Interactions API is GA ([#42](https://github.com/chrischall/gemini-mcp/issues/42)) ([a24fb24](https://github.com/chrischall/gemini-mcp/commit/a24fb24849793558be70397df242b177b6ad432d))
+
 ## [0.6.1](https://github.com/chrischall/gemini-mcp/compare/v0.6.0...v0.6.1) (2026-07-05)
 
 
