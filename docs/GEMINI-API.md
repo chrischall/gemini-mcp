@@ -192,15 +192,18 @@ carries an `error` field).
 Supported video MIME types: `video/mp4`, `video/mpeg`, `video/mov`, `video/avi`,
 `video/x-flv`, `video/mpg`, `video/webm`, `video/wmv`, `video/3gpp`.
 
-## Interactions API — BETA (verified 2026-06-08)
+## Interactions API — GA (verified 2026-06-08; re-verified GA 2026-07-06)
 
-The forward-looking multi-turn API. **Beta + "breaking changes (May 2026)" flagged;
-Google says use `generateContent` for stable production.** We expose it as an
-explicit, separate tool.
+The multi-turn API. **Now generally available** (docs: "The Interactions API is
+now generally available"); the beta-era "breaking changes (May 2026)" warning is
+gone and Google's docs recommend it over `generateContent` for image work.
 
 - **Endpoint:** `POST https://generativelanguage.googleapis.com/v1beta/interactions`
-- **Headers:** `x-goog-api-key`, `content-type: application/json`, and
-  **`Api-Revision: 2026-05-20`** (required).
+- **Headers:** `x-goog-api-key`, `content-type: application/json`.
+  ⚠️ The beta-required **`Api-Revision: 2026-05-20`** header is **no longer
+  needed** (verified live 2026-07-06: requests succeed both with and without it;
+  the current docs no longer mention it). The client no longer sends it — don't
+  re-add a pinned revision.
 - **Request** (snake_case — NOT the generateContent shape):
   ```jsonc
   {
@@ -238,3 +241,23 @@ explicit, separate tool.
 - **Video input** (verified): an `input` entry `{"type":"video","uri":"https://www.youtube.com/watch?v=…","mime_type":"video/mp4"}` (alongside the text part). 200 + image on `gemini-3.1-flash-image`.
 - MCP mapping: a `gemini_interact` tool returns the `id` so a follow-up call can
   pass `previous_interaction_id` — stateless MCP, stateful conversation.
+
+### GA re-verification (2026-07-06, live against a paid key)
+
+- **Multi-turn works without `Api-Revision`**: turn 1 (red circle) → turn 2
+  chained via `previous_interaction_id` ("make the circle blue") returned a new
+  `id` and a correct 512×512 blue-circle JPEG. Response shape unchanged
+  (`{id, status, steps:[{type:"thought"|…|"model_output", content, summary}]}`).
+- **Enums re-confirmed from live 400 errors** (the API enumerates supported
+  values when given a bogus one — a free way to re-check):
+  - `response_format.image_size`: `'512', '1K', '2K', '4K'` — literal `512`,
+    NOT `512px` (the docs page's "512px (0.5K)" is prose, not the literal).
+  - `response_format.aspect_ratio`: all 14 — `1:1 2:3 3:2 3:4 4:3 4:5 5:4 9:16
+    16:9 21:9 1:8 8:1 1:4 4:1` (the docs page lists only 10; the banner shapes
+    are still accepted).
+- **Model lineup** now also includes `gemini-3.1-flash-lite-image` (Nano Banana
+  2 Lite — fastest/cheapest, 1K only, no search grounding) and
+  `gemini-3.1-flash-image-preview`.
+- Docs also show an optional `search_types: ["web_search", "image_search"]`
+  field on the `google_search` tool — not implemented here yet (plain
+  `{"type":"google_search"}` still verified working).

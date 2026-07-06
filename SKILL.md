@@ -86,6 +86,7 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 |-------|-------------|
 | `gemini-3.1-flash-image` (Nano Banana 2) | The versatile generalist workhorse for all tasks — balances speed with state-of-the-art 4K generation, world knowledge, and reliable text rendering; excels at multi-reference-image processing and consistency |
 | `gemini-3-pro-image` (Nano Banana Pro) | The premium choice for the most complex visual tasks — highest world knowledge, advanced localization, accurate brand consistency, precision creative control |
+| `gemini-3.1-flash-lite-image` (Nano Banana 2 Lite) | The fastest/cheapest for simple tasks — 1K output only, no Google Search grounding |
 
 ### Image Generation
 | Tool | Description |
@@ -94,10 +95,10 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 | `gemini_edit_image(prompt, images?, images_base64?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Edit or compose input image(s) — by **path** (`images`) or **value** (`images_base64`: data URI or raw base64) — with a text instruction. Requires ≥1 input |
 | `gemini_generate_set(master_prompt, scenes? \| count?, reference_mode?, master_images?, master_images_base64?, google_search?, seed?, basename?, model?, thinking_level?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it |
 
-### Multi-turn (Interactions API — Beta)
+### Multi-turn (Interactions API)
 | Tool | Description |
 |------|-------------|
-| `gemini_interact(input, previous_interaction_id?, continue_last?, images?, images_base64?, video_url?, video_path?, google_search?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | **Preferred tool for iterative refinement.** Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` (or set `continue_last: true` to reuse the session's most recent one) to **iteratively refine the same image** conversationally — do NOT start a new interaction or re-upload the image per tweak. Output is **JPEG**. (Beta API.) |
+| `gemini_interact(input, previous_interaction_id?, continue_last?, images?, images_base64?, video_url?, video_path?, google_search?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | **Preferred tool for iterative refinement.** Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` (or set `continue_last: true` to reuse the session's most recent one) to **iteratively refine the same image** conversationally — do NOT start a new interaction or re-upload the image per tweak. Output is **JPEG**. |
 
 ## Workflows
 
@@ -189,7 +190,7 @@ extraction:
 - **Model text.** When the model returns a caption/explanation (mostly Gemini 3 **Pro**), it's surfaced as `text` in the result metadata.
 - **`google_search: true`** grounds the image in live Google Search (current events, weather, real data — great for infographics). The result metadata includes `grounding` with the `queries` run and the `sources` (`{uri, title}`) used. (`gemini_interact` surfaces `grounding.queries` only — the Interactions API returns no clean source list.)
 - **`video_url`** (a public YouTube URL, on `gemini_generate_image` / `gemini_interact`) generates an image from a video reference — **requires a Flash model** (e.g. `model: "gemini-3.1-flash-image"`). For a **local video file**, use **`video_path`** instead: the file is uploaded to the Gemini Files API (streamed from disk, 2 GB max), waited to `ACTIVE`, and referenced by its `files/…` uri. The result metadata echoes `video_file` (`{uri, name, expires}`, ~48h retention) — reuse that uri as `video_url` in later calls to skip re-uploading.
-- **`gemini_interact`** is the multi-turn path: it returns an `interaction_id`; thread it back via `previous_interaction_id` for conversational refinement. Output is **JPEG only**. It's a **Beta** API (separate from the stable `generate`/`edit`/`set` tools).
+- **`gemini_interact`** is the multi-turn path: it returns an `interaction_id`; thread it back via `previous_interaction_id` for conversational refinement. Output is **JPEG only**. (The Interactions API is GA as of 2026-07; it uses a different request shape than the `generate`/`edit`/`set` tools.)
 - `output_dir` per-call overrides `$GEMINI_OUTPUT_DIR` overrides cwd. `inline: true` returns bytes (with a metadata text block) instead of writing.
 - `count` and `scenes` are mutually exclusive in `gemini_generate_set`; `reference_mode: "chain"` references the previous image instead of the master.
 - Aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `2:3`, `3:2`, … · Image sizes: `512` (0.5K, Flash only), `1K`, `2K`, `4K`. `4K` is the max native output — true 18×24 in @ 300 DPI (5400×7200) needs an external upscale step.

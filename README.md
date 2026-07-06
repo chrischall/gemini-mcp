@@ -25,7 +25,7 @@ Developed and maintained by AI (Claude Code).
 | `gemini_generate_image` | Generate image(s) from a text prompt |
 | `gemini_edit_image` | One-off edits or multi-image composition with a text instruction (for a series of edits, use `gemini_interact`) |
 | `gemini_generate_set` | Generate a master image plus N consistent images referencing it |
-| `gemini_interact` | Preferred tool for iterative refinement: multi-turn generation/editing via the Interactions API (Beta) — chain the returned `interaction_id` via `previous_interaction_id` (or `continue_last: true`) |
+| `gemini_interact` | Preferred tool for iterative refinement: multi-turn generation/editing via the Interactions API — chain the returned `interaction_id` via `previous_interaction_id` (or `continue_last: true`) |
 
 ## Quick Start
 

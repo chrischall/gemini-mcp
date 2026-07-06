@@ -22,7 +22,8 @@ export const MODEL_CHOICE_GUIDE =
   'gemini-3.1-flash-image (Nano Banana 2) is the versatile generalist workhorse — balances speed with ' +
   'state-of-the-art 4K generation, world knowledge, and reliable text rendering; excels at multi-reference-image ' +
   'processing and consistency. gemini-3-pro-image (Nano Banana Pro) is the premium choice for the most complex ' +
-  'visual tasks — highest world knowledge, advanced localization, accurate brand consistency, precision creative control.';
+  'visual tasks — highest world knowledge, advanced localization, accurate brand consistency, precision creative control. ' +
+  'gemini-3.1-flash-lite-image (Nano Banana 2 Lite) is the fastest/cheapest for simple tasks (1K only, no search grounding).';
 
 export const sharedImageSchema = {
   // Bare id only: the model is interpolated into the URL path
