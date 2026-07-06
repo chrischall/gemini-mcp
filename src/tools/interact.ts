@@ -70,6 +70,13 @@ export function registerInteractTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Ground the image in live Google Search results (current events, weather, data)'),
+        search_types: z
+          .array(z.enum(['web_search', 'image_search']))
+          .optional()
+          .describe(
+            'Grounding search types (implies google_search). image_search (gemini-3.1-flash-image only) uses Google Image Search results as visual references; ' +
+            'per Google ToS the returned grounding.search_suggestions HTML must then be displayed to the user. Cannot depict real people from web images.',
+          ),
         video_url: z
           .string()
           .url()
@@ -103,6 +110,7 @@ export function registerInteractTools(server: McpServer): void {
         thinkingLevel: args.thinking_level,
         previousInteractionId,
         googleSearch: args.google_search,
+        searchTypes: args.search_types,
         videoUrl: video.videoUrl,
         videoMimeType: video.videoMimeType,
       });

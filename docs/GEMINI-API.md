@@ -259,5 +259,40 @@ gone and Google's docs recommend it over `generateContent` for image work.
   2 Lite — fastest/cheapest, 1K only, no search grounding) and
   `gemini-3.1-flash-image-preview`.
 - Docs also show an optional `search_types: ["web_search", "image_search"]`
-  field on the `google_search` tool — not implemented here yet (plain
-  `{"type":"google_search"}` still verified working).
+  field on the `google_search` tool — implemented; see next section.
+
+### `search_types` grounding (verified live 2026-07-06)
+
+Request: `"tools": [{"type": "google_search", "search_types": ["web_search", "image_search"]}]`
+(`image_search` is documented for `gemini-3.1-flash-image` only; it uses Google
+Image Search results as visual references for the generation. Docs show
+`search_types` only for the Interactions API — do NOT assume generateContent's
+`{"google_search":{}}` accepts an equivalent without verifying.)
+
+Verified response behavior (butterfly prompt, both types):
+
+- One `google_search_call` + `google_search_result` **pair per search type**;
+  the call step carries `search_type: "web_search" | "image_search"`.
+- ⚠️ A call step's `arguments` can be **`null`** (the web_search call had no
+  `arguments`; the image_search call had `arguments.queries`). Parse defensively.
+- `google_search_result`: `{ call_id, type, result: [{search_suggestions:
+  "<style>…"}], is_error }` — each `result[]` entry's `search_suggestions` is a
+  self-contained HTML chip (they repeat; dedup). **ToS: when image_search is
+  used, these chips MUST be displayed to the user** — the client surfaces them
+  as `grounding.search_suggestions` only when `image_search` was requested.
+- `model_output` can appear **more than once** (e.g. image first, then an empty
+  text step) — aggregate across all of them.
+- The docs also mention `url_citation` annotations on text content blocks for
+  grounded responses — not parsed yet (no text-annotation surface in our meta).
+
+### Other documented capabilities not (yet) implemented
+
+- **`response_format` as an array** — `[{type:"text"},{type:"image"}]` requests
+  interleaved text+image output; a single `{type:"image"}` (what we send)
+  suppresses the conversational text. Switching would change output volume.
+- **Batch API** — all image generation can run as batch jobs (higher rate
+  limits, up to 24h turnaround). Doesn't fit an interactive MCP tool.
+- **Reference-image caps** (of 14 total): 3.1 Flash 10 objects + 4 characters +
+  3 style refs; Pro 6 objects + 5 characters; 3.1 Flash Lite 14 objects, no
+  character consistency. Plain `image` input parts — no role/type field; the
+  split is a model capability, not an API field.

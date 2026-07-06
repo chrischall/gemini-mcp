@@ -33,7 +33,16 @@ export interface GroundingSource { uri?: string; title?: string }
 export interface GroundingResult {
   queries?: string[];
   sources?: GroundingSource[];
+  /**
+   * HTML "search suggestion" chips from `google_search_result` steps
+   * (Interactions API). Populated only when `image_search` grounding was
+   * requested — Google's ToS require displaying them in that case.
+   */
+  search_suggestions?: string[];
 }
+
+/** Grounding search types the Interactions API accepts on the google_search tool. */
+export type SearchType = 'web_search' | 'image_search';
 /** Raw `candidates[].groundingMetadata` shape we read from. */
 interface GroundingChunk { web?: GroundingSource }
 interface GroundingMeta { webSearchQueries?: string[]; groundingChunks?: GroundingChunk[] }
@@ -49,6 +58,8 @@ export interface InteractOpts {
   thinkingLevel?: 'minimal' | 'high';
   previousInteractionId?: string;
   googleSearch?: boolean;
+  /** Grounding search types; setting this implies google_search grounding. */
+  searchTypes?: SearchType[];
   videoUrl?: string;
   /** MIME type for the video reference (default `video/mp4` — the YouTube path). */
   videoMimeType?: string;
@@ -332,10 +343,21 @@ export class GeminiClient {
     const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
     if (opts.thinkingLevel !== undefined) body.generation_config = { thinking_level: opts.thinkingLevel };
     if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
-    if (opts.googleSearch) body.tools = [{ type: 'google_search' }];
+    if (opts.googleSearch || opts.searchTypes?.length) {
+      const searchTool: Record<string, unknown> = { type: 'google_search' };
+      if (opts.searchTypes?.length) searchTool.search_types = opts.searchTypes;
+      body.tools = [searchTool];
+    }
 
     type StepPart = { type: string; mime_type?: string; data?: string; text?: string };
-    type Step = { type: string; content?: StepPart[]; summary?: StepPart[]; arguments?: { queries?: string[] } };
+    type Step = {
+      type: string;
+      content?: StepPart[];
+      summary?: StepPart[];
+      // `arguments` is null on some google_search_call steps (verified 2026-07-06).
+      arguments?: { queries?: string[] } | null;
+      result?: Array<{ search_suggestions?: string }>;
+    };
     const data = await this.interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', {
       body,
     });
@@ -348,13 +370,25 @@ export class GeminiClient {
     const images: GeneratedImage[] = [];
     const textParts: string[] = [];
     const searchQueries: string[] = [];
+    const searchSuggestions = new Set<string>();
     for (const step of data.steps ?? []) {
       // Grounding queries live on the `google_search_call` step's arguments.
       // (The `google_search_result` step only carries HTML `search_suggestions`
       // chips — no clean source uri/title list like generateContent's
-      // groundingChunks — so interact surfaces queries only, not sources.)
+      // groundingChunks — so interact surfaces queries, plus the suggestion
+      // chips when image_search was requested, ToS below.)
       if (step.type === 'google_search_call') {
         for (const q of step.arguments?.queries ?? []) if (q?.trim()) searchQueries.push(q);
+        continue;
+      }
+      // ToS: image_search results' `search_suggestions` chips MUST be displayed
+      // by the caller, so surface them (deduped — the chips repeat) only when
+      // image_search grounding was requested; web-only grounding keeps the
+      // lean queries-only meta.
+      if (step.type === 'google_search_result') {
+        if (opts.searchTypes?.includes('image_search')) {
+          for (const r of step.result ?? []) if (r.search_suggestions?.trim()) searchSuggestions.add(r.search_suggestions);
+        }
         continue;
       }
       if (step.type !== 'model_output') continue;
@@ -376,7 +410,12 @@ export class GeminiClient {
     }
 
     const resultText = textParts.join('\n') || undefined;
-    const grounding = searchQueries.length > 0 ? { queries: searchQueries } : undefined;
+    let grounding: GroundingResult | undefined;
+    if (searchQueries.length > 0 || searchSuggestions.size > 0) {
+      grounding = {};
+      if (searchQueries.length > 0) grounding.queries = searchQueries;
+      if (searchSuggestions.size > 0) grounding.search_suggestions = [...searchSuggestions];
+    }
     return { id: data.id, images, text: resultText, grounding };
   }
 }

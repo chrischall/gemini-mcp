@@ -265,6 +265,30 @@ describe('gemini_interact', () => {
     await h.close();
   });
 
+  it('passes search_types to client.interact as searchTypes', async () => {
+    const spy = vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'st-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    await h.callTool('gemini_interact', {
+      input: 'a butterfly painting',
+      search_types: ['web_search', 'image_search'],
+      output_dir: dir,
+    });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ searchTypes: ['web_search', 'image_search'] }));
+    await h.close();
+  });
+
+  it('rejects an unknown search_types value via schema validation', async () => {
+    const spy = vi.spyOn(client, 'interact');
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'x', search_types: ['video_search'], output_dir: dir });
+    expect(res.isError).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+    await h.close();
+  });
+
   it('passes google_search:true to client.interact as googleSearch', async () => {
     const spy = vi.spyOn(client, 'interact').mockResolvedValue({
       id: 'gs-id',
