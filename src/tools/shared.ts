@@ -108,11 +108,14 @@ export function buildMeta(
  * return their paths as a text result. `inline` wins when true.
  * Optional `meta` is merged into the disk-path JSON result, or prepended as a
  * text block in inline mode (only if meta has keys).
+ * Optional `onWritten` receives the absolute paths written in disk mode (never
+ * called inline) — lets a tool remember its own outputs.
  */
 export async function emit(
   named: NamedImage[],
   opts: { inline?: boolean; output_dir?: string },
   meta?: Record<string, unknown>,
+  onWritten?: (paths: string[]) => void,
 ): Promise<CallToolResult> {
   if (opts.inline) {
     const imageBlocks = named.map((n) => ({ type: 'image' as const, data: n.image.base64, mimeType: n.image.mimeType }));
@@ -126,5 +129,6 @@ export async function emit(
   const dir = resolveOutputDir(opts.output_dir);
   const images: string[] = [];
   for (const n of named) images.push(await writeImage(dir, n.base, n.image.base64, n.image.mimeType));
+  onWritten?.(images);
   return textResult({ images, ...meta });
 }

@@ -3,13 +3,43 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
-import { slugify, baseName, gatherImageInputs } from '../images.js';
+import { resolve } from 'node:path';
+import { slugify, baseName, gatherImageInputs, resolveImagePath } from '../images.js';
 import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
 
 // The most recent interaction id this server process created — what
 // `continue_last: true` resumes. In-memory only: an MCP server lives for the
 // host session, so "last" means "last in this session".
 let lastInteractionId: string | undefined;
+
+// Absolute paths of every image this tool has written this session. Used to
+// drop a chained call's re-attached prior output: the interaction state
+// already contains that image, and re-sending it as a fresh reference anchors
+// the model against the requested edit (observed in the wild — callers pass
+// the last result path back via `images` despite the description saying not to).
+const writtenOutputs = new Set<string>();
+
+/** Shared warning for the reference-image params. */
+const NEW_REFERENCES_ONLY =
+  'NEW reference images only (e.g. a style or target photo). When chaining with previous_interaction_id, ' +
+  "do NOT re-attach the prior turn's output — the interaction already contains it, and re-sending it " +
+  'anchors the model against your edit.';
+
+/**
+ * On a chained call, split `images` into genuinely new references vs paths
+ * this server itself generated (which the interaction already contains).
+ * Unresolvable paths are kept so `gatherImageInputs` surfaces its usual error.
+ */
+function splitReattachedOutputs(images: string[]): { kept: string[]; dropped: string[] } {
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  for (const p of images) {
+    let resolved: string | undefined;
+    try { resolved = resolve(resolveImagePath(p)); } catch { /* kept; loading will error actionably */ }
+    (resolved && writtenOutputs.has(resolved) ? dropped : kept).push(p);
+  }
+  return { kept, dropped };
+}
 
 export function registerInteractTools(server: McpServer): void {
   server.registerTool(
@@ -36,11 +66,11 @@ export function registerInteractTools(server: McpServer): void {
         images: z
           .array(z.string().min(1))
           .optional()
-          .describe('Paths to reference input images'),
+          .describe(`Paths to reference input images. ${NEW_REFERENCES_ONLY}`),
         images_base64: z
           .array(z.string().min(1))
           .optional()
-          .describe('Reference images as base64 strings or data URIs'),
+          .describe(`Reference images as base64 strings or data URIs. ${NEW_REFERENCES_ONLY}`),
         model: z
           .string()
           .optional()
@@ -99,7 +129,12 @@ export function registerInteractTools(server: McpServer): void {
         }
         previousInteractionId = lastInteractionId;
       }
-      const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
+      let images = args.images;
+      let dropped: string[] = [];
+      if (previousInteractionId && images?.length) {
+        ({ kept: images, dropped } = splitReattachedOutputs(images));
+      }
+      const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
       const video = await resolveVideoInput(args);
       const r = await client.interact({
         input: args.input,
@@ -119,7 +154,10 @@ export function registerInteractTools(server: McpServer): void {
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const meta: Record<string, unknown> = { model, interaction_id: r.id };
       if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
-      meta.hint = `To refine this image, call gemini_interact again with previous_interaction_id: "${r.id}" (or continue_last: true).`;
+      if (dropped.length) meta.dropped_previous_output = dropped;
+      meta.hint =
+        `To refine this image, call gemini_interact again with previous_interaction_id: "${r.id}" (or continue_last: true) — ` +
+        'do NOT re-attach the returned image as an input; the interaction already contains it.';
       if (r.text) meta.text = r.text;
       if (r.grounding) meta.grounding = r.grounding;
       if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
@@ -130,7 +168,7 @@ export function registerInteractTools(server: McpServer): void {
         base: r.images.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
       }));
 
-      return emit(named, args, meta);
+      return emit(named, args, meta, (paths) => { for (const p of paths) writtenOutputs.add(resolve(p)); });
     },
   );
 }

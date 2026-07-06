@@ -66,6 +66,24 @@ describe('pickSeed', () => {
   });
 });
 
+describe('emit onWritten', () => {
+  it('reports the written absolute paths via onWritten in disk mode', async () => {
+    const named = [{ image: { base64: PNG, mimeType: 'image/png' }, base: 'cb' }];
+    const written: string[] = [];
+    const res = await emit(named, { output_dir: dir }, undefined, (paths) => written.push(...paths));
+    const parsed = JSON.parse((res.content[0] as { type: string; text: string }).text);
+    expect(written).toEqual(parsed.images);
+    expect(written).toHaveLength(1);
+  });
+
+  it('does not call onWritten in inline mode (nothing written)', async () => {
+    const named = [{ image: { base64: PNG, mimeType: 'image/png' }, base: 'cb' }];
+    const onWritten = vi.fn();
+    await emit(named, { inline: true }, undefined, onWritten);
+    expect(onWritten).not.toHaveBeenCalled();
+  });
+});
+
 describe('emit with meta', () => {
   it('merges meta into the disk-path result', async () => {
     const named = [{ image: { base64: PNG, mimeType: 'image/png' }, base: 'test' }];

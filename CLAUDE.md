@@ -107,7 +107,12 @@ object (`model`, `seed`, a `hint` steering iterative refinement to
 `gemini_interact`, optional `text`, `grounding`, `interaction_id`,
 `previous_interaction_id`). `gemini_interact` also accepts `continue_last: true`
 to chain from the server process's most recent interaction id (in-memory;
-explicit `previous_interaction_id` wins).
+explicit `previous_interaction_id` wins). On a *chained* interact call, `images`
+entries that resolve to files this server itself generated are dropped and
+echoed as `dropped_previous_output` — the interaction state already contains
+the prior output, and re-attaching it anchors the model against the edit.
+(Un-chained calls pass such paths through: starting a new interaction from an
+old output is legitimate.)
 
 **Image inputs** (`gatherImageInputs`) come from `images` (file paths),
 `images_base64` (raw base64 or `data:` URIs, MIME sniffed from bytes), and

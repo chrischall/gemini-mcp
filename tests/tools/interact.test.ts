@@ -30,6 +30,21 @@ describe('gemini_interact description', () => {
     await h.close();
   });
 
+  it('images params warn against re-attaching the prior output when chaining', async () => {
+    const h = await createTestHarness(registerInteractTools);
+    const { tools } = await h.client.listTools();
+    const schema = tools.find((t) => t.name === 'gemini_interact')?.inputSchema as {
+      properties?: Record<string, { description?: string }>;
+    };
+    for (const param of ['images', 'images_base64'] as const) {
+      const desc = schema.properties?.[param]?.description ?? '';
+      expect(desc, param).toMatch(/new reference/i);
+      expect(desc, param).toContain('previous_interaction_id');
+      expect(desc, param).toMatch(/do NOT re-attach/);
+    }
+    await h.close();
+  });
+
   it('model param describes when to pick each model', async () => {
     const h = await createTestHarness(registerInteractTools);
     const { tools } = await h.client.listTools();
@@ -233,6 +248,18 @@ describe('gemini_interact', () => {
     const data = parseToolResult<{ hint?: string }>(res);
     expect(data.hint).toContain('previous_interaction_id');
     expect(data.hint).toContain('hint-id-99');
+    await h.close();
+  });
+
+  it('hint warns against re-attaching the returned image on the next turn', async () => {
+    vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'hint-guard-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
+    const data = parseToolResult<{ hint?: string }>(res);
+    expect(data.hint).toMatch(/do NOT re-attach/);
     await h.close();
   });
 
