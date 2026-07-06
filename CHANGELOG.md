@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/chrischall/gemini-mcp/compare/v0.7.0...v0.7.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **client:** retry chained interact 404s — interactions store is eventually consistent ([#44](https://github.com/chrischall/gemini-mcp/issues/44)) ([c2f3a8a](https://github.com/chrischall/gemini-mcp/commit/c2f3a8af051a86c2c184b947ec3597058973a265))
+
 ## [0.7.0](https://github.com/chrischall/gemini-mcp/compare/v0.6.1...v0.7.0) (2026-07-06)
 
 
