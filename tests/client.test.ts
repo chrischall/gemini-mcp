@@ -648,6 +648,57 @@ describe('interact', () => {
     expect(r.grounding).toEqual({ queries: ['sf weather'] });
   });
 
+  it('retries a 404 on a chained call (store lag) and succeeds when the id appears', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    // Live-observed (2026-07-06): a freshly created interaction id can 404 for
+    // a short window right after its turn returns — the store is eventually
+    // consistent. First two attempts 404, third finds it.
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      if (calls <= 2) {
+        return { ok: false, status: 404, json: async () => ({}), text: async () => JSON.stringify({ error: { message: 'Requested entity was not found.', code: 'not_found' } }) };
+      }
+      return { ok: true, status: 200, json: async () => makeInteractFixture(), text: async () => JSON.stringify(makeInteractFixture()) };
+    }) as unknown as typeof fetch;
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const c = new GeminiClient({ fetchImpl, sleep });
+    const r = await c.interact({ input: 'make it blue', previousInteractionId: 'v1_fresh' });
+    expect(r.id).toBeDefined();
+    expect(calls).toBe(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('maps a persistent 404 on a chained call to an actionable error after exhausting retries', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      return { ok: false, status: 404, json: async () => ({}), text: async () => JSON.stringify({ error: { message: 'Requested entity was not found.', code: 'not_found' } }) };
+    }) as unknown as typeof fetch;
+    const c = new GeminiClient({ fetchImpl, sleep: vi.fn().mockResolvedValue(undefined) });
+    const err = await c
+      .interact({ input: 'make it blue', previousInteractionId: 'v1_stale' })
+      .then(() => { throw new Error('expected rejection'); }, (e: unknown) => e as Error & { hint?: string });
+    expect(calls).toBe(3);
+    expect(err.message).toMatch(/previous interaction .* not found/i);
+    expect(err.message).toMatch(/55 days|1 day/);
+    expect(err.hint).toMatch(/start a new chain/i);
+    expect(err.hint).toMatch(/`images`/);
+  });
+
+  it('passes a 404 through untouched (no retries) when no previous_interaction_id was sent', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      return { ok: false, status: 404, json: async () => ({}), text: async () => JSON.stringify({ error: { message: 'Requested entity was not found.', code: 'not_found' } }) };
+    }) as unknown as typeof fetch;
+    const c = new GeminiClient({ fetchImpl, sleep: vi.fn().mockResolvedValue(undefined) });
+    await expect(c.interact({ input: 'a circle' })).rejects.toThrow(/Gemini Interactions error 404/);
+    expect(calls).toBe(1);
+  });
+
   it('includes video input entry when videoUrl is set', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = capturingFetch(makeInteractFixture());

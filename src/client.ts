@@ -1,6 +1,6 @@
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadDotenvSafely, readEnvVar, McpToolError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
+import { loadDotenvSafely, readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, type GeminiModel, type RawModel } from './models.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +24,14 @@ const FILE_MAX_BYTES = 2 * 1024 ** 3;
 // in ~1s (verified); longer videos take proportionally longer to process.
 const FILE_POLL_INTERVAL_MS = 2_000;
 const FILE_POLL_MAX_ATTEMPTS = 150;
+
+// The interactions store is eventually consistent: a freshly returned id can
+// 404 for a short window right after its turn completes (observed live
+// 2026-07-06 — an id that 404'd on an immediate chain resolved fine minutes
+// later). A chained 404 generated nothing (no cost), so retry before giving up:
+// attempts wait 2s then 4s (~6s total).
+const CHAIN_404_RETRIES = 2;
+const CHAIN_404_RETRY_MS = 2_000;
 
 export interface GeneratedImage { base64: string; mimeType: string; }
 
@@ -358,9 +366,34 @@ export class GeminiClient {
       arguments?: { queries?: string[] } | null;
       result?: Array<{ search_suggestions?: string }>;
     };
-    const data = await this.interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', {
-      body,
-    });
+    let data!: { id: string; steps?: Step[] };
+    for (let attempt = 0; ; attempt++) {
+      try {
+        data = await this.interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', {
+          body,
+        });
+        break;
+      } catch (err) {
+        // A 404 on a chained call means the referenced interaction wasn't
+        // found. Two causes: (a) store lag right after the id was created —
+        // retry with backoff; (b) genuinely gone — interactions are retained
+        // 55 days (paid tier) / 1 day (free tier) and are scoped to the API
+        // key's project. The chain is recoverable from the last output file,
+        // so the exhausted-retries error says how.
+        if (!(opts.previousInteractionId && err instanceof ApiError && err.status === 404)) throw err;
+        if (attempt < CHAIN_404_RETRIES) {
+          await this.sleep(CHAIN_404_RETRY_MS * (attempt + 1));
+          continue;
+        }
+        throw new McpToolError(
+          `Previous interaction "${opts.previousInteractionId}" was not found (retried ${CHAIN_404_RETRIES}× — the interactions store can lag briefly after a turn completes). If the id is old: interactions are retained 55 days on the paid tier (1 day on the free tier) and are scoped to the API key that created them.`,
+          {
+            hint: 'Retry once more in a few seconds; if it keeps failing, start a new chain: call gemini_interact again with the last output image passed via `images` (or `images_base64`) plus the same instruction, then chain the NEW interaction id.',
+            cause: err,
+          },
+        );
+      }
+    }
 
     // Only surface the `model_output` step — that's the caller-facing result.
     // `thought` steps hold internal reasoning (and, with includeThoughts, draft
