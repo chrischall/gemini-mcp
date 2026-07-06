@@ -53,7 +53,7 @@
     "gemini_image_model": {
       "type": "string",
       "title": "Gemini Image Model",
-      "description": "Override the default image model (default: gemini-3-pro-image)",
+      "description": "Override the default image model (default: gemini-3.1-flash-image)",
       "required": false,
       "sensitive": false
     },
@@ -83,7 +83,7 @@
     },
     {
       "name": "gemini_edit_image",
-      "description": "Edit or compose one or more input images with a text instruction"
+      "description": "Edit or compose one or more input images with a text instruction (one-off edits; for a series of edits use gemini_interact)"
     },
     {
       "name": "gemini_generate_set",
@@ -91,7 +91,7 @@
     },
     {
       "name": "gemini_interact",
-      "description": "Multi-turn image generation/editing via the Interactions API (Beta); returns an interaction_id for conversational refinement"
+      "description": "Preferred tool for iterative image refinement: multi-turn generation/editing via the Interactions API (Beta) — chain the returned interaction_id via previous_interaction_id"
     }
   ],
   "compatibility": {

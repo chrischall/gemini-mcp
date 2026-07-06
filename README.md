@@ -13,7 +13,7 @@ Developed and maintained by AI (Claude Code).
 | Variable | Required | Description |
 |---|---|---|
 | `GEMINI_API_KEY` | Yes | Your Google Gemini API key ([aistudio.google.com/apikey](https://aistudio.google.com/apikey)) |
-| `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-3-pro-image`) |
+| `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-3.1-flash-image`) |
 | `GEMINI_OUTPUT_DIR` | No | Default directory for generated images (default: current working directory) |
 | `GEMINI_INPUT_DIR` | No | Directory to resolve bare input-image filenames against (so `images: ["foo.jpg"]` works) |
 
@@ -23,9 +23,9 @@ Developed and maintained by AI (Claude Code).
 |------|-------------|
 | `gemini_list_models` | List available Gemini image models and the current default |
 | `gemini_generate_image` | Generate image(s) from a text prompt |
-| `gemini_edit_image` | Edit or compose one or more input images with a text instruction |
+| `gemini_edit_image` | One-off edits or multi-image composition with a text instruction (for a series of edits, use `gemini_interact`) |
 | `gemini_generate_set` | Generate a master image plus N consistent images referencing it |
-| `gemini_interact` | Multi-turn generation/editing via the Interactions API (Beta); returns an `interaction_id` to refine the same image conversationally |
+| `gemini_interact` | Preferred tool for iterative refinement: multi-turn generation/editing via the Interactions API (Beta) — chain the returned `interaction_id` via `previous_interaction_id` (or `continue_last: true`) |
 
 ## Quick Start
 

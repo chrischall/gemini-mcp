@@ -6,11 +6,19 @@ import { client, type GroundingResult } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
 
+// generateContent output can't seed an Interactions-API conversation, so
+// results point follow-up edits at gemini_interact instead of an id.
+const REFINE_HINT =
+  'To iteratively refine this image, use gemini_interact (pass the output file via `images` on the first call, ' +
+  'then chain `previous_interaction_id` on each subsequent call).';
+
 export function registerGenerateTools(server: McpServer): void {
   server.registerTool(
     'gemini_generate_image',
     {
-      description: 'Generate image(s) from a text prompt with a Gemini image model (Nano Banana / Nano Banana Pro).',
+      description:
+        'Generate image(s) from a text prompt with a Gemini image model (Nano Banana / Nano Banana Pro). ' +
+        'If the result will likely be refined iteratively, prefer gemini_interact (multi-turn) as the entry point.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
         prompt: z.string().min(1).describe('Text prompt describing the image'),
@@ -61,6 +69,7 @@ export function registerGenerateTools(server: McpServer): void {
       if (capturedText) meta.text = capturedText;
       if (capturedGrounding) meta.grounding = capturedGrounding;
       if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
+      meta.hint = REFINE_HINT;
       return emit(named, args, meta);
     },
   );
@@ -70,6 +79,8 @@ export function registerGenerateTools(server: McpServer): void {
     {
       description:
         'Edit or compose images: provide one or more input images (paths or base64), plus a text instruction. ' +
+        'For a SERIES of successive edits to the same image, prefer gemini_interact (multi-turn) — it keeps edit context ' +
+        'and avoids re-processing the full image each round; use gemini_edit_image for one-off edits or composing multiple distinct inputs. ' +
         'Gemini over-preserves the input; there is no edit-strength control — for large structural changes, reroll with a different `seed` or more forceful wording.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
@@ -104,6 +115,7 @@ export function registerGenerateTools(server: McpServer): void {
       const meta = buildMeta(model, seed, args);
       if (text) meta.text = text;
       if (result.grounding) meta.grounding = result.grounding;
+      meta.hint = REFINE_HINT;
       return emit([{ image: img, base: slug }], args, meta);
     },
   );

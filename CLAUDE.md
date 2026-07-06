@@ -102,7 +102,11 @@ shared util, configured non-Bearer.
 otherwise it `writeImage()`s each to `resolveOutputDir(output_dir)` (per-call
 `output_dir` → `$GEMINI_OUTPUT_DIR` → cwd), de-duplicating with `uniquePath`
 (`name.png`, `name-2.png`, …), and returns the absolute paths plus a metadata
-object (`model`, `seed`, optional `text`, `grounding`, `interaction_id`).
+object (`model`, `seed`, a `hint` steering iterative refinement to
+`gemini_interact`, optional `text`, `grounding`, `interaction_id`,
+`previous_interaction_id`). `gemini_interact` also accepts `continue_last: true`
+to chain from the server process's most recent interaction id (in-memory;
+explicit `previous_interaction_id` wins).
 
 **Image inputs** (`gatherImageInputs`) come from `images` (file paths),
 `images_base64` (raw base64 or `data:` URIs, MIME sniffed from bytes), and

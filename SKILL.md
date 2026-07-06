@@ -69,7 +69,7 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 | Variable | Required | Description |
 |---|---|---|
 | `GEMINI_API_KEY` | Yes | Your Google Gemini API key |
-| `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-3-pro-image`) |
+| `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-3.1-flash-image`) |
 | `GEMINI_OUTPUT_DIR` | No | Default directory for saved images (default: current working directory) |
 | `GEMINI_INPUT_DIR` | No | Directory to resolve bare input-image filenames against (e.g. point at Cowork's `uploads/` folder so `images: ["house.jpg"]` works) |
 
@@ -79,6 +79,13 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 | Tool | Description |
 |------|-------------|
 | `gemini_list_models` | List available Gemini image models and the current default |
+
+**Which model to pick** (per-call `model`, or `GEMINI_IMAGE_MODEL`):
+
+| Model | When to use |
+|-------|-------------|
+| `gemini-3.1-flash-image` (Nano Banana 2) | The versatile generalist workhorse for all tasks — balances speed with state-of-the-art 4K generation, world knowledge, and reliable text rendering; excels at multi-reference-image processing and consistency |
+| `gemini-3-pro-image` (Nano Banana Pro) | The premium choice for the most complex visual tasks — highest world knowledge, advanced localization, accurate brand consistency, precision creative control |
 
 ### Image Generation
 | Tool | Description |
@@ -90,7 +97,7 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 ### Multi-turn (Interactions API — Beta)
 | Tool | Description |
 |------|-------------|
-| `gemini_interact(input, previous_interaction_id?, images?, images_base64?, video_url?, video_path?, google_search?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` to **iteratively refine the same image** conversationally — the recommended way to make incremental edits. Output is **JPEG**. (Beta API.) |
+| `gemini_interact(input, previous_interaction_id?, continue_last?, images?, images_base64?, video_url?, video_path?, google_search?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | **Preferred tool for iterative refinement.** Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` (or set `continue_last: true` to reuse the session's most recent one) to **iteratively refine the same image** conversationally — do NOT start a new interaction or re-upload the image per tweak. Output is **JPEG**. (Beta API.) |
 
 ## Workflows
 
@@ -148,8 +155,10 @@ r1 = gemini_interact(input: "a cozy reading nook, watercolor")
 r2 = gemini_interact(input: "add a sleeping cat on the chair",
                      previous_interaction_id: r1.interaction_id)
    → refined image that preserves r1; returns a NEW interaction_id
+r3 = gemini_interact(input: "warmer lighting", continue_last: true)
+   → same chain, without threading the id (uses the session's most recent interaction)
 ```
-Prefer this over re-running `gemini_edit_image` when you're making a *series* of incremental edits — the model keeps the prior result in context.
+Prefer this over re-running `gemini_edit_image` when you're making a *series* of incremental edits — the model keeps the prior result in context. Every result echoes `interaction_id` (and `previous_interaction_id` when chaining) plus a `hint` with the exact follow-up call.
 **⚠️ Chat-pasted/attached images can't be fed to these tools directly.** A pasted
 image reaches the assistant as a *vision* block — the assistant can SEE it but
 never receives the original bytes, and the host doesn't write it to disk. So
