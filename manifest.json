@@ -38,7 +38,8 @@
         "GEMINI_API_KEY": "${user_config.gemini_api_key}",
         "GEMINI_IMAGE_MODEL": "${user_config.gemini_image_model}",
         "GEMINI_OUTPUT_DIR": "${user_config.gemini_output_dir}",
-        "GEMINI_INPUT_DIR": "${user_config.gemini_input_dir}"
+        "GEMINI_INPUT_DIR": "${user_config.gemini_input_dir}",
+        "GEMINI_TIMEOUT_MS": "${user_config.gemini_timeout_ms}"
       }
     }
   },
@@ -68,6 +69,13 @@
       "type": "string",
       "title": "Input Directory",
       "description": "Directory to resolve bare input-image filenames against (e.g. an uploads folder)",
+      "required": false,
+      "sensitive": false
+    },
+    "gemini_timeout_ms": {
+      "type": "string",
+      "title": "Request Timeout (ms)",
+      "description": "Upstream request timeout in ms (default: 60000, or 120000 for 4K output)",
       "required": false,
       "sensitive": false
     }

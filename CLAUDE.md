@@ -25,14 +25,16 @@ GEMINI_API_KEY=<key>        # Required. Create at https://aistudio.google.com/ap
 GEMINI_IMAGE_MODEL=<id>     # Optional. Default model override (bare id, e.g. gemini-3.1-flash-image)
 GEMINI_OUTPUT_DIR=<dir>     # Optional. Where generated images are written (default: cwd)
 GEMINI_INPUT_DIR=<dir>      # Optional. Base dir searched for relative input image paths
+GEMINI_TIMEOUT_MS=<ms>      # Optional. Upstream timeout (default 60000; 120000 for 4K; per-call timeout_ms wins)
+GEMINI_HEARTBEAT_MS=<ms>    # Optional. notifications/progress cadence during generation (default 10000; 0 disables)
 ```
 
 Loaded via `loadDotenvSafely` from `.env` next to `dist/` (failure swallowed —
 mcpb bundles omit `dotenv`; the host provides env). `readEnvVar` (from
 `@chrischall/mcp-utils`) treats blank, `"undefined"`, `"null"`, and unsubstituted
-`${FOO}` placeholders as unset. The four vars map to `manifest.json`'s
-`user_config` (`gemini_api_key`, `gemini_image_model`, `gemini_input_dir`,
-`gemini_output_dir`).
+`${FOO}` placeholders as unset. All but `GEMINI_HEARTBEAT_MS` map to
+`manifest.json`'s `user_config` (`gemini_api_key`, `gemini_image_model`,
+`gemini_input_dir`, `gemini_output_dir`, `gemini_timeout_ms`).
 
 ## Architecture
 
@@ -107,7 +109,9 @@ object (`model`, `seed`, a `hint` steering iterative refinement to
 `gemini_interact`, optional `text`, `grounding`, `interaction_id`,
 `previous_interaction_id`). `gemini_interact` also accepts `continue_last: true`
 to chain from the server process's most recent interaction id (in-memory;
-explicit `previous_interaction_id` wins). On a *chained* interact call, `images`
+explicit `previous_interaction_id` wins), and in disk mode writes an
+`<image>.json` sidecar carrying the result meta so the interaction id survives
+a host-side timeout (see Quirks). On a *chained* interact call, `images`
 entries that resolve to files this server itself generated are dropped and
 echoed as `dropped_previous_output` — the interaction state already contains
 the prior output, and re-attaching it anchors the model against the edit.
@@ -191,9 +195,23 @@ caller to display them. `search_types` is Interactions-only; don't add it to
   Interactions API are paid; a free-tier key gets HTTP 429 with `limit: 0` (a
   quota-of-zero, not real throttling). Verify response shapes against a funded key
   before trusting them.
-- **60s timeout (not the fleet 15–30s).** Pro-model image generation routinely
-  runs 30s+, so `REQUEST_TIMEOUT_MS = 60_000`. The shared client retries 429 once
-  after 2s (mcp-utils default) — the free tier rate-limits aggressively.
+- **60s timeout (not the fleet 15–30s), configurable.** Pro-model image
+  generation routinely runs 30s+, so the default is 60s — and 4K output
+  routinely runs past 60s, so its default is 120s. `resolveTimeoutMs()`
+  (client.ts) resolves per-call `timeout_ms` → `$GEMINI_TIMEOUT_MS` → those
+  defaults at request time; `apisFor()` memoizes a `createApiClient` pair per
+  distinct timeout. The shared client retries 429 once after 2s (mcp-utils
+  default) — the free tier rate-limits aggressively.
+- **The host's timeout is not ours: heartbeat + sidecar recovery.** MCP hosts
+  enforce their own `tools/call` timeout (`-32001 Request timed out`) but reset
+  it on `notifications/progress` — so every generation tool emits a heartbeat
+  (`withProgressHeartbeat`, `tools/shared.ts`, every `$GEMINI_HEARTBEAT_MS`,
+  default 10s) while the upstream call is in flight, when the caller sent a
+  `progressToken`. If the host still gives up, the handler keeps running (it
+  ignores the cancellation signal): the image is written, `lastInteractionId`
+  updates (so `continue_last: true` survives the timeout), and `gemini_interact`
+  writes an `<image>.json` sidecar with the interaction id — the multi-turn
+  chain is recoverable from disk even though the MCP response was lost.
 - **`from_clipboard` is macOS-only (issue #13).** `readClipboardImage` shells out
   to `osascript` (clipboard PNG → temp file) then `sips` (downscale ≤2048px →
   JPEG); non-darwin throws an actionable `McpToolError`. The clipboard module is

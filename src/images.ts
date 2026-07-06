@@ -57,6 +57,17 @@ export async function writeImage(dir: string, base: string, base64: string, mime
 }
 
 /**
+ * Write `<imagePath>.json` recording generation metadata (notably the
+ * interaction id) next to a written image. The MCP host's tools/call timeout
+ * can expire while the server-side generation finishes anyway — the response
+ * (and its interaction id) is then lost, but this sidecar survives, so the
+ * multi-turn chain is recoverable from disk.
+ */
+export async function writeSidecar(imagePath: string, data: Record<string, unknown>): Promise<void> {
+  await writeFile(`${imagePath}.json`, JSON.stringify(data, null, 2));
+}
+
+/**
  * Resolve an input file path, checking (in order):
  *  1. Absolute path that exists → returned as-is.
  *  2. `GEMINI_INPUT_DIR` env var is set → look for `join(inputDir, p)`.

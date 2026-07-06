@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pickSeed, emit, IMAGE_SIZES, sharedImageSchema } from '../../src/tools/shared.js';
+import { pickSeed, emit, IMAGE_SIZES, sharedImageSchema, withProgressHeartbeat } from '../../src/tools/shared.js';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
@@ -76,11 +76,121 @@ describe('emit onWritten', () => {
     expect(written).toHaveLength(1);
   });
 
+  it('awaits an async onWritten before returning (sidecar writes finish first)', async () => {
+    const named = [{ image: { base64: PNG, mimeType: 'image/png' }, base: 'cb' }];
+    let settled = false;
+    await emit(named, { output_dir: dir }, undefined, async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      settled = true;
+    });
+    expect(settled).toBe(true);
+  });
+
   it('does not call onWritten in inline mode (nothing written)', async () => {
     const named = [{ image: { base64: PNG, mimeType: 'image/png' }, base: 'cb' }];
     const onWritten = vi.fn();
     await emit(named, { inline: true }, undefined, onWritten);
     expect(onWritten).not.toHaveBeenCalled();
+  });
+});
+
+describe('sharedImageSchema timeout_ms', () => {
+  it('exists, is optional, and documents the defaults (60s / 120s for 4K / GEMINI_TIMEOUT_MS)', () => {
+    const schema = sharedImageSchema.timeout_ms;
+    expect(schema).toBeDefined();
+    expect(schema.safeParse(undefined).success).toBe(true);
+    expect(schema.safeParse(120_000).success).toBe(true);
+    expect(schema.safeParse(-1).success).toBe(false);
+    expect(schema.safeParse(1.5).success).toBe(false);
+    const desc = schema.description ?? '';
+    expect(desc).toContain('GEMINI_TIMEOUT_MS');
+    expect(desc).toMatch(/4K/);
+  });
+});
+
+describe('withProgressHeartbeat', () => {
+  const ORIG = process.env.GEMINI_HEARTBEAT_MS;
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => {
+    vi.useRealTimers();
+    if (ORIG === undefined) delete process.env.GEMINI_HEARTBEAT_MS;
+    else process.env.GEMINI_HEARTBEAT_MS = ORIG;
+  });
+
+  function extraWithToken() {
+    return {
+      _meta: { progressToken: 'tok-1' },
+      sendNotification: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it('sends notifications/progress with the caller token while fn is pending', async () => {
+    const extra = extraWithToken();
+    let resolveFn!: (v: string) => void;
+    const p = withProgressHeartbeat(extra, 'Generating image', () => new Promise<string>((r) => { resolveFn = r; }));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(extra.sendNotification).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'notifications/progress',
+      params: expect.objectContaining({ progressToken: 'tok-1', progress: 1, message: expect.stringContaining('Generating image') }),
+    }));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(extra.sendNotification).toHaveBeenCalledTimes(2);
+    resolveFn('done');
+    await expect(p).resolves.toBe('done');
+  });
+
+  it('stops the heartbeat once fn settles', async () => {
+    const extra = extraWithToken();
+    await withProgressHeartbeat(extra, 'x', () => Promise.resolve('ok'));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(extra.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it('propagates fn rejection and stops the heartbeat', async () => {
+    const extra = extraWithToken();
+    await expect(withProgressHeartbeat(extra, 'x', () => Promise.reject(new Error('boom')))).rejects.toThrow('boom');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(extra.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it('is a pass-through when the caller sent no progressToken', async () => {
+    const extra = { _meta: {}, sendNotification: vi.fn() };
+    const result = await withProgressHeartbeat(extra, 'x', () => Promise.resolve(42));
+    expect(result).toBe(42);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(extra.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it('survives sendNotification rejections (client may have gone away)', async () => {
+    const extra = {
+      _meta: { progressToken: 7 },
+      sendNotification: vi.fn().mockRejectedValue(new Error('connection closed')),
+    };
+    let resolveFn!: (v: string) => void;
+    const p = withProgressHeartbeat(extra, 'x', () => new Promise<string>((r) => { resolveFn = r; }));
+    await vi.advanceTimersByTimeAsync(20_000);
+    resolveFn('ok');
+    await expect(p).resolves.toBe('ok');
+  });
+
+  it('GEMINI_HEARTBEAT_MS tunes the interval; 0 disables', async () => {
+    process.env.GEMINI_HEARTBEAT_MS = '50';
+    const extra = extraWithToken();
+    let resolveFn!: (v: string) => void;
+    const p = withProgressHeartbeat(extra, 'x', () => new Promise<string>((r) => { resolveFn = r; }));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(extra.sendNotification).toHaveBeenCalledTimes(3);
+    resolveFn('ok');
+    await p;
+
+    process.env.GEMINI_HEARTBEAT_MS = '0';
+    const off = extraWithToken();
+    let resolveOff!: (v: string) => void;
+    const pOff = withProgressHeartbeat(off, 'x', () => new Promise<string>((r) => { resolveOff = r; }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(off.sendNotification).not.toHaveBeenCalled();
+    resolveOff('ok');
+    await pOff;
   });
 });
 
