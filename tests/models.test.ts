@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_IMAGE_MODEL, resolveModel, filterImageModels } from '../src/models.js';
 
+describe('DEFAULT_IMAGE_MODEL', () => {
+  it('defaults to the generalist workhorse (Nano Banana 2), not the premium Pro model', () => {
+    expect(DEFAULT_IMAGE_MODEL).toBe('gemini-3.1-flash-image');
+  });
+});
+
 describe('resolveModel', () => {
   it('prefers per-call over env over default', () => {
     expect(resolveModel('a', 'b')).toBe('a');

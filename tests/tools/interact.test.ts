@@ -18,6 +18,30 @@ let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-interact-')); });
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 
+describe('gemini_interact description', () => {
+  it('states it is the preferred tool for iterative refinement and how to chain', async () => {
+    const h = await createTestHarness(registerInteractTools);
+    const { tools } = await h.client.listTools();
+    const desc = tools.find((t) => t.name === 'gemini_interact')?.description ?? '';
+    expect(desc).toMatch(/^Preferred tool for iterative/i);
+    expect(desc).toContain('previous_interaction_id');
+    expect(desc).toMatch(/do NOT start a new interaction/i);
+    await h.close();
+  });
+
+  it('model param describes when to pick each model', async () => {
+    const h = await createTestHarness(registerInteractTools);
+    const { tools } = await h.client.listTools();
+    const schema = tools.find((t) => t.name === 'gemini_interact')?.inputSchema as {
+      properties?: Record<string, { description?: string }>;
+    };
+    const desc = schema.properties?.model?.description ?? '';
+    expect(desc).toContain('gemini-3.1-flash-image');
+    expect(desc).toContain('gemini-3-pro-image');
+    await h.close();
+  });
+});
+
 describe('gemini_interact', () => {
   it('writes a JPEG file and returns interaction_id in meta', async () => {
     vi.spyOn(client, 'interact').mockResolvedValue({
@@ -195,6 +219,48 @@ describe('gemini_interact', () => {
     const data = parseToolResult<{ interaction_id?: string; seed?: number }>(res);
     expect(data.interaction_id).toBe('chain-id');
     expect(data.seed).toBeUndefined();
+    await h.close();
+  });
+
+  it('includes a copy-paste-ready refinement hint carrying the new interaction id', async () => {
+    vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'hint-id-99',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
+    const data = parseToolResult<{ hint?: string }>(res);
+    expect(data.hint).toContain('previous_interaction_id');
+    expect(data.hint).toContain('hint-id-99');
+    await h.close();
+  });
+
+  it('echoes previous_interaction_id in meta when chaining', async () => {
+    vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'next-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', {
+      input: 'add a hat',
+      previous_interaction_id: 'prior-id-7',
+      output_dir: dir,
+    });
+    const data = parseToolResult<{ interaction_id: string; previous_interaction_id?: string }>(res);
+    expect(data.previous_interaction_id).toBe('prior-id-7');
+    expect(data.interaction_id).toBe('next-id');
+    await h.close();
+  });
+
+  it('omits previous_interaction_id from meta on a first turn', async () => {
+    vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'first-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
+    const data = parseToolResult<{ previous_interaction_id?: string }>(res);
+    expect(data.previous_interaction_id).toBeUndefined();
     await h.close();
   });
 

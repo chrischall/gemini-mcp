@@ -14,6 +14,16 @@ export const IMAGE_SIZES = ['512', '1K', '2K', '4K'] as const;
  * here so descriptions can't drift between `generate.ts` and `set.ts`. Spread
  * into each tool's `inputSchema`.
  */
+/**
+ * When to pick which Nano Banana model — shared by every tool's `model` param
+ * so the guidance can't drift between them.
+ */
+export const MODEL_CHOICE_GUIDE =
+  'gemini-3.1-flash-image (Nano Banana 2) is the versatile generalist workhorse — balances speed with ' +
+  'state-of-the-art 4K generation, world knowledge, and reliable text rendering; excels at multi-reference-image ' +
+  'processing and consistency. gemini-3-pro-image (Nano Banana Pro) is the premium choice for the most complex ' +
+  'visual tasks — highest world knowledge, advanced localization, accurate brand consistency, precision creative control.';
+
 export const sharedImageSchema = {
   // Bare id only: the model is interpolated into the URL path
   // (`/models/${model}:generateContent`), so slashes/colons/queries must be
@@ -22,7 +32,7 @@ export const sharedImageSchema = {
     .string()
     .regex(/^[\w.-]+$/, 'must be a bare model id (letters, digits, ".", "_", "-")')
     .optional()
-    .describe('Model id override (default: server default; see gemini_list_models)'),
+    .describe(`Model id override (default: server default; see gemini_list_models). ${MODEL_CHOICE_GUIDE}`),
   aspect_ratio: z.enum(ASPECT_RATIOS).optional().describe('Output aspect ratio'),
   image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution (512 = 0.5K, Flash-only)'),
   output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),

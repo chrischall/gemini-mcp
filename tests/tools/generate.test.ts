@@ -16,6 +16,48 @@ let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-gen-')); });
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 
+describe('tool descriptions steer iterative refinement to gemini_interact', () => {
+  it('gemini_generate_image points at gemini_interact for iterative work', async () => {
+    const h = await createTestHarness(registerGenerateTools);
+    const { tools } = await h.client.listTools();
+    const desc = tools.find((t) => t.name === 'gemini_generate_image')?.description ?? '';
+    expect(desc).toContain('gemini_interact');
+    await h.close();
+  });
+
+  it('gemini_edit_image points at gemini_interact for successive edits, itself for one-offs/composition', async () => {
+    const h = await createTestHarness(registerGenerateTools);
+    const { tools } = await h.client.listTools();
+    const desc = tools.find((t) => t.name === 'gemini_edit_image')?.description ?? '';
+    expect(desc).toMatch(/series of successive edits/i);
+    expect(desc).toContain('gemini_interact');
+    expect(desc).toMatch(/one-off/i);
+    await h.close();
+  });
+});
+
+describe('refinement hints in results', () => {
+  it('gemini_generate_image result includes a hint steering follow-up edits to gemini_interact', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', { prompt: 'a red leaf', output_dir: dir });
+    const data = parseToolResult<{ hint?: string }>(res);
+    expect(data.hint).toContain('gemini_interact');
+    expect(data.hint).toContain('previous_interaction_id');
+    await h.close();
+  });
+
+  it('gemini_edit_image result includes a hint steering follow-up edits to gemini_interact', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_edit_image', { prompt: 'brighter', images_base64: [PNG], output_dir: dir });
+    const data = parseToolResult<{ hint?: string }>(res);
+    expect(data.hint).toContain('gemini_interact');
+    expect(data.hint).toContain('previous_interaction_id');
+    await h.close();
+  });
+});
+
 describe('gemini_generate_image', () => {
   it('writes a file and returns its path', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });

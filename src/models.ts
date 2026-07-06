@@ -1,5 +1,10 @@
-/** Latest top-end image model; overridable per-call and via GEMINI_IMAGE_MODEL. */
-export const DEFAULT_IMAGE_MODEL = 'gemini-3-pro-image';
+/**
+ * The generalist workhorse (Nano Banana 2) — overridable per-call and via
+ * GEMINI_IMAGE_MODEL. The premium gemini-3-pro-image is a deliberate opt-in:
+ * it costs more and needs a funded account, so callers reach for it via the
+ * `model` param when the task warrants it (see MODEL_CHOICE_GUIDE).
+ */
+export const DEFAULT_IMAGE_MODEL = 'gemini-3.1-flash-image';
 
 /** A trimmed image-model entry surfaced by `gemini_list_models`. */
 export interface GeminiModel {

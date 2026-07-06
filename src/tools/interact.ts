@@ -1,19 +1,26 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { readEnvVar } from '@chrischall/mcp-utils';
+import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
+import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
+
+// The most recent interaction id this server process created — what
+// `continue_last: true` resumes. In-memory only: an MCP server lives for the
+// host session, so "last" means "last in this session".
+let lastInteractionId: string | undefined;
 
 export function registerInteractTools(server: McpServer): void {
   server.registerTool(
     'gemini_interact',
     {
       description:
-        "Multi-turn image generation/editing via Gemini's Interactions API (Beta). " +
-        'Returns an interaction `id`; pass it back as `previous_interaction_id` to iteratively ' +
-        'refine the SAME image conversationally (the recommended way to make incremental edits). ' +
+        'Preferred tool for iterative or multi-step refinement of a single image — ' +
+        "multi-turn generation/editing via Gemini's Interactions API (Beta). " +
+        'To refine, capture the returned interaction `id` and pass it as `previous_interaction_id` ' +
+        'on the next call — do NOT start a new interaction or re-upload the image for each tweak. ' +
+        '`continue_last: true` chains from this session\'s most recent interaction without threading the id. ' +
         'Output is JPEG.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
@@ -22,6 +29,10 @@ export function registerInteractTools(server: McpServer): void {
           .string()
           .optional()
           .describe('ID from a prior gemini_interact call — continues that multi-turn conversation'),
+        continue_last: z
+          .boolean()
+          .optional()
+          .describe('Continue from the most recent interaction this server created (convenience for previous_interaction_id; an explicit id wins)'),
         images: z
           .array(z.string().min(1))
           .optional()
@@ -33,7 +44,7 @@ export function registerInteractTools(server: McpServer): void {
         model: z
           .string()
           .optional()
-          .describe('Model id override (default: server default; see gemini_list_models)'),
+          .describe(`Model id override (default: server default; see gemini_list_models). ${MODEL_CHOICE_GUIDE}`),
         aspect_ratio: z.enum(ASPECT_RATIOS).optional().describe('Output aspect ratio'),
         image_size: z
           .enum(IMAGE_SIZES)
@@ -72,6 +83,15 @@ export function registerInteractTools(server: McpServer): void {
       },
     },
     async (args) => {
+      let previousInteractionId = args.previous_interaction_id;
+      if (!previousInteractionId && args.continue_last) {
+        if (!lastInteractionId) {
+          throw new McpToolError('No previous interaction to continue in this session.', {
+            hint: 'Call gemini_interact once without continue_last first, or pass an explicit previous_interaction_id.',
+          });
+        }
+        previousInteractionId = lastInteractionId;
+      }
       const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
       const video = await resolveVideoInput(args);
       const r = await client.interact({
@@ -81,14 +101,17 @@ export function registerInteractTools(server: McpServer): void {
         aspectRatio: args.aspect_ratio,
         imageSize: args.image_size,
         thinkingLevel: args.thinking_level,
-        previousInteractionId: args.previous_interaction_id,
+        previousInteractionId,
         googleSearch: args.google_search,
         videoUrl: video.videoUrl,
         videoMimeType: video.videoMimeType,
       });
+      lastInteractionId = r.id;
 
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const meta: Record<string, unknown> = { model, interaction_id: r.id };
+      if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
+      meta.hint = `To refine this image, call gemini_interact again with previous_interaction_id: "${r.id}" (or continue_last: true).`;
       if (r.text) meta.text = r.text;
       if (r.grounding) meta.grounding = r.grounding;
       if (video.videoFileMeta) meta.video_file = video.videoFileMeta;

@@ -27,6 +27,14 @@ describe('IMAGE_SIZES', () => {
 });
 
 describe('sharedImageSchema model', () => {
+  it('describes when to pick each model (Nano Banana 2 workhorse vs Pro premium)', () => {
+    const desc = sharedImageSchema.model.description ?? '';
+    expect(desc).toContain('gemini-3.1-flash-image');
+    expect(desc).toContain('gemini-3-pro-image');
+    expect(desc).toMatch(/workhorse/i);
+    expect(desc).toMatch(/premium/i);
+  });
+
   it('accepts real model ids', () => {
     expect(sharedImageSchema.model.safeParse('gemini-3-pro-image').success).toBe(true);
     expect(sharedImageSchema.model.safeParse('gemini-2.5-flash-image').success).toBe(true);
