@@ -268,8 +268,9 @@ The **PR title MUST be a Conventional Commit**, written user-facing (`fix(scope)
 **Don't run `gh pr merge` yourself.** `pr-auto-review.yml` reviews every PR
 (except the release PR) and adds `ready-to-merge` on a `pass` **or** a `warn`
 (nits-only) verdict; `auto-merge.yml` then arms `gh pr merge --auto --squash`
-(squash-merge only; the moment CI is green it merges). A `warn` or `fail` verdict
-also opens/updates an `auto-review-followup` issue capturing the findings (see
+(squash-merge only; the moment CI is green it merges). Any review that surfaced
+findings — a `warn`/`fail` verdict, or a `pass` whose structured output lists
+nits — also opens/updates an `auto-review-followup` issue capturing them (see
 below); only a `fail` blocks the merge. Opening with `gh pr create --label <label>`
 is the whole job. On a `fail` verdict you've decided to ship anyway, add the label
 yourself. **Release PRs are the one manual touch** — add `ready-to-merge` when
@@ -281,13 +282,14 @@ GitHub draft (auto-review skips drafts) for a checkpoint review without shipping
 
 ### Auto-review follow-up issues
 
-When a PR's auto-review verdict is `warn` or `fail`, the `chrischall/workflows`
-pipeline opens or updates a single `auto-review-followup` issue ("Auto-review
-follow-ups for PR #N") whose checklist captures every finding, and links it from
-the PR's `<!-- auto-review-verdict -->` comment (`📋 Tracking follow-ups: #N`).
-`warn` (nits only) still auto-merges — the issue carries the nits forward, so most
-nits are fixed in a *later* PR; `fail` blocks until the important findings are
-addressed on the PR itself.
+Whenever a PR's auto-review surfaces findings — a `warn` or `fail` verdict, or a
+`pass` whose structured output lists nits — the `chrischall/workflows` pipeline
+opens or updates a single `auto-review-followup` issue ("Auto-review follow-ups
+for PR #N") whose checklist captures every finding, and links it from the PR's
+`<!-- auto-review-verdict -->` comment (`📋 Tracking follow-ups: #N`).
+`pass`/`warn` with nits still auto-merge — the issue carries the nits forward, so
+most nits are fixed in a *later* PR; `fail` blocks until the important findings
+are addressed on the PR itself.
 
 When asked to address the auto-review comments / review findings on a PR:
 
@@ -297,8 +299,8 @@ When asked to address the auto-review comments / review findings on a PR:
 3. If every item is resolved on the current PR, add `Closes #<issue>` to that PR's
    body so the merge closes it; if some are deferred, check off only the resolved
    ones and leave the issue open.
-4. For nits whose `warn` PR already auto-merged, address them in a follow-up PR
-   that references `Closes #<issue>`.
+4. For nits whose `pass`/`warn` PR already auto-merged, address them in a
+   follow-up PR that references `Closes #<issue>`.
 
 (Mirrors the fleet-wide convention in `~/.claude/CLAUDE.md`.)
 
