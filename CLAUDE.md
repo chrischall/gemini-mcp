@@ -125,6 +125,12 @@ meta so callers can reuse the uri. Both video params together is an error.
 
 **`google_search`** grounds generation in live Google Search; surfaced sources
 (`generateContent`) or queries (`interact`) are echoed in the result metadata.
+`gemini_interact` additionally accepts `search_types: ["web_search","image_search"]`
+(implies google_search; `image_search` is 3.1-Flash-only and pulls web images as
+visual references). When `image_search` is requested, the result's
+`grounding.search_suggestions` HTML chips are surfaced — Google ToS require the
+caller to display them. `search_types` is Interactions-only; don't add it to
+`generateContent`'s `{google_search:{}}` without live-verifying.
 
 ## Conventions
 

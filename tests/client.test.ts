@@ -595,6 +595,59 @@ describe('interact', () => {
     expect(sent.tools).toBeUndefined();
   });
 
+  it('sends search_types on the google_search tool (implying grounding) when searchTypes is set', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a butterfly painting', searchTypes: ['web_search', 'image_search'] });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.tools).toEqual([{ type: 'google_search', search_types: ['web_search', 'image_search'] }]);
+  });
+
+  it('does not add search_types when only googleSearch:true is set', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeInteractFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.interact({ input: 'a circle', googleSearch: true });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.tools).toEqual([{ type: 'google_search' }]);
+  });
+
+  it('surfaces deduped search_suggestions in grounding when image_search was requested (ToS display requirement)', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    // Live-verified shape (2026-07-06): one call/result pair per search type;
+    // a call's `arguments` can be null; result[].search_suggestions is an HTML chip.
+    const fixture = {
+      id: 'is-id',
+      steps: [
+        { type: 'google_search_call', search_type: 'web_search', arguments: null },
+        { type: 'google_search_result', result: [{ search_suggestions: '<div>chip</div>' }, { search_suggestions: '<div>chip</div>' }] },
+        { type: 'google_search_call', search_type: 'image_search', arguments: { queries: ['Timareta butterfly'] } },
+        { type: 'google_search_result', result: [{ search_suggestions: '<div>other</div>' }] },
+        { type: 'model_output', content: [{ type: 'image', mime_type: 'image/jpeg', data: 'img' }] },
+      ],
+    };
+    const c = new GeminiClient({ fetchImpl: capturingFetch(fixture).fn });
+    const r = await c.interact({ input: 'butterfly', searchTypes: ['web_search', 'image_search'] });
+    expect(r.grounding?.queries).toEqual(['Timareta butterfly']);
+    expect(r.grounding?.search_suggestions).toEqual(['<div>chip</div>', '<div>other</div>']);
+  });
+
+  it('omits search_suggestions from grounding when image_search was not requested', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fixture = {
+      id: 'ws-id',
+      steps: [
+        { type: 'google_search_call', search_type: 'web_search', arguments: { queries: ['sf weather'] } },
+        { type: 'google_search_result', result: [{ search_suggestions: '<div>chip</div>' }] },
+        { type: 'model_output', content: [{ type: 'image', mime_type: 'image/jpeg', data: 'img' }] },
+      ],
+    };
+    const c = new GeminiClient({ fetchImpl: capturingFetch(fixture).fn });
+    const r = await c.interact({ input: 'sf weather', googleSearch: true });
+    expect(r.grounding).toEqual({ queries: ['sf weather'] });
+  });
+
   it('includes video input entry when videoUrl is set', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = capturingFetch(makeInteractFixture());
