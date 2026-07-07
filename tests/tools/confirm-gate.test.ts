@@ -91,6 +91,21 @@ describe('confirm-gate: local file inputs require confirm:true', () => {
     await h.close();
   });
 
+  it('gemini_interact without confirm (video input) previews without uploading', async () => {
+    const up = vi.spyOn(client, 'uploadVideo');
+    const inter = vi.spyOn(client, 'interact');
+    const videoPath = join(dir, 'clip.mp4');
+    writeFileSync(videoPath, Buffer.from('videobytes'));
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'describe this', video_path: videoPath, output_dir: dir });
+    expect(up).not.toHaveBeenCalled();
+    expect(inter).not.toHaveBeenCalled();
+    const p = parseToolResult<Preview>(res);
+    expect(p.dryRun).toBe(true);
+    expect(p.willSend.inputs).toEqual([{ path: videoPath, mimeType: 'video/mp4', size: 'videobytes'.length }]);
+    await h.close();
+  });
+
   // Pure text-to-image (no local input file) must NOT be gated.
   it('gemini_generate_image with no local input is unaffected (proceeds without confirm)', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });

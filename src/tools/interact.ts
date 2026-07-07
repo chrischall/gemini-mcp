@@ -3,8 +3,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
-import { slugify, baseName, gatherImageInputs, resolveImagePath } from '../images.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, type NamedImage } from './shared.js';
+import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar } from '../images.js';
+import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 // The most recent interaction id this server process created — what
@@ -51,6 +51,9 @@ export function registerInteractTools(server: McpServer): void {
         'To refine, capture the returned interaction `id` and pass it as `previous_interaction_id` ' +
         'on the next call — do NOT start a new interaction or re-upload the image for each tweak. ' +
         '`continue_last: true` chains from this session\'s most recent interaction without threading the id. ' +
+        'If a call times out on the client side, the generation usually still completes: the image plus a ' +
+        '`<image>.json` sidecar recording its interaction id land in the output dir, and `continue_last: true` ' +
+        'still resumes that interaction — check the output dir before re-issuing (a re-issue is a second billable generation). ' +
         'Output is JPEG.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
@@ -113,6 +116,7 @@ export function registerInteractTools(server: McpServer): void {
           .optional()
           .describe('Public YouTube URL (or a previously uploaded Files API uri) as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
         video_path: videoPathSchema,
+        timeout_ms: timeoutMsSchema,
         from_clipboard: z
           .boolean()
           .optional()
@@ -120,7 +124,7 @@ export function registerInteractTools(server: McpServer): void {
         confirm: schemaConfirm,
       },
     },
-    async (args) => {
+    async (args, extra) => {
       let previousInteractionId = args.previous_interaction_id;
       if (!previousInteractionId && args.continue_last) {
         if (!lastInteractionId) {
@@ -142,20 +146,22 @@ export function registerInteractTools(server: McpServer): void {
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local file input(s) to the Gemini Interactions API', '/v1beta/interactions', images, args.video_path);
       if (gate) return gate;
       const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
-      const video = await resolveVideoInput(args);
-      const r = await client.interact({
-        input: args.input,
-        images: inputs.length ? inputs : undefined,
-        model: args.model,
-        aspectRatio: args.aspect_ratio,
-        imageSize: args.image_size,
-        thinkingLevel: args.thinking_level,
-        previousInteractionId,
-        googleSearch: args.google_search,
-        searchTypes: args.search_types,
-        videoUrl: video.videoUrl,
-        videoMimeType: video.videoMimeType,
-      });
+      const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
+      const r = await withProgressHeartbeat(extra, 'Generating image (Gemini Interactions API)', () =>
+        client.interact({
+          input: args.input,
+          images: inputs.length ? inputs : undefined,
+          model: args.model,
+          aspectRatio: args.aspect_ratio,
+          imageSize: args.image_size,
+          thinkingLevel: args.thinking_level,
+          previousInteractionId,
+          googleSearch: args.google_search,
+          searchTypes: args.search_types,
+          videoUrl: video.videoUrl,
+          videoMimeType: video.videoMimeType,
+          timeoutMs: args.timeout_ms,
+        }));
       lastInteractionId = r.id;
 
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
@@ -176,7 +182,17 @@ export function registerInteractTools(server: McpServer): void {
       }));
 
       // writeImage returns already-resolved absolute paths.
-      return emit(named, args, meta, (paths) => { for (const p of paths) writtenOutputs.add(p); });
+      return emit(named, args, meta, async (paths) => {
+        for (const p of paths) writtenOutputs.add(p);
+        // Sidecar per image so the interaction id survives a lost MCP response
+        // (host timeout). Best-effort: the image is already on disk and the id
+        // is in the result — a sidecar failure shouldn't fail the call.
+        try {
+          for (const p of paths) await writeSidecar(p, { ...meta, images: paths });
+        } catch (err) {
+          meta.sidecar_error = err instanceof Error ? err.message : String(err);
+        }
+      });
     },
   );
 }

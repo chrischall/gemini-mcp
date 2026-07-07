@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, access, stat } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access, stat, open } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { readEnvVar, McpToolError } from '@chrischall/mcp-utils';
@@ -131,8 +131,18 @@ export interface LocalInputPreview { path: string; mimeType: string; size: numbe
  */
 export async function previewImageInput(path: string): Promise<LocalInputPreview> {
   const resolved = resolveImagePath(path);
-  const buf = await readFile(resolved);
-  return { path: resolved, mimeType: sniffMimeBytes(buf), size: buf.length };
+  // Read only the header bytes needed to sniff the MIME (≤12), and take the size
+  // from stat() — a dry-run must not load a large reference image into memory
+  // just to report it (matches previewVideoInput).
+  const { size } = await stat(resolved);
+  const fh = await open(resolved, 'r');
+  try {
+    const head = Buffer.alloc(16);
+    const { bytesRead } = await fh.read(head, 0, 16, 0);
+    return { path: resolved, mimeType: sniffMimeBytes(head.subarray(0, bytesRead)), size };
+  } finally {
+    await fh.close();
+  }
 }
 
 /**
