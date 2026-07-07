@@ -5,6 +5,7 @@ import { resolveModel } from '../models.js';
 import { client, type GeneratedImage } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 export function registerSetTools(server: McpServer): void {
   server.registerTool(
@@ -21,6 +22,7 @@ export function registerSetTools(server: McpServer): void {
         basename: z.string().optional().describe('Base filename prefix for output images (default: slugified master_prompt)'),
         master_images: z.array(z.string().min(1)).optional().describe('Reference image paths passed to the master generation call'),
         master_images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs for master generation'),
+        confirm: schemaConfirm,
         ...sharedImageSchema,
       },
     },
@@ -29,6 +31,10 @@ export function registerSetTools(server: McpServer): void {
       if ((args.scenes && args.count) || (!args.scenes && !args.count)) {
         throw new McpToolError('Provide exactly one of `scenes` or `count`.');
       }
+      // Confirm-gate local file inputs: only `master_images` (paths) can read a
+      // local file; base64 references pass through ungated. Dry-run makes NO API call.
+      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local master image input(s) to the Gemini API', '/v1beta/models/{model}:generateContent', args.master_images);
+      if (gate) return gate;
       const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level, googleSearch: args.google_search, timeoutMs: args.timeout_ms };

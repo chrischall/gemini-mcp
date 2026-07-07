@@ -124,7 +124,7 @@ describe('gemini_interact', () => {
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
     const h = await createTestHarness(registerInteractTools);
-    await h.callTool('gemini_interact', { input: 'edit this', images: [inPath], output_dir: dir });
+    await h.callTool('gemini_interact', { input: 'edit this', images: [inPath], confirm: true, output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
     }));
@@ -442,7 +442,7 @@ describe('gemini_interact video_path (Files API upload)', () => {
     const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
     const spy = vi.spyOn(client, 'interact').mockResolvedValue({ id: 'i1', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
     const h = await createTestHarness(registerInteractTools);
-    const res = await h.callTool('gemini_interact', { input: 'flag', video_path: videoPath, output_dir: dir });
+    const res = await h.callTool('gemini_interact', { input: 'flag', video_path: videoPath, confirm: true, output_dir: dir });
     expect(up).toHaveBeenCalledWith(videoPath, 'video/webm');
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: FILE_URI, videoMimeType: 'video/webm' }));
     const data = parseToolResult<{ video_file: { uri: string } }>(res);
@@ -457,6 +457,7 @@ describe('gemini_interact video_path (Files API upload)', () => {
       input: 'flag',
       video_path: '/tmp/clip.mp4',
       video_url: 'https://www.youtube.com/watch?v=abc',
+      confirm: true,
     });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/not both/i);

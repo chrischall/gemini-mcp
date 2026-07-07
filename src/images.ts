@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access, stat, open } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { readEnvVar, McpToolError } from '@chrischall/mcp-utils';
@@ -129,6 +129,41 @@ export function videoMimeType(p: string): string {
     });
   }
   return mime;
+}
+
+/** A resolved local input file, described for a confirm-gate dry-run preview. */
+export interface LocalInputPreview { path: string; mimeType: string; size: number }
+
+/**
+ * Preview a local IMAGE input WITHOUT sending it anywhere: resolve the path to
+ * an absolute one, sniff its mime from the leading bytes, and measure its size.
+ * Reads the file locally (to sniff/measure) but makes NO network/API call — so a
+ * prompt-injected `image_path` (e.g. a local secret) is visible before upload.
+ */
+export async function previewImageInput(path: string): Promise<LocalInputPreview> {
+  const resolved = resolveImagePath(path);
+  // Read only the header bytes needed to sniff the MIME (≤12), and take the size
+  // from stat() — a dry-run must not load a large reference image into memory
+  // just to report it (matches previewVideoInput).
+  const { size } = await stat(resolved);
+  const fh = await open(resolved, 'r');
+  try {
+    const head = Buffer.alloc(16);
+    const { bytesRead } = await fh.read(head, 0, 16, 0);
+    return { path: resolved, mimeType: sniffMimeBytes(head.subarray(0, bytesRead)), size };
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Preview a local VIDEO input WITHOUT uploading it: resolve the path, derive its
+ * mime from the extension, and measure its size. Makes NO network/API call.
+ */
+export async function previewVideoInput(path: string): Promise<LocalInputPreview> {
+  const resolved = resolveVideoPath(path);
+  const { size } = await stat(resolved);
+  return { path: resolved, mimeType: videoMimeType(resolved), size };
 }
 
 /** Read an image file into `{ base64, mimeType }` for an inline_data part. */

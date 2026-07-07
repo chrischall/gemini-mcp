@@ -5,6 +5,7 @@ import { resolveModel } from '../models.js';
 import { client } from '../client.js';
 import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar } from '../images.js';
 import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 // The most recent interaction id this server process created — what
 // `continue_last: true` resumes. In-memory only: an MCP server lives for the
@@ -120,6 +121,7 @@ export function registerInteractTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Use the image currently on the macOS system clipboard as an input (downscaled to JPEG)'),
+        confirm: schemaConfirm,
       },
     },
     async (args, extra) => {
@@ -137,6 +139,12 @@ export function registerInteractTools(server: McpServer): void {
       if (previousInteractionId && images?.length) {
         ({ kept: images, dropped } = splitReattachedOutputs(images));
       }
+      // Confirm-gate local file inputs AFTER the re-attach split, so the preview
+      // reflects the paths actually sent (dropped prior-output paths aren't). A
+      // prompt-injected `images`/`video_path` could exfiltrate a local file;
+      // base64/clipboard inputs pass through ungated. Dry-run makes NO API call.
+      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local file input(s) to the Gemini Interactions API', '/v1beta/interactions', images, args.video_path);
+      if (gate) return gate;
       const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
       const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
       const r = await withProgressHeartbeat(extra, 'Generating image (Gemini Interactions API)', () =>
