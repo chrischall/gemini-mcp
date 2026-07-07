@@ -19,6 +19,17 @@ let lastInteractionId: string | undefined;
 // the last result path back via `images` despite the description saying not to).
 const writtenOutputs = new Set<string>();
 
+/**
+ * Test-only: clear the module-level session memory (`lastInteractionId` and the
+ * written-outputs set) so tests that assert the "no prior interaction" path are
+ * order-independent — they can't rely on module-load state once other tests have
+ * run first (e.g. under `--sequence.shuffle`).
+ */
+export function __resetInteractSessionForTest(): void {
+  lastInteractionId = undefined;
+  writtenOutputs.clear();
+}
+
 /** Shared warning for the reference-image params. */
 const NEW_REFERENCES_ONLY =
   'NEW reference images only (e.g. a style or target photo). When chaining with previous_interaction_id, ' +

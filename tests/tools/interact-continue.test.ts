@@ -3,18 +3,24 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness } from '@chrischall/mcp-utils/test';
-import { registerInteractTools } from '../../src/tools/interact.js';
+import { registerInteractTools, __resetInteractSessionForTest } from '../../src/tools/interact.js';
 import { client } from '../../src/client.js';
 
 const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AJQAB/9k=';
 
 let dir: string;
-beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-continue-')); });
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'gemini-continue-'));
+  // Explicitly reset the module-level session memory so these tests don't rely
+  // on `lastInteractionId` being unset at module load — they stay correct even
+  // if another test (or a shuffled order) populated it first.
+  __resetInteractSessionForTest();
+});
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 
-// These tests exercise the module-level "last interaction id" memory, so they
-// are ORDER-DEPENDENT within this file (vitest gives each test file a fresh
-// module registry; tests in a file run sequentially).
+// These tests exercise the module-level "last interaction id" memory. Each test
+// resets it in beforeEach (see above), so they no longer depend on run order or
+// on the module being freshly loaded.
 describe('gemini_interact continue_last', () => {
   it('errors actionably when continue_last:true and no interaction has run yet', async () => {
     const spy = vi.spyOn(client, 'interact');

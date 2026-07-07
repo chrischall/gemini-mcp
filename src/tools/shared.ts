@@ -10,11 +10,6 @@ export const ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '
 export const IMAGE_SIZES = ['512', '1K', '2K', '4K'] as const;
 
 /**
- * The model/aspect/size/output fields every generation tool shares. Defined once
- * here so descriptions can't drift between `generate.ts` and `set.ts`. Spread
- * into each tool's `inputSchema`.
- */
-/**
  * When to pick which Nano Banana model — shared by every tool's `model` param
  * so the guidance can't drift between them.
  */
@@ -39,6 +34,11 @@ export const timeoutMsSchema = z
     'Upstream request timeout in ms for this call (default: $GEMINI_TIMEOUT_MS, else 60000 — or 120000 when image_size is 4K, which routinely runs past 60s)',
   );
 
+/**
+ * The model/aspect/size/output fields every generation tool shares. Defined once
+ * here so descriptions can't drift between `generate.ts` and `set.ts`. Spread
+ * into each tool's `inputSchema`.
+ */
 export const sharedImageSchema = {
   // Bare id only: the model is interpolated into the URL path
   // (`/models/${model}:generateContent`), so slashes/colons/queries must be
