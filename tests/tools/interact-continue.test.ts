@@ -3,18 +3,25 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness } from '@chrischall/mcp-utils/test';
-import { registerInteractTools } from '../../src/tools/interact.js';
-import { client } from '../../src/client.js';
 
 const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AJQAB/9k=';
 
+// These tests exercise the module-level "last interaction id" memory, so each
+// test re-imports interact.js (and the client it closes over) from a FRESH
+// module registry — no test can observe another's lastInteractionId, whatever
+// order they run in.
+let registerInteractTools: typeof import('../../src/tools/interact.js')['registerInteractTools'];
+let client: typeof import('../../src/client.js')['client'];
+
 let dir: string;
-beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-continue-')); });
+beforeEach(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'gemini-continue-'));
+  vi.resetModules();
+  ({ registerInteractTools } = await import('../../src/tools/interact.js'));
+  ({ client } = await import('../../src/client.js'));
+});
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 
-// These tests exercise the module-level "last interaction id" memory, so they
-// are ORDER-DEPENDENT within this file (vitest gives each test file a fresh
-// module registry; tests in a file run sequentially).
 describe('gemini_interact continue_last', () => {
   it('errors actionably when continue_last:true and no interaction has run yet', async () => {
     const spy = vi.spyOn(client, 'interact');
