@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.0](https://github.com/chrischall/gemini-mcp/compare/v0.7.2...v0.8.0) (2026-07-07)
+
+
+### Features
+
+* **timeout:** configurable timeouts, progress heartbeat, and interaction-id sidecar for timeout recovery ([#54](https://github.com/chrischall/gemini-mcp/issues/54)) ([b20edc5](https://github.com/chrischall/gemini-mcp/commit/b20edc56f39c047bedb047373f315f59a2938bb4))
+
+
+### Bug Fixes
+
+* bump @chrischall/mcp-utils to 0.12.0 ([#58](https://github.com/chrischall/gemini-mcp/issues/58)) ([4a6e828](https://github.com/chrischall/gemini-mcp/commit/4a6e8288e7178814eb79f345c0d476be2b10a959))
+* confirm-gate local-file image inputs before upload to Gemini ([#55](https://github.com/chrischall/gemini-mcp/issues/55)) ([e19a152](https://github.com/chrischall/gemini-mcp/commit/e19a15217b542cfac863cacc3d66b5cf45adf76c))
+* restore sharedImageSchema JSDoc + order-independent interact-continue test ([#57](https://github.com/chrischall/gemini-mcp/issues/57)) ([816c699](https://github.com/chrischall/gemini-mcp/commit/816c699c82105f96663df9b0f0b1847ac87062a1))
+
+
+### Documentation
+
+* **claude:** follow-up issues now also open on pass-with-nits ([#49](https://github.com/chrischall/gemini-mcp/issues/49)) ([1d20cea](https://github.com/chrischall/gemini-mcp/commit/1d20cead9f01be0a48c539be072374a58a2cc804))
+* document first-party dependency-bump label exception ([#60](https://github.com/chrischall/gemini-mcp/issues/60)) ([4c7abe4](https://github.com/chrischall/gemini-mcp/commit/4c7abe41d9a78b032bdfbffe4bff25eee30c402d))
+
 ## [0.7.2](https://github.com/chrischall/gemini-mcp/compare/v0.7.1...v0.7.2) (2026-07-06)
 
 
