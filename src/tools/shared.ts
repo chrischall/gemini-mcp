@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { textResult, McpToolError } from '@chrischall/mcp-utils';
+import { textResult, McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { client, type GeneratedImage } from '../client.js';
 import { writeImage, resolveOutputDir, resolveVideoPath, videoMimeType } from '../images.js';
@@ -25,6 +25,20 @@ export const MODEL_CHOICE_GUIDE =
   'visual tasks — highest world knowledge, advanced localization, accurate brand consistency, precision creative control. ' +
   'gemini-3.1-flash-lite-image (Nano Banana 2 Lite) is the fastest/cheapest for simple tasks (1K only, no search grounding).';
 
+/**
+ * Per-call upstream timeout override, shared by every generation tool
+ * (spread via {@link sharedImageSchema}; `gemini_interact` imports it directly
+ * since its schema doesn't take the seed/clipboard fields).
+ */
+export const timeoutMsSchema = z
+  .number()
+  .int()
+  .positive()
+  .optional()
+  .describe(
+    'Upstream request timeout in ms for this call (default: $GEMINI_TIMEOUT_MS, else 60000 — or 120000 when image_size is 4K, which routinely runs past 60s)',
+  );
+
 export const sharedImageSchema = {
   // Bare id only: the model is interpolated into the URL path
   // (`/models/${model}:generateContent`), so slashes/colons/queries must be
@@ -42,6 +56,7 @@ export const sharedImageSchema = {
   thinking_level: z.enum(['minimal', 'high']).optional().describe('Reasoning depth (Gemini 3 models); higher can help complex/structural edits'),
   google_search: z.boolean().optional().describe('Ground the image in live Google Search results (current events, weather, data)'),
   from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS system clipboard as an input (downscaled to JPEG)'),
+  timeout_ms: timeoutMsSchema,
 };
 
 /** A generated image plus the base filename (no extension) to write it under. */
@@ -91,6 +106,61 @@ export function pickSeed(seed?: number): number {
   return seed ?? Math.floor(Math.random() * 2_147_483_000);
 }
 
+// Progress-heartbeat cadence while a generation is in flight. MCP hosts
+// enforce their own tools/call timeout (surfaced as -32001) but reset it on
+// notifications/progress, so a heartbeat lets a 4K/Pro generation outlive the
+// host's default budget. Tunable via $GEMINI_HEARTBEAT_MS (0 disables).
+const HEARTBEAT_DEFAULT_MS = 10_000;
+
+/**
+ * The slice of the SDK's `RequestHandlerExtra` the heartbeat needs — kept
+ * structural so tests can pass a plain object.
+ */
+export interface ProgressExtra {
+  _meta?: { progressToken?: string | number };
+  sendNotification?: (notification: {
+    method: 'notifications/progress';
+    params: { progressToken: string | number; progress: number; message?: string };
+  }) => Promise<void>;
+}
+
+/**
+ * Run `fn`, emitting a `notifications/progress` heartbeat while it is pending —
+ * but only when the caller asked for progress (sent a `progressToken`).
+ * Send failures are swallowed (the client may have abandoned the request);
+ * `fn`'s result/rejection passes through untouched.
+ */
+export async function withProgressHeartbeat<T>(
+  extra: ProgressExtra | undefined,
+  message: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const progressToken = extra?._meta?.progressToken;
+  const send = extra?.sendNotification;
+  const env = Number(readEnvVar('GEMINI_HEARTBEAT_MS'));
+  const intervalMs = Number.isFinite(env) ? env : HEARTBEAT_DEFAULT_MS;
+  if (progressToken === undefined || !send || intervalMs <= 0) return fn();
+  let ticks = 0;
+  const timer = setInterval(() => {
+    ticks++;
+    void send({
+      method: 'notifications/progress',
+      params: {
+        progressToken,
+        progress: ticks,
+        message: `${message} — still working (${Math.round((ticks * intervalMs) / 1000)}s)`,
+      },
+    }).catch(() => {});
+  }, intervalMs);
+  // Never hold the process open just for a heartbeat.
+  timer.unref?.();
+  try {
+    return await fn();
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 /** Build the result metadata echoed to the caller (omitting unset optionals). */
 export function buildMeta(
   model: string,
@@ -109,13 +179,14 @@ export function buildMeta(
  * Optional `meta` is merged into the disk-path JSON result, or prepended as a
  * text block in inline mode (only if meta has keys).
  * Optional `onWritten` receives the absolute paths written in disk mode (never
- * called inline) — lets a tool remember its own outputs.
+ * called inline) — lets a tool remember its own outputs or write sidecar
+ * files; an async callback is awaited before the result is returned.
  */
 export async function emit(
   named: NamedImage[],
   opts: { inline?: boolean; output_dir?: string },
   meta?: Record<string, unknown>,
-  onWritten?: (paths: string[]) => void,
+  onWritten?: (paths: string[]) => void | Promise<void>,
 ): Promise<CallToolResult> {
   if (opts.inline) {
     const imageBlocks = named.map((n) => ({ type: 'image' as const, data: n.image.base64, mimeType: n.image.mimeType }));
@@ -129,6 +200,6 @@ export async function emit(
   const dir = resolveOutputDir(opts.output_dir);
   const images: string[] = [];
   for (const n of named) images.push(await writeImage(dir, n.base, n.image.base64, n.image.mimeType));
-  onWritten?.(images);
+  await onWritten?.(images);
   return textResult({ images, ...meta });
 }

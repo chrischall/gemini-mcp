@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
@@ -335,6 +335,83 @@ describe('gemini_interact', () => {
     const h = await createTestHarness(registerInteractTools);
     await h.callTool('gemini_interact', { input: 'describe', video_url: 'https://www.youtube.com/watch?v=xyz', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: 'https://www.youtube.com/watch?v=xyz' }));
+    await h.close();
+  });
+});
+
+describe('gemini_interact timeout & recovery', () => {
+  it('passes timeout_ms to client.interact as timeoutMs', async () => {
+    const spy = vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'to-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    await h.callTool('gemini_interact', { input: 'circle', timeout_ms: 120_000, output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 120_000 }));
+    await h.close();
+  });
+
+  it('writes a .json sidecar next to the image carrying the interaction id', async () => {
+    vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'sidecar-id-1',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
+    const data = parseToolResult<{ images: string[] }>(res);
+    const sidecarPath = `${data.images[0]}.json`;
+    expect(existsSync(sidecarPath)).toBe(true);
+    const sidecar = JSON.parse(readFileSync(sidecarPath, 'utf8'));
+    expect(sidecar.interaction_id).toBe('sidecar-id-1');
+    expect(sidecar.images).toEqual(data.images);
+    await h.close();
+  });
+
+  it('sidecar echoes previous_interaction_id when chaining', async () => {
+    vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'sc-next',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const res = await h.callTool('gemini_interact', {
+      input: 'add a hat',
+      previous_interaction_id: 'sc-prior',
+      output_dir: dir,
+    });
+    const data = parseToolResult<{ images: string[] }>(res);
+    const sidecar = JSON.parse(readFileSync(`${data.images[0]}.json`, 'utf8'));
+    expect(sidecar.previous_interaction_id).toBe('sc-prior');
+    expect(sidecar.interaction_id).toBe('sc-next');
+    await h.close();
+  });
+
+  it('description explains that a timed-out call usually still completes (sidecar + continue_last recovery)', async () => {
+    const h = await createTestHarness(registerInteractTools);
+    const { tools } = await h.client.listTools();
+    const desc = tools.find((t) => t.name === 'gemini_interact')?.description ?? '';
+    expect(desc).toMatch(/times? out/i);
+    expect(desc).toContain('.json');
+    expect(desc).toContain('continue_last');
+    await h.close();
+  });
+
+  it('sends progress notifications while generating (keeps MCP hosts from timing out)', async () => {
+    vi.stubEnv('GEMINI_HEARTBEAT_MS', '20');
+    vi.spyOn(client, 'interact').mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({
+        id: 'hb-id',
+        images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+      }), 120)),
+    );
+    const h = await createTestHarness(registerInteractTools);
+    const progress: unknown[] = [];
+    await h.client.callTool(
+      { name: 'gemini_interact', arguments: { input: 'circle', output_dir: dir } },
+      undefined,
+      { onprogress: (p) => progress.push(p) },
+    );
+    expect(progress.length).toBeGreaterThanOrEqual(1);
+    vi.unstubAllEnvs();
     await h.close();
   });
 });

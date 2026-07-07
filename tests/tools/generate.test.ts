@@ -402,3 +402,23 @@ describe('gemini_generate_image video_path (Files API upload)', () => {
     await h.close();
   });
 });
+
+describe('timeout_ms passthrough', () => {
+  const PNG_IMG = { base64: PNG, mimeType: 'image/png' };
+
+  it('gemini_generate_image passes timeout_ms to client.generate as timeoutMs', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [PNG_IMG] });
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_generate_image', { prompt: 'circle', timeout_ms: 90_000, output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 90_000 }));
+    await h.close();
+  });
+
+  it('gemini_edit_image passes timeout_ms to client.generate as timeoutMs', async () => {
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [PNG_IMG] });
+    const h = await createTestHarness(registerGenerateTools);
+    await h.callTool('gemini_edit_image', { prompt: 'crop it', images_base64: [PNG], timeout_ms: 45_000, output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 45_000 }));
+    await h.close();
+  });
+});

@@ -10,8 +10,23 @@ const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'; // v1 lacks
 const SERVICE = 'Gemini';
 const INTERACTIONS_SERVICE = 'Gemini Interactions';
 // Per-request abort budget. Image generation routinely runs 30s+ on the Pro
-// model, so this is deliberately 60s (NOT the fleet's usual 15–30s).
+// model, so this is deliberately 60s (NOT the fleet's usual 15–30s) — and 4K
+// output routinely runs past 60s, hence the doubled 4K default. Both are
+// overridable: per-call `timeout_ms` beats $GEMINI_TIMEOUT_MS beats these.
 const REQUEST_TIMEOUT_MS = 60_000;
+const REQUEST_TIMEOUT_4K_MS = 120_000;
+
+/**
+ * Effective upstream timeout for one request:
+ * per-call `timeout_ms` → `$GEMINI_TIMEOUT_MS` → 120s for 4K output → 60s.
+ * Resolved at request time so an env change doesn't require a new process.
+ */
+export function resolveTimeoutMs(perCallMs?: number, imageSize?: string): number {
+  if (perCallMs !== undefined && perCallMs > 0) return perCallMs;
+  const env = Number(readEnvVar('GEMINI_TIMEOUT_MS'));
+  if (Number.isFinite(env) && env > 0) return env;
+  return imageSize === '4K' ? REQUEST_TIMEOUT_4K_MS : REQUEST_TIMEOUT_MS;
+}
 
 // Files API (local-video upload — docs/GEMINI-API.md "Files API — local video
 // upload", verified 2026-06-12). The resumable upload endpoint lives under
@@ -71,6 +86,8 @@ export interface InteractOpts {
   videoUrl?: string;
   /** MIME type for the video reference (default `video/mp4` — the YouTube path). */
   videoMimeType?: string;
+  /** Per-call upstream timeout override; see {@link resolveTimeoutMs}. */
+  timeoutMs?: number;
 }
 
 /** A video uploaded to the Gemini Files API, ready to reference by `uri`. */
@@ -108,13 +125,14 @@ export interface GenerateOpts {
   videoUrl?: string;
   /** MIME type for the video reference (default `video/mp4` — the YouTube path). */
   videoMimeType?: string;
+  /** Per-call upstream timeout override; see {@link resolveTimeoutMs}. */
+  timeoutMs?: number;
 }
 
 export class GeminiClient {
   private readonly apiKey: string | null;
   private readonly configError: Error | null;
-  private readonly api: ApiClient;
-  private readonly interactionsApi: ApiClient;
+  private readonly apis = new Map<number, { api: ApiClient; interactionsApi: ApiClient }>();
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
 
@@ -129,30 +147,40 @@ export class GeminiClient {
       this.apiKey = key;
       this.configError = null;
     }
-    // Both paths share: the key in the `x-goog-api-key` header (Gemini does not
-    // use `Authorization: Bearer`), a 60s abort budget, and the default 429
-    // retry (once after 2s — the free tier rate-limits aggressively).
-    // `getToken` calls requireKey() so key resolution stays at REQUEST time:
-    // the server boots without a key and the actionable config error (with its
-    // aistudio hint) surfaces on the first tool call, not at startup.
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-    const shared = {
-      tokenHeader: 'x-goog-api-key',
-      getToken: () => this.requireKey(),
-      timeout: REQUEST_TIMEOUT_MS,
-      fetchImpl: this.fetchImpl,
-    };
-    this.api = createApiClient({ baseUrl: BASE_URL, serviceName: SERVICE, ...shared });
-    // Separate client for the Interactions API so errors name the right API.
-    // The beta-era Api-Revision header is gone: the API went GA and requests
-    // succeed without it (verified live 2026-07-06; see docs/GEMINI-API.md).
-    // Don't re-add a pinned revision — it would freeze us on old semantics.
-    this.interactionsApi = createApiClient({
-      baseUrl: BASE_URL,
-      serviceName: INTERACTIONS_SERVICE,
-      ...shared,
-    });
+  }
+
+  /**
+   * The `createApiClient` pair for one timeout budget, built lazily and
+   * memoized per distinct timeout (a handful of values in practice). Both
+   * share: the key in the `x-goog-api-key` header (Gemini does not use
+   * `Authorization: Bearer`) and the default 429 retry (once after 2s — the
+   * free tier rate-limits aggressively). `getToken` calls requireKey() so key
+   * resolution stays at REQUEST time: the server boots without a key and the
+   * actionable config error (with its aistudio hint) surfaces on the first
+   * tool call, not at startup.
+   */
+  private apisFor(timeoutMs: number): { api: ApiClient; interactionsApi: ApiClient } {
+    let entry = this.apis.get(timeoutMs);
+    if (!entry) {
+      const shared = {
+        tokenHeader: 'x-goog-api-key',
+        getToken: () => this.requireKey(),
+        timeout: timeoutMs,
+        fetchImpl: this.fetchImpl,
+      };
+      entry = {
+        api: createApiClient({ baseUrl: BASE_URL, serviceName: SERVICE, ...shared }),
+        // Separate client for the Interactions API so errors name the right API.
+        // The beta-era Api-Revision header is gone: the API went GA and requests
+        // succeed without it (verified live 2026-07-06; see docs/GEMINI-API.md).
+        // Don't re-add a pinned revision — it would freeze us on old semantics.
+        interactionsApi: createApiClient({ baseUrl: BASE_URL, serviceName: INTERACTIONS_SERVICE, ...shared }),
+      };
+      this.apis.set(timeoutMs, entry);
+    }
+    return entry;
   }
 
   private requireKey(): string {
@@ -165,8 +193,9 @@ export class GeminiClient {
     return resolveModel(undefined, readEnvVar('GEMINI_IMAGE_MODEL'));
   }
 
-  private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return this.api.fetchJson<T>(method, path, body !== undefined ? { body } : {});
+  private async call<T>(method: string, path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+    const { api } = this.apisFor(timeoutMs ?? resolveTimeoutMs());
+    return api.fetchJson<T>(method, path, body !== undefined ? { body } : {});
   }
 
   /**
@@ -296,6 +325,7 @@ export class GeminiClient {
       'POST',
       `/models/${model}:generateContent`,
       requestBody,
+      resolveTimeoutMs(opts.timeoutMs, opts.imageSize),
     );
     const images: GeneratedImage[] = [];
     const textParts: string[] = [];
@@ -366,10 +396,11 @@ export class GeminiClient {
       arguments?: { queries?: string[] } | null;
       result?: Array<{ search_suggestions?: string }>;
     };
+    const { interactionsApi } = this.apisFor(resolveTimeoutMs(opts.timeoutMs, opts.imageSize));
     let data!: { id: string; steps?: Step[] };
     for (let attempt = 0; ; attempt++) {
       try {
-        data = await this.interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', {
+        data = await interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', {
           body,
         });
         break;
