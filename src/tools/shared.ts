@@ -35,6 +35,32 @@ export const timeoutMsSchema = z
   );
 
 /**
+ * Idempotency key shared by every generation tool. A repeat call carrying the
+ * same key returns the recorded result (`reused: true`) instead of billing a
+ * fresh generation — the fix for a host timeout (`-32001`) prompting a blind
+ * re-issue of a call the server actually completed.
+ */
+export const idempotencyKeySchema = z
+  .string()
+  .min(1)
+  .optional()
+  .describe(
+    'Opaque idempotency key: a repeat call with the same key returns the recorded result (reused: true) instead of billing a new generation. Set it when retrying after a host timeout (-32001) to avoid a duplicate charge.',
+  );
+
+/**
+ * Async escape hatch shared by every generation tool: return a `job_id`
+ * immediately so a long (Pro/4K) generation can't hit a host's fixed tools/call
+ * timeout (`-32001`). The caller polls `gemini_get_result`.
+ */
+export const asyncSchema = z
+  .boolean()
+  .optional()
+  .describe(
+    'Run in the background and return a job_id immediately instead of the image, so a long (Pro/4K) generation cannot hit the host tools/call timeout (-32001). Poll gemini_get_result with the job_id to fetch the result (jobs are per-process and expire ~10 min after completion).',
+  );
+
+/**
  * The model/aspect/size/output fields every generation tool shares. Defined once
  * here so descriptions can't drift between `generate.ts` and `set.ts`. Spread
  * into each tool's `inputSchema`.
@@ -57,6 +83,8 @@ export const sharedImageSchema = {
   google_search: z.boolean().optional().describe('Ground the image in live Google Search results (current events, weather, data)'),
   from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS system clipboard as an input (downscaled to JPEG)'),
   timeout_ms: timeoutMsSchema,
+  idempotency_key: idempotencyKeySchema,
+  async: asyncSchema,
 };
 
 /** A generated image plus the base filename (no extension) to write it under. */

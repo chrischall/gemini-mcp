@@ -6,7 +6,7 @@ Guidance for Claude working in this repo.
 
 v0.6.0: Google **Gemini** image-generation MCP server. Wraps the Generative
 Language REST API (`https://generativelanguage.googleapis.com/v1beta`) and
-exposes 5 tools to Claude over stdio: text→image and image→image generation,
+exposes 6 tools to Claude over stdio: text→image and image→image generation,
 multi-turn conversational editing, consistent image *sets*, and model listing
 (Nano Banana / Nano Banana Pro family). Inputs can come from file paths, raw
 base64 / data URIs, a public YouTube URL (video→image), or the macOS clipboard.
@@ -53,11 +53,16 @@ src/
                   #   aggregation) + output writing (slugify, uniquePath, writeImage,
                   #   resolveOutputDir, resolveImagePath)
   clipboard.ts    # readClipboardImage() — macOS-only osascript+sips clipboard grab
+  jobs.ts         # in-memory per-process job registry: dispatch() dedups
+                  #   in-flight/keyed identical generation calls (idempotency #53)
+                  #   and backs async job handles (#52); fingerprintRequest(),
+                  #   getJobResult(), __resetJobRegistry() (test-only)
   tools/
     models.ts     # gemini_list_models                       (registerModelTools)
     generate.ts   # gemini_generate_image, gemini_edit_image (registerGenerateTools)
     set.ts        # gemini_generate_set                       (registerSetTools)
     interact.ts   # gemini_interact                           (registerInteractTools)
+    jobs.ts       # gemini_get_result (async poll)            (registerJobTools)
     shared.ts     # ASPECT_RATIOS, IMAGE_SIZES, sharedImageSchema, pickSeed,
                   #   buildMeta, and emit() (inline-vs-write-to-disk result wrapper)
 
@@ -99,6 +104,7 @@ shared util, configured non-Bearer.
 | `gemini_edit_image` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (input images required) | write (binary-out) |
 | `gemini_generate_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode) | write (binary-out) |
 | `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (GA since 2026-07) | write (binary-out) |
+| `gemini_get_result` | `tools/jobs.ts` | none (reads the in-memory job registry) | read |
 
 **Binary output.** All four generation tools return images either written to disk
 (default) or inline base64. `emit()` (in `tools/shared.ts`) decides: with
@@ -110,7 +116,9 @@ object (`model`, `seed`, a `hint` steering iterative refinement to
 `gemini_interact`, optional `text`, `grounding`, `interaction_id`,
 `previous_interaction_id`, and — on timeout-prone configs (Pro model / 4K /
 multi-image) — a `timeout_risk` note pointing at Flash / disk recovery, from
-`timeoutRiskHint`). `gemini_interact` also accepts `continue_last: true`
+`timeoutRiskHint`; plus `reused: true` + `reused_job_id` when the call was served
+from an existing job instead of billing a fresh generation — see Idempotency).
+`gemini_interact` also accepts `continue_last: true`
 to chain from the server process's most recent interaction id (in-memory;
 explicit `previous_interaction_id` wins), and in disk mode writes an
 `<image>.json` sidecar carrying the result meta so the interaction id survives
@@ -120,6 +128,32 @@ echoed as `dropped_previous_output` — the interaction state already contains
 the prior output, and re-attaching it anchors the model against the edit.
 (Un-chained calls pass such paths through: starting a new interaction from an
 old output is legitimate.)
+
+**Idempotency** (`jobs.ts`, issue #53). Every generation tool routes its handler
+body (after the confirm-gate) through `dispatch()`, which keys an in-memory
+per-process job registry by `fingerprintRequest()` (sha256 of the request
+identity — resolved model, prompt, image params, input digests — **excluding**
+the server-picked seed and output path) and an optional `idempotency_key`. Two
+levels of dedup, chosen to never break intentional same-prompt *variations*:
+**in-flight** — a second identical request while the first is still running
+attaches to it (a host-timeout retry race, never a deliberate variation); and
+**recently-completed** — only unlocked by an explicit `idempotency_key`, returns
+the recorded result for `JOB_TTL_MS` (10 min). Either way the reused result is
+annotated `reused: true` + `reused_job_id`, and no second upstream (billable)
+call is made. Failed jobs are not reused. Registry is bounded (TTL + `JOB_MAX`);
+`__resetJobRegistry()` clears it between tests.
+
+**Async job handle** (`jobs.ts`, issue #52). The same registry backs an async
+escape hatch for hosts whose tools/call timeout can't be tamed (Claude Desktop).
+Any generation tool called with `async: true` returns a `{ job_id, status:
+'running' }` handle *immediately* — no upstream wait, so no `-32001` — and the
+work continues in the background. The caller polls **`gemini_get_result`**
+(`registerJobTools`) with the `job_id`: `running` → status handle; `done` → the
+recorded result payload (image paths / inline + meta); `failed` → the recorded
+error; unknown/expired → an actionable error pointing at the output dir /
+sidecar. `async` composes with idempotency (an `async` call that dedups returns
+the matching job's id). `dispatch()` (in `jobs.ts`) is the one seam that owns
+sync-vs-async and all dedup.
 
 **Image inputs** (`gatherImageInputs`) come from `images` (file paths),
 `images_base64` (raw base64 or `data:` URIs, MIME sniffed from bytes), and

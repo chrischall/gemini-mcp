@@ -88,6 +88,7 @@ describe('server boot (built artifacts)', () => {
       const tools = await listToolsViaStdio(join(dir, 'bundle.js'), dir);
       expect(tools.length).toBeGreaterThanOrEqual(MIN_TOOLS);
       expect(tools).toContain('gemini_list_models');
+      expect(tools).toContain('gemini_get_result');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -97,5 +98,6 @@ describe('server boot (built artifacts)', () => {
     const tools = await listToolsViaStdio(BIN, ROOT);
     expect(tools.length).toBeGreaterThanOrEqual(MIN_TOOLS);
     expect(tools).toContain('gemini_list_models');
+    expect(tools).toContain('gemini_get_result');
   }, 30_000);
 });

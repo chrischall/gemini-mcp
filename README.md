@@ -26,8 +26,16 @@ The server sends `notifications/progress` heartbeats so hosts that reset their t
 progress wait it out. If the host still gives up, the server-side generation usually completes
 anyway: the image is written to the output dir, `gemini_interact` also writes an
 `<image>.json` sidecar recording the `interaction_id`, and `continue_last: true` resumes the
-interaction the lost response belonged to — check the output dir before re-issuing a call
-(a re-issue is a second billable generation).
+interaction the lost response belonged to.
+
+For hosts whose timeout can't be tamed (e.g. Claude Desktop, a fixed ~30s cap that ignores
+progress), two guards make re-issuing safe and unnecessary:
+
+- **`async: true`** returns a `job_id` immediately instead of the image, so the call can't
+  time out at all; poll `gemini_get_result` with the `job_id` until it's `done`.
+- **`idempotency_key`** makes a repeat call idempotent — a retry with the same key returns the
+  recorded result (`reused: true`) instead of billing a second generation. (Even without a key,
+  two identical in-flight calls are deduplicated automatically.)
 
 ## Tools
 
@@ -38,6 +46,7 @@ interaction the lost response belonged to — check the output dir before re-iss
 | `gemini_edit_image` | One-off edits or multi-image composition with a text instruction (for a series of edits, use `gemini_interact`) |
 | `gemini_generate_set` | Generate a master image plus N consistent images referencing it |
 | `gemini_interact` | Preferred tool for iterative refinement: multi-turn generation/editing via the Interactions API — chain the returned `interaction_id` via `previous_interaction_id` (or `continue_last: true`) |
+| `gemini_get_result` | Fetch an async generation started with `async: true` by its `job_id` (status `running` → `done` result). Lets a long generation outlive a host's `tools/call` timeout |
 
 ## Quick Start
 

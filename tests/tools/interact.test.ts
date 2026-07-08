@@ -5,6 +5,7 @@ import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerInteractTools } from '../../src/tools/interact.js';
 import { client } from '../../src/client.js';
+import { __resetJobRegistry } from '../../src/jobs.js';
 
 vi.mock('../../src/clipboard.js', () => ({
   readClipboardImage: vi.fn().mockResolvedValue({ base64: 'Y2xpcGJvYXJk', mimeType: 'image/jpeg' }),
@@ -16,7 +17,7 @@ const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAs
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-interact-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); __resetJobRegistry(); });
 
 describe('gemini_interact description', () => {
   it('states it is the preferred tool for iterative refinement and how to chain', async () => {
@@ -54,6 +55,25 @@ describe('gemini_interact description', () => {
     const desc = schema.properties?.model?.description ?? '';
     expect(desc).toContain('gemini-3.1-flash-image');
     expect(desc).toContain('gemini-3-pro-image');
+    await h.close();
+  });
+});
+
+describe('gemini_interact idempotency', () => {
+  it('reuses the recorded result for a repeat idempotency_key (no second interaction)', async () => {
+    let calls = 0;
+    vi.spyOn(client, 'interact').mockImplementation(() => {
+      calls++;
+      return Promise.resolve({ id: 'iid', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const args = { input: 'a red circle', output_dir: dir, idempotency_key: 'ik' };
+    const r1 = parseToolResult<{ images: string[]; reused?: boolean; interaction_id: string }>(await h.callTool('gemini_interact', args));
+    const r2 = parseToolResult<{ images: string[]; reused?: boolean; interaction_id: string }>(await h.callTool('gemini_interact', args));
+    expect(calls).toBe(1);
+    expect(r2.reused).toBe(true);
+    expect(r2.interaction_id).toBe('iid');
+    expect(r2.images).toEqual(r1.images);
     await h.close();
   });
 });
