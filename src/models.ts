@@ -6,6 +6,12 @@
  */
 export const DEFAULT_IMAGE_MODEL = 'gemini-3.1-flash-image';
 
+/** Default video model (omni, Interactions API). Preview — overridable per-call. */
+export const DEFAULT_VIDEO_MODEL = 'gemini-omni-flash-preview';
+/** Default music model (Lyria clips, Interactions API). `lyria-3-pro-preview` is
+ * the longer-form opt-in; both are preview and need a funded account. */
+export const DEFAULT_MUSIC_MODEL = 'lyria-3-clip-preview';
+
 /** A trimmed image-model entry surfaced by `gemini_list_models`. */
 export interface GeminiModel {
   /** Bare id without the `models/` prefix, e.g. `gemini-3-pro-image`. */

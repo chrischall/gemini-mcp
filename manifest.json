@@ -100,6 +100,18 @@
     {
       "name": "gemini_interact",
       "description": "Preferred tool for iterative image refinement: multi-turn generation/editing via the Interactions API — chain the returned interaction_id via previous_interaction_id"
+    },
+    {
+      "name": "gemini_video_generate",
+      "description": "Generate a short video (text→video, image→video, or edit) via the Gemini omni model; written to disk as MP4"
+    },
+    {
+      "name": "gemini_music_generate",
+      "description": "Generate music from a text prompt via a Lyria model (clip or pro); written to disk as MP3/WAV"
+    },
+    {
+      "name": "gemini_get_result",
+      "description": "Fetch an async generation started with async: true, by its job_id"
     }
   ],
   "compatibility": {

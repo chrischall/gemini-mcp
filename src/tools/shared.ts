@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { textResult, McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { client, type GeneratedImage } from '../client.js';
-import { writeImage, resolveOutputDir, resolveVideoPath, videoMimeType } from '../images.js';
+import { client, type GeneratedImage, type GeneratedMedia } from '../client.js';
+import { writeMedia, resolveOutputDir, resolveVideoPath, videoMimeType } from '../images.js';
 
 /** Supported output aspect ratios (Gemini image API). */
 export const ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9', '1:4', '4:1', '1:8', '8:1'] as const;
@@ -251,14 +251,44 @@ export function buildMeta(
   return meta;
 }
 
+/** A generated media item (image/video/audio) plus its base filename. */
+export interface NamedMedia { media: GeneratedMedia; base: string; }
+
 /**
- * Either return images inline (base64 content blocks) or write them to disk and
- * return their paths as a text result. `inline` wins when true.
- * Optional `meta` is merged into the disk-path JSON result, or prepended as a
- * text block in inline mode (only if meta has keys).
- * Optional `onWritten` receives the absolute paths written in disk mode (never
- * called inline) — lets a tool remember its own outputs or write sidecar
- * files; an async callback is awaited before the result is returned.
+ * Return generated media inline (base64 content blocks) or write to disk and
+ * return the paths. `kind` selects the MCP inline block type: `image`/`audio`
+ * are native MCP content types; **`video` has no inline block type, so it is
+ * always written to disk** (an `inline` request is downgraded and noted in the
+ * result). Disk mode returns `{ <kind>s: [paths], ...meta }`. `onWritten`
+ * receives the written paths (disk mode only), awaited before returning.
+ */
+export async function emitMedia(
+  named: NamedMedia[],
+  kind: 'image' | 'video' | 'audio',
+  opts: { inline?: boolean; output_dir?: string },
+  meta?: Record<string, unknown>,
+  onWritten?: (paths: string[]) => void | Promise<void>,
+): Promise<CallToolResult> {
+  const inline = opts.inline && kind !== 'video';
+  if (inline) {
+    const blocks = named.map((n) => ({ type: kind as 'image' | 'audio', data: n.media.base64, mimeType: n.media.mimeType }));
+    if (meta && Object.keys(meta).length > 0) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify(meta, null, 2) }, ...blocks] };
+    }
+    return { content: blocks };
+  }
+  const dir = resolveOutputDir(opts.output_dir);
+  const paths: string[] = [];
+  for (const n of named) paths.push(await writeMedia(dir, n.base, n.media.base64, n.media.mimeType));
+  await onWritten?.(paths);
+  // Note a downgraded inline-video request so the caller isn't left wondering.
+  const note = opts.inline && kind === 'video' ? { inline_unsupported: 'video has no MCP inline content type — written to disk instead' } : {};
+  return textResult({ [`${kind}s`]: paths, ...note, ...meta });
+}
+
+/**
+ * Image convenience wrapper over {@link emitMedia} — preserves the original
+ * `emit(named, opts, meta, onWritten)` signature used by the image tools.
  */
 export async function emit(
   named: NamedImage[],
@@ -266,18 +296,5 @@ export async function emit(
   meta?: Record<string, unknown>,
   onWritten?: (paths: string[]) => void | Promise<void>,
 ): Promise<CallToolResult> {
-  if (opts.inline) {
-    const imageBlocks = named.map((n) => ({ type: 'image' as const, data: n.image.base64, mimeType: n.image.mimeType }));
-    if (meta && Object.keys(meta).length > 0) {
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(meta, null, 2) }, ...imageBlocks],
-      };
-    }
-    return { content: imageBlocks };
-  }
-  const dir = resolveOutputDir(opts.output_dir);
-  const images: string[] = [];
-  for (const n of named) images.push(await writeImage(dir, n.base, n.image.base64, n.image.mimeType));
-  await onWritten?.(images);
-  return textResult({ images, ...meta });
+  return emitMedia(named.map((n) => ({ media: n.image, base: n.base })), 'image', opts, meta, onWritten);
 }

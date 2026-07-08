@@ -382,6 +382,97 @@ function makeInteractFixture(id = 'interact-id-1', extraSteps: unknown[] = []): 
   };
 }
 
+/** A minimal Interactions response carrying one inline video in steps[]. */
+function makeVideoFixture(id = 'vid-1'): unknown {
+  return {
+    id,
+    status: 'completed',
+    object: 'interaction',
+    steps: [
+      { type: 'thought', summary: [{ type: 'text', text: '…' }] },
+      { type: 'model_output', content: [{ type: 'video', mime_type: 'video/mp4', data: 'VIDEOBYTES' }] },
+    ],
+  };
+}
+
+describe('generateVideo', () => {
+  it('POSTs to /interactions with a video response_format, inline delivery, and the omni default model', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeVideoFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    const r = await c.generateVideo({ input: 'a cat surfing', aspectRatio: '9:16', task: 'text_to_video' });
+    expect(cap.calls[0].url).toMatch(/\/v1beta\/interactions$/);
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.model).toBe('gemini-omni-flash-preview');
+    expect(sent.response_format.type).toBe('video');
+    expect(sent.response_format.delivery).toBe('inline');
+    expect(sent.response_format.aspect_ratio).toBe('9:16');
+    expect(sent.generation_config.video_config.task).toBe('text_to_video');
+    expect(r.id).toBe('vid-1');
+    expect(r.videos).toEqual([{ base64: 'VIDEOBYTES', mimeType: 'video/mp4' }]);
+  });
+
+  it('passes previous_interaction_id for an edit', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeVideoFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generateVideo({ input: 'brighter', task: 'edit', previousInteractionId: 'vid-0' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.previous_interaction_id).toBe('vid-0');
+  });
+
+  it('throws an actionable error when the response contains no video', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const c = new GeminiClient({
+      fetchImpl: mockFetch({ id: 'x', steps: [{ type: 'model_output', content: [{ type: 'text', text: 'blocked' }] }] }),
+    });
+    await expect(c.generateVideo({ input: 'x' })).rejects.toThrow(/no video/i);
+  });
+});
+
+/** A minimal Interactions response carrying one inline audio in steps[]. */
+function makeMusicFixture(id = 'mus-1'): unknown {
+  return {
+    id,
+    status: 'completed',
+    object: 'interaction',
+    steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/mpeg', data: 'AUDIOBYTES' }] }],
+  };
+}
+
+describe('generateMusic', () => {
+  it('POSTs to /interactions with an audio response_format and the clip default model', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeMusicFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    const r = await c.generateMusic({ input: 'lofi beat' });
+    expect(cap.calls[0].url).toMatch(/\/v1beta\/interactions$/);
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.model).toBe('lyria-3-clip-preview');
+    expect(sent.response_format.type).toBe('audio');
+    expect(r.id).toBe('mus-1');
+    expect(r.audios).toEqual([{ base64: 'AUDIOBYTES', mimeType: 'audio/mpeg' }]);
+  });
+
+  it('includes audio_format and uses the given model', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = capturingFetch(makeMusicFixture());
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await c.generateMusic({ input: 'song', model: 'lyria-3-pro-preview', audioFormat: 'wav' });
+    const sent = JSON.parse(cap.calls[0].init.body as string);
+    expect(sent.model).toBe('lyria-3-pro-preview');
+    expect(sent.response_format.audio_format).toBe('wav');
+  });
+
+  it('throws an actionable error when the response contains no audio', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const c = new GeminiClient({
+      fetchImpl: mockFetch({ id: 'x', steps: [{ type: 'model_output', content: [{ type: 'text', text: 'blocked' }] }] }),
+    });
+    await expect(c.generateMusic({ input: 'x' })).rejects.toThrow(/no audio/i);
+  });
+});
+
 describe('interact', () => {
   it('POSTs to /v1beta/interactions without the obsolete Api-Revision header (API is GA)', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
@@ -684,7 +775,7 @@ describe('interact', () => {
     expect(err.message).toMatch(/previous interaction .* not found/i);
     expect(err.message).toMatch(/55 days|1 day/);
     expect(err.hint).toMatch(/start a new chain/i);
-    expect(err.hint).toMatch(/`images`/);
+    expect(err.hint).toMatch(/re-attach/i); // media-agnostic hint (shared by interact/video/music)
   });
 
   it('passes a 404 through untouched (no retries) when no previous_interaction_id was sent', async () => {
