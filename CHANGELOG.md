@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.0](https://github.com/chrischall/gemini-mcp/compare/v0.9.0...v1.0.0) (2026-07-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* the three image tool names changed; update any saved references. MCP clients rediscover tools dynamically.
+
+### Features
+
+* media-first tool rename + video (omni) and music (Lyria) generation ([#70](https://github.com/chrischall/gemini-mcp/issues/70)) ([078f18d](https://github.com/chrischall/gemini-mcp/commit/078f18d0099e432e50c0894714b9343204bbd161))
+
+
+### Documentation
+
+* describe video/music in SKILL.md trigger + README intro (auto-review [#72](https://github.com/chrischall/gemini-mcp/issues/72)) ([#74](https://github.com/chrischall/gemini-mcp/issues/74)) ([a7b0955](https://github.com/chrischall/gemini-mcp/commit/a7b0955fd48b3a36ad070f35722a7a532deb0bb5))
+
 ## [0.9.0](https://github.com/chrischall/gemini-mcp/compare/v0.8.0...v0.9.0) (2026-07-08)
 
 
