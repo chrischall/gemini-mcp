@@ -4,7 +4,7 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client, type GeneratedImage } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, type NamedImage } from './shared.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 export function registerSetTools(server: McpServer): void {
@@ -79,6 +79,10 @@ export function registerSetTools(server: McpServer): void {
       const meta = buildMeta(model, seed, args);
       if (masterText) meta.text = masterText;
       if (masterResult.grounding) meta.grounding = masterResult.grounding;
+      // A set is master + N scenes in one tools/call — the most timeout-prone
+      // tool. Effective image count drives the risk hint.
+      const risk = timeoutRiskHint({ model, imageSize: args.image_size, count: named.length });
+      if (risk) meta.timeout_risk = risk;
       return emit(named, args, meta);
     },
   );

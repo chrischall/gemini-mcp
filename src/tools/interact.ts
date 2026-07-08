@@ -4,7 +4,7 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
 import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar } from '../images.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, withProgressHeartbeat, type NamedImage } from './shared.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 // The most recent interaction id this server process created — what
@@ -185,6 +185,8 @@ export function registerInteractTools(server: McpServer): void {
       if (r.text) meta.text = r.text;
       if (r.grounding) meta.grounding = r.grounding;
       if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
+      const risk = timeoutRiskHint({ model, imageSize: args.image_size });
+      if (risk) meta.timeout_risk = risk;
 
       const slug = args.filename ? baseName(args.filename) : slugify(args.input);
       const named: NamedImage[] = r.images.map((image, i) => ({

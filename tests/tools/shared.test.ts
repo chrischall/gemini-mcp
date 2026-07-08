@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pickSeed, emit, IMAGE_SIZES, sharedImageSchema, withProgressHeartbeat } from '../../src/tools/shared.js';
+import { pickSeed, emit, IMAGE_SIZES, sharedImageSchema, withProgressHeartbeat, timeoutRiskHint } from '../../src/tools/shared.js';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
@@ -108,13 +108,41 @@ describe('sharedImageSchema timeout_ms', () => {
   });
 });
 
+describe('timeoutRiskHint', () => {
+  it('flags Pro models and points at the -32001/disk-recovery escape hatch', () => {
+    const h = timeoutRiskHint({ model: 'gemini-3-pro-image' });
+    expect(h).toBeDefined();
+    expect(h).toContain('-32001');
+    expect(h).toContain('Flash');
+    expect(h).toContain('Pro model');
+  });
+
+  it('flags 4K output', () => {
+    expect(timeoutRiskHint({ model: 'gemini-3.1-flash-image', imageSize: '4K' })).toContain('4K');
+  });
+
+  it('flags multi-image count', () => {
+    const h = timeoutRiskHint({ model: 'gemini-3.1-flash-image', count: 4 });
+    expect(h).toBeDefined();
+    expect(h).toContain('count=4');
+  });
+
+  it('is undefined for a fast config (Flash, ≤2K, single image)', () => {
+    expect(timeoutRiskHint({ model: 'gemini-3.1-flash-image', imageSize: '2K', count: 1 })).toBeUndefined();
+    expect(timeoutRiskHint({ model: 'gemini-2.5-flash-image' })).toBeUndefined();
+  });
+});
+
 describe('withProgressHeartbeat', () => {
   const ORIG = process.env.GEMINI_HEARTBEAT_MS;
-  beforeEach(() => { vi.useFakeTimers(); });
+  const ORIG_DEBUG = process.env.GEMINI_DEBUG;
+  beforeEach(() => { vi.useFakeTimers(); delete process.env.GEMINI_DEBUG; });
   afterEach(() => {
     vi.useRealTimers();
     if (ORIG === undefined) delete process.env.GEMINI_HEARTBEAT_MS;
     else process.env.GEMINI_HEARTBEAT_MS = ORIG;
+    if (ORIG_DEBUG === undefined) delete process.env.GEMINI_DEBUG;
+    else process.env.GEMINI_DEBUG = ORIG_DEBUG;
   });
 
   function extraWithToken() {
@@ -159,6 +187,42 @@ describe('withProgressHeartbeat', () => {
     expect(result).toBe(42);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(extra.sendNotification).not.toHaveBeenCalled();
+  });
+
+  // Diagnostics (GEMINI_DEBUG): stderr lines surface in the host's MCP log
+  // (Claude Desktop: ~/Library/Logs/Claude/mcp-server-*.log) so we can see
+  // whether the host actually requested progress — the root-cause signal for a
+  // host-imposed tools/call timeout.
+  it('logs an active-heartbeat diagnostic to stderr when GEMINI_DEBUG is set', async () => {
+    process.env.GEMINI_DEBUG = '1';
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const extra = extraWithToken();
+    let resolveFn!: (v: string) => void;
+    const p = withProgressHeartbeat(extra, 'Generating image', () => new Promise<string>((r) => { resolveFn = r; }));
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('progressToken present'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('still working (10s)'));
+    resolveFn('done');
+    await expect(p).resolves.toBe('done');
+  });
+
+  it('logs a "no progressToken" diagnostic when the host omits the token', async () => {
+    process.env.GEMINI_DEBUG = '1';
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const extra = { _meta: {}, sendNotification: vi.fn() };
+    await withProgressHeartbeat(extra, 'Generating image', () => Promise.resolve('ok'));
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('no progressToken'));
+  });
+
+  it('stays silent by default (no GEMINI_DEBUG)', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const extra = extraWithToken();
+    let resolveFn!: (v: string) => void;
+    const p = withProgressHeartbeat(extra, 'x', () => new Promise<string>((r) => { resolveFn = r; }));
+    await vi.advanceTimersByTimeAsync(20_000);
+    resolveFn('done');
+    await p;
+    expect(err).not.toHaveBeenCalled();
   });
 
   it('survives sendNotification rejections (client may have gone away)', async () => {

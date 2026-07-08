@@ -104,6 +104,26 @@ describe('gemini_generate_image metadata', () => {
   });
 });
 
+describe('gemini_generate_image timeout_risk hint', () => {
+  it('surfaces meta.timeout_risk for a 4K (slow) config', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', { prompt: 'a red leaf', image_size: '4K', output_dir: dir });
+    const data = parseToolResult<{ timeout_risk?: string }>(res);
+    expect(data.timeout_risk).toContain('-32001');
+    await h.close();
+  });
+
+  it('omits meta.timeout_risk for the default fast (Flash, 1-image) config', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const res = await h.callTool('gemini_generate_image', { prompt: 'a red leaf', output_dir: dir });
+    const data = parseToolResult<{ timeout_risk?: string }>(res);
+    expect(data.timeout_risk).toBeUndefined();
+    await h.close();
+  });
+});
+
 describe('gemini_generate_image with reference inputs', () => {
   it('passes images_base64 as input images to generate', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });

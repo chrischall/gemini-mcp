@@ -27,13 +27,14 @@ GEMINI_OUTPUT_DIR=<dir>     # Optional. Where generated images are written (defa
 GEMINI_INPUT_DIR=<dir>      # Optional. Base dir searched for relative input image paths
 GEMINI_TIMEOUT_MS=<ms>      # Optional. Upstream timeout (default 60000; 120000 for 4K; per-call timeout_ms wins)
 GEMINI_HEARTBEAT_MS=<ms>    # Optional. notifications/progress cadence during generation (default 10000; 0 disables)
+GEMINI_DEBUG=<any>          # Optional. When set, emit heartbeat diagnostics to stderr (see Quirks). Off by default.
 ```
 
 Loaded via `loadDotenvSafely` from `.env` next to `dist/` (failure swallowed —
 mcpb bundles omit `dotenv`; the host provides env). `readEnvVar` (from
 `@chrischall/mcp-utils`) treats blank, `"undefined"`, `"null"`, and unsubstituted
-`${FOO}` placeholders as unset. All but `GEMINI_HEARTBEAT_MS` map to
-`manifest.json`'s `user_config` (`gemini_api_key`, `gemini_image_model`,
+`${FOO}` placeholders as unset. All but `GEMINI_HEARTBEAT_MS` and `GEMINI_DEBUG`
+map to `manifest.json`'s `user_config` (`gemini_api_key`, `gemini_image_model`,
 `gemini_input_dir`, `gemini_output_dir`, `gemini_timeout_ms`).
 
 ## Architecture
@@ -107,7 +108,9 @@ otherwise it `writeImage()`s each to `resolveOutputDir(output_dir)` (per-call
 (`name.png`, `name-2.png`, …), and returns the absolute paths plus a metadata
 object (`model`, `seed`, a `hint` steering iterative refinement to
 `gemini_interact`, optional `text`, `grounding`, `interaction_id`,
-`previous_interaction_id`). `gemini_interact` also accepts `continue_last: true`
+`previous_interaction_id`, and — on timeout-prone configs (Pro model / 4K /
+multi-image) — a `timeout_risk` note pointing at Flash / disk recovery, from
+`timeoutRiskHint`). `gemini_interact` also accepts `continue_last: true`
 to chain from the server process's most recent interaction id (in-memory;
 explicit `previous_interaction_id` wins), and in disk mode writes an
 `<image>.json` sidecar carrying the result meta so the interaction id survives
@@ -212,6 +215,19 @@ caller to display them. `search_types` is Interactions-only; don't add it to
   updates (so `continue_last: true` survives the timeout), and `gemini_interact`
   writes an `<image>.json` sidecar with the interaction id — the multi-turn
   chain is recoverable from disk even though the MCP response was lost.
+  - **The heartbeat only works if the host cooperates.** It fires solely when the
+    caller sent a `progressToken`, and even then it only *extends* the host's
+    timeout if the host resets its clock on `notifications/progress`
+    (`resetTimeoutOnProgress`). **Claude Desktop does neither reliably** and
+    exposes no per-server timeout knob (unlike Claude Code's `MCP_TOOL_TIMEOUT`
+    env), so under Desktop a long generation hits Desktop's fixed ~30s ceiling
+    regardless of heartbeats — sidecar recovery (above) is the mitigation there,
+    not the heartbeat. Set **`GEMINI_DEBUG=1`** to emit stderr diagnostics
+    (`[gemini-mcp] heartbeat active|inactive: …`, surfaced in
+    `~/Library/Logs/Claude/mcp-server-*.log`) that reveal whether the host sent a
+    `progressToken` at all — the root-cause signal. Don't add a leading/faster
+    heartbeat to "fix" a host that ignores progress: if it ignores progress, more
+    progress changes nothing.
 - **`from_clipboard` is macOS-only (issue #13).** `readClipboardImage` shells out
   to `osascript` (clipboard PNG → temp file) then `sips` (downscale ≤2048px →
   JPEG); non-darwin throws an actionable `McpToolError`. The clipboard module is
