@@ -89,6 +89,8 @@ describe('server boot (built artifacts)', () => {
       expect(tools.length).toBeGreaterThanOrEqual(MIN_TOOLS);
       expect(tools).toContain('gemini_list_models');
       expect(tools).toContain('gemini_get_result');
+      expect(tools).toContain('gemini_video_generate');
+      expect(tools).toContain('gemini_music_generate');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -99,5 +101,7 @@ describe('server boot (built artifacts)', () => {
     expect(tools.length).toBeGreaterThanOrEqual(MIN_TOOLS);
     expect(tools).toContain('gemini_list_models');
     expect(tools).toContain('gemini_get_result');
+    expect(tools).toContain('gemini_video_generate');
+    expect(tools).toContain('gemini_music_generate');
   }, 30_000);
 });

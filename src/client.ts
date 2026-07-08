@@ -1,7 +1,7 @@
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadDotenvSafely, readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
-import { resolveModel, filterImageModels, type GeminiModel, type RawModel } from './models.js';
+import { resolveModel, filterImageModels, DEFAULT_VIDEO_MODEL, DEFAULT_MUSIC_MODEL, type GeminiModel, type RawModel } from './models.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 await loadDotenvSafely({ path: join(__dirname, '..', '.env'), override: false });
@@ -112,6 +112,52 @@ interface GeminiFile {
 }
 
 export interface InteractResult { id: string; images: GeneratedImage[]; text?: string; grounding?: GroundingResult; }
+
+/** Inline media returned by the Interactions API (image / video / audio) — all
+ * just base64 bytes + MIME. Structurally identical to {@link GeneratedImage}. */
+export interface GeneratedMedia { base64: string; mimeType: string; }
+
+/** A `steps[]` entry from the Interactions API (shared by interact/video/music). */
+interface StepPart { type: string; mime_type?: string; mimeType?: string; data?: string; text?: string; uri?: string }
+interface Step {
+  type: string;
+  content?: StepPart[];
+  summary?: StepPart[];
+  // `arguments` is null on some google_search_call steps (verified 2026-07-06).
+  arguments?: { queries?: string[] } | null;
+  result?: Array<{ search_suggestions?: string }>;
+}
+/** Everything the `model_output` (+ grounding) steps yield, by media type. */
+interface ExtractedInteraction {
+  images: GeneratedMedia[];
+  videos: GeneratedMedia[];
+  audios: GeneratedMedia[];
+  text?: string;
+  grounding?: GroundingResult;
+}
+
+export interface VideoOpts {
+  input: string;
+  /** Reference stills for image_to_video / reference_to_video. */
+  images?: GeneratedMedia[];
+  model?: string;
+  aspectRatio?: '9:16' | '16:9';
+  task?: 'text_to_video' | 'image_to_video' | 'reference_to_video' | 'edit';
+  previousInteractionId?: string;
+  timeoutMs?: number;
+}
+export interface VideoResult { id: string; videos: GeneratedMedia[]; text?: string; }
+
+export interface MusicOpts {
+  input: string;
+  images?: GeneratedMedia[];
+  model?: string;
+  /** `wav` is Lyria-3-Pro-only; the client sends it through, the tool validates. */
+  audioFormat?: 'mp3' | 'wav';
+  previousInteractionId?: string;
+  timeoutMs?: number;
+}
+export interface MusicResult { id: string; audios: GeneratedMedia[]; text?: string; }
 
 export interface GenerateOpts {
   prompt: string;
@@ -387,30 +433,84 @@ export class GeminiClient {
       body.tools = [searchTool];
     }
 
-    type StepPart = { type: string; mime_type?: string; data?: string; text?: string };
-    type Step = {
-      type: string;
-      content?: StepPart[];
-      summary?: StepPart[];
-      // `arguments` is null on some google_search_call steps (verified 2026-07-06).
-      arguments?: { queries?: string[] } | null;
-      result?: Array<{ search_suggestions?: string }>;
-    };
+    const data = await this.postInteraction(body, opts);
+    const { images, text, grounding } = this.extractInteraction(data, opts.searchTypes);
+    if (images.length === 0) {
+      throw new McpToolError('Gemini returned no image', {
+        hint: 'The request may have been blocked by safety filters — try rephrasing the prompt.',
+      });
+    }
+    return { id: data.id, images, text, grounding };
+  }
+
+  /**
+   * Generate video via the omni model (Interactions API, inline delivery). Same
+   * plumbing as {@link interact} — text/image input parts, a `video`
+   * response_format, optional `video_config.task`, and `previous_interaction_id`
+   * for edits. Preview model: shapes are docs-derived; parsing stays tolerant.
+   */
+  async generateVideo(opts: VideoOpts): Promise<VideoResult> {
+    const model = opts.model ?? DEFAULT_VIDEO_MODEL;
+    const inputParts: unknown[] = [{ type: 'text', text: opts.input }];
+    for (const img of opts.images ?? []) inputParts.push({ type: 'image', mime_type: img.mimeType, data: img.base64 });
+
+    const responseFormat: Record<string, unknown> = { type: 'video', delivery: 'inline' };
+    if (opts.aspectRatio) responseFormat.aspect_ratio = opts.aspectRatio;
+
+    const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
+    if (opts.task) body.generation_config = { video_config: { task: opts.task } };
+    if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
+
+    const data = await this.postInteraction(body, opts);
+    const { videos, text } = this.extractInteraction(data);
+    if (videos.length === 0) {
+      throw new McpToolError('Gemini returned no video', {
+        hint: 'The request may have been blocked by a safety filter, or the clip exceeded the ~4MB inline limit — try a shorter/simpler prompt or a different aspect ratio.',
+      });
+    }
+    return { id: data.id, videos, text };
+  }
+
+  /**
+   * Generate music via a Lyria model (Interactions API, inline audio). Reuses
+   * the interact plumbing with an `audio` response_format. Preview model.
+   */
+  async generateMusic(opts: MusicOpts): Promise<MusicResult> {
+    const model = opts.model ?? DEFAULT_MUSIC_MODEL;
+    const inputParts: unknown[] = [{ type: 'text', text: opts.input }];
+    for (const img of opts.images ?? []) inputParts.push({ type: 'image', mime_type: img.mimeType, data: img.base64 });
+
+    const responseFormat: Record<string, unknown> = { type: 'audio' };
+    if (opts.audioFormat) responseFormat.audio_format = opts.audioFormat;
+
+    const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
+    if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
+
+    const data = await this.postInteraction(body, opts);
+    const { audios, text } = this.extractInteraction(data);
+    if (audios.length === 0) {
+      throw new McpToolError('Gemini returned no audio', {
+        hint: 'The request may have been blocked by a safety filter — try rephrasing the prompt.',
+      });
+    }
+    return { id: data.id, audios, text };
+  }
+
+  /** POST `/interactions` with the chained-404 retry. Shared by all media. */
+  private async postInteraction(
+    body: Record<string, unknown>,
+    opts: { timeoutMs?: number; imageSize?: string; previousInteractionId?: string },
+  ): Promise<{ id: string; steps?: Step[] }> {
     const { interactionsApi } = this.apisFor(resolveTimeoutMs(opts.timeoutMs, opts.imageSize));
-    let data!: { id: string; steps?: Step[] };
     for (let attempt = 0; ; attempt++) {
       try {
-        data = await interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', {
-          body,
-        });
-        break;
+        return await interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', { body });
       } catch (err) {
-        // A 404 on a chained call means the referenced interaction wasn't
-        // found. Two causes: (a) store lag right after the id was created —
-        // retry with backoff; (b) genuinely gone — interactions are retained
-        // 55 days (paid tier) / 1 day (free tier) and are scoped to the API
-        // key's project. The chain is recoverable from the last output file,
-        // so the exhausted-retries error says how.
+        // A 404 on a chained call means the referenced interaction wasn't found:
+        // (a) store lag right after the id was created — retry with backoff; or
+        // (b) genuinely gone — interactions are retained 55 days (paid) / 1 day
+        // (free), scoped to the API key's project. The chain is recoverable from
+        // the last output file, so the exhausted-retries error says how.
         if (!(opts.previousInteractionId && err instanceof ApiError && err.status === 404)) throw err;
         if (attempt < CHAIN_404_RETRIES) {
           await this.sleep(CHAIN_404_RETRY_MS * (attempt + 1));
@@ -419,38 +519,37 @@ export class GeminiClient {
         throw new McpToolError(
           `Previous interaction "${opts.previousInteractionId}" was not found (retried ${CHAIN_404_RETRIES}× — the interactions store can lag briefly after a turn completes). If the id is old: interactions are retained 55 days on the paid tier (1 day on the free tier) and are scoped to the API key that created them.`,
           {
-            hint: 'Retry once more in a few seconds; if it keeps failing, start a new chain: call gemini_interact again with the last output image passed via `images` (or `images_base64`) plus the same instruction, then chain the NEW interaction id.',
+            hint: 'Retry once more in a few seconds; if it keeps failing, start a new chain by re-attaching the last output as an input plus the same instruction, then chain the NEW interaction id.',
             cause: err,
           },
         );
       }
     }
+  }
 
-    // Only surface the `model_output` step — that's the caller-facing result.
-    // `thought` steps hold internal reasoning (and, with includeThoughts, draft
-    // "thinking" images); collecting those would leak reasoning into `text` and
-    // pollute the returned images. The verified contract puts the output image
-    // in `model_output`.
-    const images: GeneratedImage[] = [];
+  /**
+   * Collect `model_output` media (image/video/audio) + text + grounding from an
+   * interactions response. Only the `model_output` step is surfaced — `thought`
+   * steps (internal reasoning / draft images) are dropped on purpose so they
+   * can't leak into text or pollute the outputs. Tolerant of snake/camel MIME.
+   */
+  private extractInteraction(data: { steps?: Step[] }, searchTypes?: SearchType[]): ExtractedInteraction {
+    const images: GeneratedMedia[] = [];
+    const videos: GeneratedMedia[] = [];
+    const audios: GeneratedMedia[] = [];
     const textParts: string[] = [];
     const searchQueries: string[] = [];
     const searchSuggestions = new Set<string>();
     for (const step of data.steps ?? []) {
       // Grounding queries live on the `google_search_call` step's arguments.
-      // (The `google_search_result` step only carries HTML `search_suggestions`
-      // chips — no clean source uri/title list like generateContent's
-      // groundingChunks — so interact surfaces queries, plus the suggestion
-      // chips when image_search was requested, ToS below.)
       if (step.type === 'google_search_call') {
         for (const q of step.arguments?.queries ?? []) if (q?.trim()) searchQueries.push(q);
         continue;
       }
       // ToS: image_search results' `search_suggestions` chips MUST be displayed
-      // by the caller, so surface them (deduped — the chips repeat) only when
-      // image_search grounding was requested; web-only grounding keeps the
-      // lean queries-only meta.
+      // by the caller — surface them (deduped) only when image_search was asked.
       if (step.type === 'google_search_result') {
-        if (opts.searchTypes?.includes('image_search')) {
+        if (searchTypes?.includes('image_search')) {
           for (const r of step.result ?? []) if (r.search_suggestions?.trim()) searchSuggestions.add(r.search_suggestions);
         }
         continue;
@@ -458,29 +557,24 @@ export class GeminiClient {
       if (step.type !== 'model_output') continue;
       for (const parts of [step.content ?? [], step.summary ?? []]) {
         for (const part of parts) {
-          if (part.type === 'image' && part.data) {
-            images.push({ base64: part.data, mimeType: part.mime_type ?? 'image/jpeg' });
+          const mime = part.mime_type ?? part.mimeType;
+          if (part.data) {
+            if (part.type === 'image') images.push({ base64: part.data, mimeType: mime ?? 'image/jpeg' });
+            else if (part.type === 'video') videos.push({ base64: part.data, mimeType: mime ?? 'video/mp4' });
+            else if (part.type === 'audio') audios.push({ base64: part.data, mimeType: mime ?? 'audio/mpeg' });
           } else if (part.type === 'text' && part.text?.trim()) {
             textParts.push(part.text);
           }
         }
       }
     }
-
-    if (images.length === 0) {
-      throw new McpToolError('Gemini returned no image', {
-        hint: 'The request may have been blocked by safety filters — try rephrasing the prompt.',
-      });
-    }
-
-    const resultText = textParts.join('\n') || undefined;
     let grounding: GroundingResult | undefined;
     if (searchQueries.length > 0 || searchSuggestions.size > 0) {
       grounding = {};
       if (searchQueries.length > 0) grounding.queries = searchQueries;
       if (searchSuggestions.size > 0) grounding.search_suggestions = [...searchSuggestions];
     }
-    return { id: data.id, images, text: resultText, grounding };
+    return { images, videos, audios, text: textParts.join('\n') || undefined, grounding };
   }
 }
 

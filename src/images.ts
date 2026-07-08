@@ -47,13 +47,34 @@ function sniffMimeBytes(buf: Buffer): string {
   return 'image/png';
 }
 
-/** Decode base64 image bytes and write to disk (creating dir). Returns the absolute path. */
-export async function writeImage(dir: string, base: string, base64: string, mimeType: string): Promise<string> {
+/** File extension for a media MIME (image/video/audio). Falls back to the MIME
+ * subtype, so an unforeseen preview type still writes with a sane extension. */
+export function mediaExt(mimeType: string): string {
+  const m = mimeType.toLowerCase();
+  if (m.includes('jpeg')) return 'jpg';
+  if (m.includes('webp')) return 'webp';
+  if (m.includes('png')) return 'png';
+  if (m.includes('mp4')) return 'mp4';
+  if (m.includes('quicktime')) return 'mov';
+  if (m.includes('webm')) return 'webm';
+  if (m.includes('wav')) return 'wav';
+  if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
+  if (m.includes('ogg')) return 'ogg';
+  return m.split('/')[1]?.split(';')[0]?.replace(/^x-/, '') || 'bin';
+}
+
+/** Decode base64 media bytes (image/video/audio) and write to disk (creating
+ * dir), picking the extension from the MIME. Returns the absolute path. */
+export async function writeMedia(dir: string, base: string, base64: string, mimeType: string): Promise<string> {
   await mkdir(dir, { recursive: true });
-  const ext = mimeType.includes('jpeg') ? 'jpg' : mimeType.includes('webp') ? 'webp' : 'png';
-  const path = await uniquePath(dir, base, ext);
+  const path = await uniquePath(dir, base, mediaExt(mimeType));
   await writeFile(path, Buffer.from(base64, 'base64'));
   return resolve(path);
+}
+
+/** Decode base64 image bytes and write to disk. Returns the absolute path. */
+export async function writeImage(dir: string, base: string, base64: string, mimeType: string): Promise<string> {
+  return writeMedia(dir, base, base64, mimeType);
 }
 
 /**
@@ -228,8 +249,9 @@ export async function gatherImageInputs(opts: {
 
 /** Caller-supplied filename → safe base name (no extension). */
 export function baseName(name: string): string {
-  // Strip known image extensions
-  const stripped = name.replace(/\.(png|jpe?g|webp)$/i, '');
+  // Strip a known media extension (image / video / audio) so writeMedia doesn't
+  // double it (e.g. "clip.mp4" → "clip" → "clip.mp4").
+  const stripped = name.replace(/\.(png|jpe?g|webp|mp4|mov|webm|mp3|wav|ogg)$/i, '');
   // Replace non-safe chars with hyphens, collapse repeats, trim edges
   const safe = stripped
     .replace(/[^A-Za-z0-9._-]+/g, '-')

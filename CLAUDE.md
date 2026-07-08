@@ -6,10 +6,15 @@ Guidance for Claude working in this repo.
 
 v0.6.0: Google **Gemini** image-generation MCP server. Wraps the Generative
 Language REST API (`https://generativelanguage.googleapis.com/v1beta`) and
-exposes 6 tools to Claude over stdio: text→image and image→image generation,
-multi-turn conversational editing, consistent image *sets*, and model listing
-(Nano Banana / Nano Banana Pro family). Inputs can come from file paths, raw
-base64 / data URIs, a public YouTube URL (video→image), or the macOS clipboard.
+exposes 8 tools to Claude over stdio: text→image and image→image generation,
+multi-turn conversational editing, consistent image *sets*, **video generation**
+(omni, `gemini_video_generate`), **music generation** (Lyria clips/pro,
+`gemini_music_generate`), and model listing (Nano Banana / Nano Banana Pro
+family). Inputs can come from file paths, raw base64 / data URIs, a public YouTube
+URL (video→image), or the macOS clipboard. Video and music ride the **same
+Interactions endpoint** as `gemini_interact` — the tool naming is media-first
+(`gemini_<media>_<action>`). Realtime Lyria (WebSocket) is intentionally
+**not** implemented (see the video/music design spec).
 
 Auth is a Google **API key** (`GEMINI_API_KEY`) sent in the `x-goog-api-key`
 header — Gemini does **not** use `Authorization: Bearer`. Because the model is
@@ -46,7 +51,10 @@ src/
   version.ts      # VERSION const (// x-release-please-version)
   client.ts       # GeminiClient — module-level singleton `client`; builds two
                   #   createApiClient instances (generateContent + Interactions);
-                  #   exposes call(), listModels(), generate(), interact()
+                  #   exposes call(), listModels(), generate(), interact(),
+                  #   generateVideo(), generateMusic() — the last three share
+                  #   postInteraction() (POST + 404-retry) + extractInteraction()
+                  #   (steps→image/video/audio media)
   models.ts       # DEFAULT_IMAGE_MODEL, resolveModel() (per-call → env → default),
                   #   filterImageModels() (keep *image* models, drop imagen-*)
   images.ts       # input loading (paths/base64/data-URI, MIME sniff, clipboard
@@ -62,6 +70,8 @@ src/
     generate.ts   # gemini_image_generate, gemini_image_edit (registerGenerateTools)
     set.ts        # gemini_image_set                       (registerSetTools)
     interact.ts   # gemini_interact                           (registerInteractTools)
+    video.ts      # gemini_video_generate (omni, Interactions) (registerVideoTools)
+    music.ts      # gemini_music_generate (Lyria, Interactions) (registerMusicTools)
     jobs.ts       # gemini_get_result (async poll)            (registerJobTools)
     shared.ts     # ASPECT_RATIOS, IMAGE_SIZES, sharedImageSchema, pickSeed,
                   #   buildMeta, and emit() (inline-vs-write-to-disk result wrapper)
@@ -104,9 +114,23 @@ shared util, configured non-Bearer.
 | `gemini_image_edit` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (input images required) | write (binary-out) |
 | `gemini_image_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode) | write (binary-out) |
 | `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (GA since 2026-07) | write (binary-out) |
+| `gemini_video_generate` | `tools/video.ts` | `POST /v1beta/interactions` (omni, `response_format: video`, preview) | write (binary-out, MP4→disk) |
+| `gemini_music_generate` | `tools/music.ts` | `POST /v1beta/interactions` (Lyria, `response_format: audio`, preview) | write (binary-out, MP3/WAV) |
 | `gemini_get_result` | `tools/jobs.ts` | none (reads the in-memory job registry) | read |
 
-**Binary output.** All four generation tools return images either written to disk
+**Video & music reuse the interact plumbing.** `gemini_video_generate` (omni) and
+`gemini_music_generate` (Lyria) ride the **same `/v1beta/interactions` endpoint**
+as `gemini_interact`. `client.generateVideo()` / `generateMusic()` build their own
+`response_format` (`video` / `audio`) but share `postInteraction()` (POST +
+chained-404 retry) and `extractInteraction()` (steps → image/video/audio media,
+snake/camel-tolerant). Output goes through `emitMedia()` (in `tools/shared.ts`) →
+`writeMedia()` (MIME→extension); **video is disk-only** (MCP has no video content
+block, so an `inline` request is downgraded + noted), audio supports inline
+(`type:'audio'`). Both models are **preview** (funded account required) and their
+shapes are docs-derived, not live-verified — hence the tolerant parsing. Realtime
+Lyria (WebSocket) is intentionally out (see `docs/superpowers/specs/…-video-music-tools-design.md`).
+
+**Binary output.** The image generation tools return images either written to disk
 (default) or inline base64. `emit()` (in `tools/shared.ts`) decides: with
 `inline: true` it returns `{ type: 'image', data, mimeType }` content blocks;
 otherwise it `writeImage()`s each to `resolveOutputDir(output_dir)` (per-call

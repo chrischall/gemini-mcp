@@ -95,9 +95,12 @@ new fields are trusted.
 
 1. **PR-A — rename** (`gemini_image_generate/edit/set`) + this spec. Mechanical,
    isolated, merges first.
-2. **PR-B — media plumbing + `gemini_video_generate`.** The `interact()`/`emit()`
-   generalization lands here.
-3. **PR-C — `gemini_music_generate`.** Stacked on B; reuses the plumbing.
+2. **PR-B — media plumbing + `gemini_video_generate` + `gemini_music_generate`.**
+   Video and music were consolidated into one PR: both ride the identical
+   `interact()`/`emit()` generalization (`postInteraction`/`extractInteraction`/
+   `emitMedia`), so splitting them would have left the shared `generateMusic`
+   client method as dead code in a video-only PR — and one PR halves the
+   auto-merge/rebase surface.
 
 ## Non-goals
 
