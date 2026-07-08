@@ -139,16 +139,38 @@ export async function withProgressHeartbeat<T>(
   const send = extra?.sendNotification;
   const env = Number(readEnvVar('GEMINI_HEARTBEAT_MS'));
   const intervalMs = Number.isFinite(env) ? env : HEARTBEAT_DEFAULT_MS;
+  const debug = !!readEnvVar('GEMINI_DEBUG');
+  const active = progressToken !== undefined && !!send && intervalMs > 0;
+  // Diagnostics (opt-in via GEMINI_DEBUG). Goes to stderr — the only channel
+  // safe under the stdio transport, and where the host surfaces it (Claude
+  // Desktop: ~/Library/Logs/Claude/mcp-server-*.log). The active/inactive line
+  // reveals whether the host even asked for progress: a missing progressToken
+  // means the host cannot be kept alive by our heartbeat, so a long call will
+  // hit the host's own tools/call timeout no matter what we send.
+  if (debug) {
+    if (active) {
+      console.error(`[gemini-mcp] heartbeat active: progressToken present, interval=${intervalMs}ms — ${message}`);
+    } else {
+      const reason = progressToken === undefined
+        ? 'no progressToken from host (host cannot extend its tools/call timeout; long calls will hit it)'
+        : !send
+          ? 'host provided no sendNotification channel'
+          : 'heartbeat disabled (GEMINI_HEARTBEAT_MS=0)';
+      console.error(`[gemini-mcp] heartbeat inactive: ${reason} — ${message}`);
+    }
+  }
   if (progressToken === undefined || !send || intervalMs <= 0) return fn();
   let ticks = 0;
   const timer = setInterval(() => {
     ticks++;
+    const elapsed = Math.round((ticks * intervalMs) / 1000);
+    if (debug) console.error(`[gemini-mcp] heartbeat: ${message} — still working (${elapsed}s)`);
     void send({
       method: 'notifications/progress',
       params: {
         progressToken,
         progress: ticks,
-        message: `${message} — still working (${Math.round((ticks * intervalMs) / 1000)}s)`,
+        message: `${message} — still working (${elapsed}s)`,
       },
     }).catch(() => {});
   }, intervalMs);
@@ -159,6 +181,32 @@ export async function withProgressHeartbeat<T>(
   } finally {
     clearInterval(timer);
   }
+}
+
+/**
+ * Some configs routinely run long enough to trip a host's tools/call timeout —
+ * Pro models, 4K output, or multi-image counts. Claude Desktop caps at ~30s,
+ * ignores our progress heartbeat, and offers no config to raise it (verified: the
+ * bundled MCP client's hard limit does not reset on notifications/progress), so
+ * such a call surfaces as `-32001 Request timed out`. Returned as
+ * `meta.timeout_risk` so a caller that *does* get the result is steered off the
+ * slow path next time and knows the image still landed on disk when a host bails.
+ * `undefined` for fast configs (no field added).
+ */
+export function timeoutRiskHint(opts: { model: string; imageSize?: string; count?: number }): string | undefined {
+  const proModel = /pro/i.test(opts.model);
+  const fourK = opts.imageSize === '4K';
+  const multi = (opts.count ?? 1) > 1;
+  if (!proModel && !fourK && !multi) return undefined;
+  const why = [proModel && 'Pro model', fourK && '4K output', multi && `count=${opts.count}`]
+    .filter(Boolean)
+    .join(' + ');
+  return (
+    `Slow config (${why}) can exceed a host's tools/call timeout (e.g. Claude Desktop ~30s, error -32001). ` +
+    `If the host gives up mid-generation the image is still written to disk (and gemini_interact leaves an ` +
+    `<image>.json sidecar with the interaction id) — no rerun needed, just look in the output dir. ` +
+    `For a faster in-band result use a Flash model, drop image_size to 1K/2K, or — in Claude Code — set MCP_TOOL_TIMEOUT.`
+  );
 }
 
 /** Build the result metadata echoed to the caller (omitting unset optionals). */

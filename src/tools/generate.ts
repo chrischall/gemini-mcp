@@ -4,7 +4,7 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client, type GroundingResult } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, resolveVideoInput, videoPathSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 const GENERATE_ENDPOINT = '/v1beta/models/{model}:generateContent';
@@ -83,6 +83,8 @@ export function registerGenerateTools(server: McpServer): void {
       if (capturedGrounding) meta.grounding = capturedGrounding;
       if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
       meta.hint = REFINE_HINT;
+      const risk = timeoutRiskHint({ model, imageSize: args.image_size, count });
+      if (risk) meta.timeout_risk = risk;
       return emit(named, args, meta);
     },
   );
@@ -136,6 +138,8 @@ export function registerGenerateTools(server: McpServer): void {
       if (text) meta.text = text;
       if (result.grounding) meta.grounding = result.grounding;
       meta.hint = REFINE_HINT;
+      const risk = timeoutRiskHint({ model, imageSize: args.image_size });
+      if (risk) meta.timeout_risk = risk;
       return emit([{ image: img, base: slug }], args, meta);
     },
   );
