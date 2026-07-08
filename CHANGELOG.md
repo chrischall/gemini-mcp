@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/chrischall/gemini-mcp/compare/v0.8.0...v0.9.0) (2026-07-08)
+
+
+### Features
+
+* idempotency guard for generation calls after host timeouts ([#65](https://github.com/chrischall/gemini-mcp/issues/65)) ([7a065b3](https://github.com/chrischall/gemini-mcp/commit/7a065b329476a21c63dc4734be088d730f9045f3))
+* surface host-timeout diagnostics and steer slow configs ([#61](https://github.com/chrischall/gemini-mcp/issues/61)) ([cba7651](https://github.com/chrischall/gemini-mcp/commit/cba7651a3ad52ce1d9b3aeea552c3949d0d1b41a))
+
 ## [0.8.0](https://github.com/chrischall/gemini-mcp/compare/v0.7.2...v0.8.0) (2026-07-07)
 
 
