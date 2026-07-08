@@ -5,6 +5,7 @@ import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerSetTools } from '../../src/tools/set.js';
 import { client } from '../../src/client.js';
+import { __resetJobRegistry } from '../../src/jobs.js';
 
 vi.mock('../../src/clipboard.js', () => ({
   readClipboardImage: vi.fn().mockResolvedValue({ base64: 'Y2xpcGJvYXJk', mimeType: 'image/jpeg' }),
@@ -13,7 +14,7 @@ vi.mock('../../src/clipboard.js', () => ({
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-set-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); __resetJobRegistry(); });
 
 describe('gemini_generate_set (master mode)', () => {
   it('generates a master then one image per scene referencing the master', async () => {
@@ -65,6 +66,24 @@ describe('gemini_generate_set timeout_risk hint', () => {
     const data = parseToolResult<{ images: string[]; timeout_risk?: string }>(res);
     expect(data.images).toHaveLength(3);
     expect(data.timeout_risk).toContain('count=3');
+    await h.close();
+  });
+});
+
+describe('gemini_generate_set idempotency', () => {
+  it('reuses the recorded set for a repeat idempotency_key (whole batch not re-run)', async () => {
+    let calls = 0;
+    vi.spyOn(client, 'generate').mockImplementation(() => {
+      calls++;
+      return Promise.resolve({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    });
+    const h = await createTestHarness(registerSetTools);
+    const args = { master_prompt: 'a fox', scenes: ['waving'], output_dir: dir, idempotency_key: 'sk' };
+    const r1 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_generate_set', args));
+    const r2 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_generate_set', args));
+    expect(calls).toBe(2); // master + 1 scene, generated ONCE (not 4)
+    expect(r2.reused).toBe(true);
+    expect(r2.images).toEqual(r1.images);
     await h.close();
   });
 });

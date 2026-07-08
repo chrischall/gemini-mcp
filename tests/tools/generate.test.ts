@@ -5,6 +5,7 @@ import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerGenerateTools } from '../../src/tools/generate.js';
 import { client } from '../../src/client.js';
+import { __resetJobRegistry } from '../../src/jobs.js';
 
 // Mock clipboard so from_clipboard tests don't shell out
 vi.mock('../../src/clipboard.js', () => ({
@@ -14,7 +15,7 @@ vi.mock('../../src/clipboard.js', () => ({
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-gen-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); __resetJobRegistry(); });
 
 describe('tool descriptions steer iterative refinement to gemini_interact', () => {
   it('gemini_generate_image points at gemini_interact for iterative work', async () => {
@@ -134,6 +135,63 @@ describe('gemini_generate_image timeout_risk hint', () => {
       await h.callTool('gemini_edit_image', { prompt: 'brighter', images_base64: [PNG], output_dir: dir }),
     );
     expect(fast.timeout_risk).toBeUndefined();
+    await h.close();
+  });
+});
+
+describe('gemini_generate_image idempotency', () => {
+  const tick = () => new Promise((r) => setImmediate(r));
+
+  it('dedups two in-flight identical calls — generate runs once, the second is reused', async () => {
+    let calls = 0;
+    let resolveGen!: (v: { images: { base64: string; mimeType: string }[] }) => void;
+    vi.spyOn(client, 'generate').mockImplementation(() => {
+      calls++;
+      return new Promise((res) => { resolveGen = res; });
+    });
+    const h = await createTestHarness(registerGenerateTools);
+    const args = { prompt: 'a red leaf', output_dir: dir };
+    const p1 = h.callTool('gemini_generate_image', args);
+    await tick(); // let the first call register + reach the (pending) generate
+    const p2 = h.callTool('gemini_generate_image', args);
+    await tick(); // let the second call attach to the in-flight job
+    resolveGen({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const m1 = parseToolResult<{ reused?: boolean }>(await p1);
+    const m2 = parseToolResult<{ reused?: boolean }>(await p2);
+    expect(calls).toBe(1); // second call did NOT bill a new generation
+    expect([m1.reused, m2.reused].filter(Boolean)).toHaveLength(1);
+    await h.close();
+  });
+
+  it('returns the recorded result for a repeat idempotency_key (no second generation)', async () => {
+    let calls = 0;
+    vi.spyOn(client, 'generate').mockImplementation(() => {
+      calls++;
+      return Promise.resolve({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    });
+    const h = await createTestHarness(registerGenerateTools);
+    const args = { prompt: 'a red leaf', output_dir: dir, idempotency_key: 'k1' };
+    const r1 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_generate_image', args));
+    const r2 = parseToolResult<{ images: string[]; reused?: boolean; reused_job_id?: string }>(await h.callTool('gemini_generate_image', args));
+    expect(calls).toBe(1);
+    expect(r1.reused).toBeUndefined();
+    expect(r2.reused).toBe(true);
+    expect(typeof r2.reused_job_id).toBe('string');
+    expect(r2.images).toEqual(r1.images);
+    await h.close();
+  });
+
+  it('does not dedup two sequential identical calls without a key (intentional variation)', async () => {
+    let calls = 0;
+    vi.spyOn(client, 'generate').mockImplementation(() => {
+      calls++;
+      return Promise.resolve({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    });
+    const h = await createTestHarness(registerGenerateTools);
+    const args = { prompt: 'a red leaf', output_dir: dir };
+    await h.callTool('gemini_generate_image', args);
+    await h.callTool('gemini_generate_image', args);
+    expect(calls).toBe(2);
     await h.close();
   });
 });

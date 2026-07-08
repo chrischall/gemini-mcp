@@ -5,6 +5,7 @@ import { resolveModel } from '../models.js';
 import { client, type GroundingResult } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 const GENERATE_ENDPOINT = '/v1beta/models/{model}:generateContent';
@@ -43,49 +44,59 @@ export function registerGenerateTools(server: McpServer): void {
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, SEND_LOCAL_ACTION, GENERATE_ENDPOINT, args.images, args.video_path);
       if (gate) return gate;
       const count = args.count ?? 1;
-      const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
-      const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
-      const refInputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
-      // Upload ONCE (before the count loop) — every generate call references
-      // the same files/… uri.
-      const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
-      const named: NamedImage[] = [];
-      let capturedText: string | undefined;
-      // For count>1, surface the FIRST call's grounding (each call grounds
-      // independently; one representative set of sources beats concatenating N).
-      let capturedGrounding: GroundingResult | undefined;
-      await withProgressHeartbeat(extra, `Generating ${count > 1 ? `${count} images` : 'image'} (${model})`, async () => {
-        for (let i = 0; i < count; i++) {
-          // Distinct seed per image (seed+0 for the single-image case == echoed seed)
-          // so count>1 yields N *different* images, not N duplicates.
-          const result = await client.generate({
-            prompt: args.prompt,
-            images: refInputs.length > 0 ? refInputs : undefined,
-            model: args.model,
-            aspectRatio: args.aspect_ratio,
-            imageSize: args.image_size,
-            seed: seed + i,
-            thinkingLevel: args.thinking_level,
-            googleSearch: args.google_search,
-            videoUrl: video.videoUrl,
-            videoMimeType: video.videoMimeType,
-            timeoutMs: args.timeout_ms,
-          });
-          const { images: [img], text } = result;
-          if (text && !capturedText) capturedText = text;
-          if (result.grounding && !capturedGrounding) capturedGrounding = result.grounding;
-          named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
-        }
+      // Fingerprint the request identity (excl. server-picked seed / output path)
+      // so a blind re-issue after a host timeout dedups instead of re-billing.
+      const fingerprint = fingerprintRequest('gemini_generate_image', {
+        model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
+        thinking_level: args.thinking_level, google_search: args.google_search, count,
+        images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
+        video_url: args.video_url, video_path: args.video_path,
       });
-      const meta = buildMeta(model, seed, args);
-      if (capturedText) meta.text = capturedText;
-      if (capturedGrounding) meta.grounding = capturedGrounding;
-      if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
-      meta.hint = REFINE_HINT;
-      const risk = timeoutRiskHint({ model, imageSize: args.image_size, count });
-      if (risk) meta.timeout_risk = risk;
-      return emit(named, args, meta);
+      return dispatch({ toolName: 'gemini_generate_image', fingerprint, idempotencyKey: args.idempotency_key }, async () => {
+        const seed = pickSeed(args.seed);
+        const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
+        const refInputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
+        // Upload ONCE (before the count loop) — every generate call references
+        // the same files/… uri.
+        const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
+        const named: NamedImage[] = [];
+        let capturedText: string | undefined;
+        // For count>1, surface the FIRST call's grounding (each call grounds
+        // independently; one representative set of sources beats concatenating N).
+        let capturedGrounding: GroundingResult | undefined;
+        await withProgressHeartbeat(extra, `Generating ${count > 1 ? `${count} images` : 'image'} (${model})`, async () => {
+          for (let i = 0; i < count; i++) {
+            // Distinct seed per image (seed+0 for the single-image case == echoed seed)
+            // so count>1 yields N *different* images, not N duplicates.
+            const result = await client.generate({
+              prompt: args.prompt,
+              images: refInputs.length > 0 ? refInputs : undefined,
+              model: args.model,
+              aspectRatio: args.aspect_ratio,
+              imageSize: args.image_size,
+              seed: seed + i,
+              thinkingLevel: args.thinking_level,
+              googleSearch: args.google_search,
+              videoUrl: video.videoUrl,
+              videoMimeType: video.videoMimeType,
+              timeoutMs: args.timeout_ms,
+            });
+            const { images: [img], text } = result;
+            if (text && !capturedText) capturedText = text;
+            if (result.grounding && !capturedGrounding) capturedGrounding = result.grounding;
+            named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
+          }
+        });
+        const meta = buildMeta(model, seed, args);
+        if (capturedText) meta.text = capturedText;
+        if (capturedGrounding) meta.grounding = capturedGrounding;
+        if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
+        meta.hint = REFINE_HINT;
+        const risk = timeoutRiskHint({ model, imageSize: args.image_size, count });
+        if (risk) meta.timeout_risk = risk;
+        return emit(named, args, meta);
+      });
     },
   );
 
@@ -117,30 +128,37 @@ export function registerGenerateTools(server: McpServer): void {
       // clipboard inputs are not local-path reads and pass through ungated.
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, SEND_LOCAL_ACTION, GENERATE_ENDPOINT, args.images);
       if (gate) return gate;
-      const seed = pickSeed(args.seed);
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
-      const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
-      const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
-      const result = await withProgressHeartbeat(extra, `Editing image (${model})`, () =>
-        client.generate({
-          prompt: args.prompt,
-          images: inputs,
-          model: args.model,
-          aspectRatio: args.aspect_ratio,
-          imageSize: args.image_size,
-          seed,
-          thinkingLevel: args.thinking_level,
-          googleSearch: args.google_search,
-          timeoutMs: args.timeout_ms,
-        }));
-      const { images: [img], text } = result;
-      const meta = buildMeta(model, seed, args);
-      if (text) meta.text = text;
-      if (result.grounding) meta.grounding = result.grounding;
-      meta.hint = REFINE_HINT;
-      const risk = timeoutRiskHint({ model, imageSize: args.image_size });
-      if (risk) meta.timeout_risk = risk;
-      return emit([{ image: img, base: slug }], args, meta);
+      const fingerprint = fingerprintRequest('gemini_edit_image', {
+        model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
+        thinking_level: args.thinking_level, google_search: args.google_search,
+        images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
+      });
+      return dispatch({ toolName: 'gemini_edit_image', fingerprint, idempotencyKey: args.idempotency_key }, async () => {
+        const seed = pickSeed(args.seed);
+        const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
+        const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
+        const result = await withProgressHeartbeat(extra, `Editing image (${model})`, () =>
+          client.generate({
+            prompt: args.prompt,
+            images: inputs,
+            model: args.model,
+            aspectRatio: args.aspect_ratio,
+            imageSize: args.image_size,
+            seed,
+            thinkingLevel: args.thinking_level,
+            googleSearch: args.google_search,
+            timeoutMs: args.timeout_ms,
+          }));
+        const { images: [img], text } = result;
+        const meta = buildMeta(model, seed, args);
+        if (text) meta.text = text;
+        if (result.grounding) meta.grounding = result.grounding;
+        meta.hint = REFINE_HINT;
+        const risk = timeoutRiskHint({ model, imageSize: args.image_size });
+        if (risk) meta.timeout_risk = risk;
+        return emit([{ image: img, base: slug }], args, meta);
+      });
     },
   );
 }

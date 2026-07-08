@@ -35,6 +35,20 @@ export const timeoutMsSchema = z
   );
 
 /**
+ * Idempotency key shared by every generation tool. A repeat call carrying the
+ * same key returns the recorded result (`reused: true`) instead of billing a
+ * fresh generation — the fix for a host timeout (`-32001`) prompting a blind
+ * re-issue of a call the server actually completed.
+ */
+export const idempotencyKeySchema = z
+  .string()
+  .min(1)
+  .optional()
+  .describe(
+    'Opaque idempotency key: a repeat call with the same key returns the recorded result (reused: true) instead of billing a new generation. Set it when retrying after a host timeout (-32001) to avoid a duplicate charge.',
+  );
+
+/**
  * The model/aspect/size/output fields every generation tool shares. Defined once
  * here so descriptions can't drift between `generate.ts` and `set.ts`. Spread
  * into each tool's `inputSchema`.
@@ -57,6 +71,7 @@ export const sharedImageSchema = {
   google_search: z.boolean().optional().describe('Ground the image in live Google Search results (current events, weather, data)'),
   from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS system clipboard as an input (downscaled to JPEG)'),
   timeout_ms: timeoutMsSchema,
+  idempotency_key: idempotencyKeySchema,
 };
 
 /** A generated image plus the base filename (no extension) to write it under. */

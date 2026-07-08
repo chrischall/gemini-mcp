@@ -4,7 +4,8 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
 import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar } from '../images.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 // The most recent interaction id this server process created — what
@@ -128,6 +129,7 @@ export function registerInteractTools(server: McpServer): void {
           .describe('Public YouTube URL (or a previously uploaded Files API uri) as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
         video_path: videoPathSchema,
         timeout_ms: timeoutMsSchema,
+        idempotency_key: idempotencyKeySchema,
         from_clipboard: z
           .boolean()
           .optional()
@@ -156,55 +158,64 @@ export function registerInteractTools(server: McpServer): void {
       // base64/clipboard inputs pass through ungated. Dry-run makes NO API call.
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local file input(s) to the Gemini Interactions API', '/v1beta/interactions', images, args.video_path);
       if (gate) return gate;
-      const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
-      const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
-      const r = await withProgressHeartbeat(extra, 'Generating image (Gemini Interactions API)', () =>
-        client.interact({
-          input: args.input,
-          images: inputs.length ? inputs : undefined,
-          model: args.model,
-          aspectRatio: args.aspect_ratio,
-          imageSize: args.image_size,
-          thinkingLevel: args.thinking_level,
-          previousInteractionId,
-          googleSearch: args.google_search,
-          searchTypes: args.search_types,
-          videoUrl: video.videoUrl,
-          videoMimeType: video.videoMimeType,
-          timeoutMs: args.timeout_ms,
-        }));
-      lastInteractionId = r.id;
-
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
-      const meta: Record<string, unknown> = { model, interaction_id: r.id };
-      if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
-      if (dropped.length) meta.dropped_previous_output = dropped;
-      meta.hint =
-        `To refine this image, call gemini_interact again with previous_interaction_id: "${r.id}" (or continue_last: true) — ` +
-        'do NOT re-attach the returned image as an input; the interaction already contains it.';
-      if (r.text) meta.text = r.text;
-      if (r.grounding) meta.grounding = r.grounding;
-      if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
-      const risk = timeoutRiskHint({ model, imageSize: args.image_size });
-      if (risk) meta.timeout_risk = risk;
+      const fingerprint = fingerprintRequest('gemini_interact', {
+        model, input: args.input, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
+        thinking_level: args.thinking_level, previous_interaction_id: previousInteractionId,
+        google_search: args.google_search, search_types: args.search_types,
+        images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
+        video_url: args.video_url, video_path: args.video_path,
+      });
+      return dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key }, async () => {
+        const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
+        const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
+        const r = await withProgressHeartbeat(extra, 'Generating image (Gemini Interactions API)', () =>
+          client.interact({
+            input: args.input,
+            images: inputs.length ? inputs : undefined,
+            model: args.model,
+            aspectRatio: args.aspect_ratio,
+            imageSize: args.image_size,
+            thinkingLevel: args.thinking_level,
+            previousInteractionId,
+            googleSearch: args.google_search,
+            searchTypes: args.search_types,
+            videoUrl: video.videoUrl,
+            videoMimeType: video.videoMimeType,
+            timeoutMs: args.timeout_ms,
+          }));
+        lastInteractionId = r.id;
 
-      const slug = args.filename ? baseName(args.filename) : slugify(args.input);
-      const named: NamedImage[] = r.images.map((image, i) => ({
-        image,
-        base: r.images.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
-      }));
+        const meta: Record<string, unknown> = { model, interaction_id: r.id };
+        if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
+        if (dropped.length) meta.dropped_previous_output = dropped;
+        meta.hint =
+          `To refine this image, call gemini_interact again with previous_interaction_id: "${r.id}" (or continue_last: true) — ` +
+          'do NOT re-attach the returned image as an input; the interaction already contains it.';
+        if (r.text) meta.text = r.text;
+        if (r.grounding) meta.grounding = r.grounding;
+        if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
+        const risk = timeoutRiskHint({ model, imageSize: args.image_size });
+        if (risk) meta.timeout_risk = risk;
 
-      // writeImage returns already-resolved absolute paths.
-      return emit(named, args, meta, async (paths) => {
-        for (const p of paths) writtenOutputs.add(p);
-        // Sidecar per image so the interaction id survives a lost MCP response
-        // (host timeout). Best-effort: the image is already on disk and the id
-        // is in the result — a sidecar failure shouldn't fail the call.
-        try {
-          for (const p of paths) await writeSidecar(p, { ...meta, images: paths });
-        } catch (err) {
-          meta.sidecar_error = err instanceof Error ? err.message : String(err);
-        }
+        const slug = args.filename ? baseName(args.filename) : slugify(args.input);
+        const named: NamedImage[] = r.images.map((image, i) => ({
+          image,
+          base: r.images.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
+        }));
+
+        // writeImage returns already-resolved absolute paths.
+        return emit(named, args, meta, async (paths) => {
+          for (const p of paths) writtenOutputs.add(p);
+          // Sidecar per image so the interaction id survives a lost MCP response
+          // (host timeout). Best-effort: the image is already on disk and the id
+          // is in the result — a sidecar failure shouldn't fail the call.
+          try {
+            for (const p of paths) await writeSidecar(p, { ...meta, images: paths });
+          } catch (err) {
+            meta.sidecar_error = err instanceof Error ? err.message : String(err);
+          }
+        });
       });
     },
   );
