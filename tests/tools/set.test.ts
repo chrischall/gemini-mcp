@@ -16,11 +16,11 @@ let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-set-')); });
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); __resetJobRegistry(); });
 
-describe('gemini_generate_set (master mode)', () => {
+describe('gemini_image_set (master mode)', () => {
   it('generates a master then one image per scene referencing the master', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', {
+    const res = await h.callTool('gemini_image_set', {
       master_prompt: 'a cartoon fox named Rusty, orange fur, blue scarf',
       scenes: ['Rusty waving', 'Rusty eating an apple'],
       output_dir: dir,
@@ -39,7 +39,7 @@ describe('gemini_generate_set (master mode)', () => {
 
   it('rejects when neither scenes nor count provided', async () => {
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', { master_prompt: 'x' });
+    const res = await h.callTool('gemini_image_set', { master_prompt: 'x' });
     expect(res.isError).toBe(true);
     await h.close();
   });
@@ -47,18 +47,18 @@ describe('gemini_generate_set (master mode)', () => {
   it('rejects an empty scenes array (would otherwise silently yield only a master)', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', { master_prompt: 'x', scenes: [] });
+    const res = await h.callTool('gemini_image_set', { master_prompt: 'x', scenes: [] });
     expect(res.isError).toBe(true);
     expect(spy).not.toHaveBeenCalled(); // rejected at schema validation, no master generated
     await h.close();
   });
 });
 
-describe('gemini_generate_set timeout_risk hint', () => {
+describe('gemini_image_set timeout_risk hint', () => {
   it('always surfaces meta.timeout_risk — a set is master + N scenes in one call (multi-image)', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', {
+    const res = await h.callTool('gemini_image_set', {
       master_prompt: 'a cartoon fox named Rusty',
       scenes: ['Rusty waving', 'Rusty eating an apple'],
       output_dir: dir, // Flash + default size, yet 3 images ⇒ still timeout-prone
@@ -70,7 +70,7 @@ describe('gemini_generate_set timeout_risk hint', () => {
   });
 });
 
-describe('gemini_generate_set idempotency', () => {
+describe('gemini_image_set idempotency', () => {
   it('reuses the recorded set for a repeat idempotency_key (whole batch not re-run)', async () => {
     let calls = 0;
     vi.spyOn(client, 'generate').mockImplementation(() => {
@@ -79,8 +79,8 @@ describe('gemini_generate_set idempotency', () => {
     });
     const h = await createTestHarness(registerSetTools);
     const args = { master_prompt: 'a fox', scenes: ['waving'], output_dir: dir, idempotency_key: 'sk' };
-    const r1 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_generate_set', args));
-    const r2 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_generate_set', args));
+    const r1 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_image_set', args));
+    const r2 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_image_set', args));
     expect(calls).toBe(2); // master + 1 scene, generated ONCE (not 4)
     expect(r2.reused).toBe(true);
     expect(r2.images).toEqual(r1.images);
@@ -88,11 +88,11 @@ describe('gemini_generate_set idempotency', () => {
   });
 });
 
-describe('gemini_generate_set master_images_base64', () => {
+describe('gemini_image_set master_images_base64', () => {
   it('passes master_images_base64 as input images to the master generate call', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    await h.callTool('gemini_generate_set', {
+    await h.callTool('gemini_image_set', {
       master_prompt: 'a cartoon fox',
       scenes: ['waving'],
       master_images_base64: [PNG],
@@ -104,11 +104,11 @@ describe('gemini_generate_set master_images_base64', () => {
   });
 });
 
-describe('gemini_generate_set metadata', () => {
+describe('gemini_image_set metadata', () => {
   it('includes model and seed in result', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', {
+    const res = await h.callTool('gemini_image_set', {
       master_prompt: 'fox',
       scenes: ['waving'],
       output_dir: dir,
@@ -121,11 +121,11 @@ describe('gemini_generate_set metadata', () => {
   });
 });
 
-describe('gemini_generate_set basename param', () => {
+describe('gemini_image_set basename param', () => {
   it('uses caller-supplied basename instead of slugified master_prompt', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', {
+    const res = await h.callTool('gemini_image_set', {
       master_prompt: 'a cartoon fox',
       scenes: ['scene 1'],
       basename: 'my-fox-set',
@@ -139,11 +139,11 @@ describe('gemini_generate_set basename param', () => {
   });
 });
 
-describe('gemini_generate_set google_search passthrough', () => {
+describe('gemini_image_set google_search passthrough', () => {
   it('passes google_search:true to client.generate as googleSearch', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    await h.callTool('gemini_generate_set', {
+    await h.callTool('gemini_image_set', {
       master_prompt: 'fox',
       scenes: ['waving'],
       google_search: true,
@@ -167,7 +167,7 @@ describe('gemini_generate_set google_search passthrough', () => {
       return { images: [{ base64: PNG, mimeType: 'image/png' }], grounding };
     });
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', {
+    const res = await h.callTool('gemini_image_set', {
       master_prompt: 'fox',
       scenes: ['waving'],
       google_search: true,
@@ -180,7 +180,7 @@ describe('gemini_generate_set google_search passthrough', () => {
 });
 
 // Task 13: lock chain-mode referencing + count-variation behavior
-describe('gemini_generate_set (chain mode + count)', () => {
+describe('gemini_image_set (chain mode + count)', () => {
   it('chain mode references the previous image each step', async () => {
     let n = 0;
     const spy = vi.spyOn(client, 'generate').mockImplementation(async () => {
@@ -188,7 +188,7 @@ describe('gemini_generate_set (chain mode + count)', () => {
       return { images: [{ base64: PNG, mimeType: `image/png;n=${n}` }] };
     });
     const h = await createTestHarness(registerSetTools);
-    await h.callTool('gemini_generate_set', {
+    await h.callTool('gemini_image_set', {
       master_prompt: 'fox',
       scenes: ['s1', 's2'],
       reference_mode: 'chain',
@@ -203,18 +203,18 @@ describe('gemini_generate_set (chain mode + count)', () => {
   it('count generates N variations of the master prompt', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', { master_prompt: 'fox', count: 3, output_dir: dir });
+    const res = await h.callTool('gemini_image_set', { master_prompt: 'fox', count: 3, output_dir: dir });
     expect(parseToolResult<{ images: string[] }>(res).images).toHaveLength(4); // master + 3
     expect(spy.mock.calls.slice(1).every((c) => c[0].prompt === 'fox')).toBe(true);
     await h.close();
   });
 });
 
-describe('gemini_generate_set from_clipboard', () => {
+describe('gemini_image_set from_clipboard', () => {
   it('passes clipboard image as master input when from_clipboard:true', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', {
+    const res = await h.callTool('gemini_image_set', {
       master_prompt: 'fox',
       scenes: ['waving'],
       from_clipboard: true,
@@ -230,10 +230,10 @@ describe('gemini_generate_set from_clipboard', () => {
 });
 
 describe('timeout_ms passthrough', () => {
-  it('gemini_generate_set passes timeout_ms to every client.generate call', async () => {
+  it('gemini_image_set passes timeout_ms to every client.generate call', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerSetTools);
-    await h.callTool('gemini_generate_set', { master_prompt: 'a fox', count: 2, timeout_ms: 80_000, output_dir: dir });
+    await h.callTool('gemini_image_set', { master_prompt: 'a fox', count: 2, timeout_ms: 80_000, output_dir: dir });
     expect(spy).toHaveBeenCalledTimes(3);
     for (const call of spy.mock.calls) {
       expect(call[0]).toMatchObject({ timeoutMs: 80_000 });

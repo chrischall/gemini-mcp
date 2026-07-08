@@ -37,7 +37,7 @@ describe('gemini_get_result', () => {
     const jobs = await createTestHarness(registerJobTools);
 
     const started = parseToolResult<{ job_id: string; status: string }>(
-      await gen.callTool('gemini_generate_image', { prompt: 'a red leaf', output_dir: dir, async: true }),
+      await gen.callTool('gemini_image_generate', { prompt: 'a red leaf', output_dir: dir, async: true }),
     );
     expect(started.status).toBe('running');
     expect(typeof started.job_id).toBe('string');

@@ -14,7 +14,7 @@ describe('tool roster', () => {
       registerInteractTools(s);
     });
     const names = (await h.listTools()).map((t) => t.name).sort();
-    expect(names).toEqual(['gemini_edit_image', 'gemini_generate_image', 'gemini_generate_set', 'gemini_interact', 'gemini_list_models']);
+    expect(names).toEqual(['gemini_image_edit', 'gemini_image_generate', 'gemini_image_set', 'gemini_interact', 'gemini_list_models']);
     await h.close();
   });
 });

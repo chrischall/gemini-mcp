@@ -42,9 +42,9 @@ progress), two guards make re-issuing safe and unnecessary:
 | Tool | Description |
 |------|-------------|
 | `gemini_list_models` | List available Gemini image models and the current default |
-| `gemini_generate_image` | Generate image(s) from a text prompt |
-| `gemini_edit_image` | One-off edits or multi-image composition with a text instruction (for a series of edits, use `gemini_interact`) |
-| `gemini_generate_set` | Generate a master image plus N consistent images referencing it |
+| `gemini_image_generate` | Generate image(s) from a text prompt |
+| `gemini_image_edit` | One-off edits or multi-image composition with a text instruction (for a series of edits, use `gemini_interact`) |
+| `gemini_image_set` | Generate a master image plus N consistent images referencing it |
 | `gemini_interact` | Preferred tool for iterative refinement: multi-turn generation/editing via the Interactions API — chain the returned `interaction_id` via `previous_interaction_id` (or `continue_last: true`) |
 | `gemini_get_result` | Fetch an async generation started with `async: true` by its `job_id` (status `running` → `done` result). Lets a long generation outlive a host's `tools/call` timeout |
 

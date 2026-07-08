@@ -86,15 +86,15 @@
       "description": "List available Gemini image models and the current default"
     },
     {
-      "name": "gemini_generate_image",
+      "name": "gemini_image_generate",
       "description": "Generate image(s) from a text prompt"
     },
     {
-      "name": "gemini_edit_image",
+      "name": "gemini_image_edit",
       "description": "Edit or compose one or more input images with a text instruction (one-off edits; for a series of edits use gemini_interact)"
     },
     {
-      "name": "gemini_generate_set",
+      "name": "gemini_image_set",
       "description": "Generate a master image plus N consistent images referencing it"
     },
     {
