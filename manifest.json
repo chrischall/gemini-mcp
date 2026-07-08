@@ -86,20 +86,32 @@
       "description": "List available Gemini image models and the current default"
     },
     {
-      "name": "gemini_generate_image",
+      "name": "gemini_image_generate",
       "description": "Generate image(s) from a text prompt"
     },
     {
-      "name": "gemini_edit_image",
+      "name": "gemini_image_edit",
       "description": "Edit or compose one or more input images with a text instruction (one-off edits; for a series of edits use gemini_interact)"
     },
     {
-      "name": "gemini_generate_set",
+      "name": "gemini_image_set",
       "description": "Generate a master image plus N consistent images referencing it"
     },
     {
       "name": "gemini_interact",
       "description": "Preferred tool for iterative image refinement: multi-turn generation/editing via the Interactions API — chain the returned interaction_id via previous_interaction_id"
+    },
+    {
+      "name": "gemini_video_generate",
+      "description": "Generate a short video (text→video, image→video, or edit) via the Gemini omni model; written to disk as MP4"
+    },
+    {
+      "name": "gemini_music_generate",
+      "description": "Generate music from a text prompt via a Lyria model (clip or pro); written to disk as MP3/WAV"
+    },
+    {
+      "name": "gemini_get_result",
+      "description": "Fetch an async generation started with async: true, by its job_id"
     }
   ],
   "compatibility": {

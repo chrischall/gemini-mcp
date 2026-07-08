@@ -19,7 +19,7 @@ const REFINE_HINT =
 
 export function registerGenerateTools(server: McpServer): void {
   server.registerTool(
-    'gemini_generate_image',
+    'gemini_image_generate',
     {
       description:
         'Generate image(s) from a text prompt with a Gemini image model (Nano Banana / Nano Banana Pro). ' +
@@ -47,13 +47,13 @@ export function registerGenerateTools(server: McpServer): void {
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       // Fingerprint the request identity (excl. server-picked seed / output path)
       // so a blind re-issue after a host timeout dedups instead of re-billing.
-      const fingerprint = fingerprintRequest('gemini_generate_image', {
+      const fingerprint = fingerprintRequest('gemini_image_generate', {
         model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
         thinking_level: args.thinking_level, google_search: args.google_search, count,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         video_url: args.video_url, video_path: args.video_path,
       });
-      return dispatch({ toolName: 'gemini_generate_image', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return dispatch({ toolName: 'gemini_image_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const seed = pickSeed(args.seed);
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
         const refInputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
@@ -101,12 +101,12 @@ export function registerGenerateTools(server: McpServer): void {
   );
 
   server.registerTool(
-    'gemini_edit_image',
+    'gemini_image_edit',
     {
       description:
         'Edit or compose images: provide one or more input images (paths or base64), plus a text instruction. ' +
         'For a SERIES of successive edits to the same image, prefer gemini_interact (multi-turn) — it keeps edit context ' +
-        'and avoids re-processing the full image each round; use gemini_edit_image for one-off edits or composing multiple distinct inputs. ' +
+        'and avoids re-processing the full image each round; use gemini_image_edit for one-off edits or composing multiple distinct inputs. ' +
         'Gemini over-preserves the input; there is no edit-strength control — for large structural changes, reroll with a different `seed` or more forceful wording.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
@@ -124,17 +124,17 @@ export function registerGenerateTools(server: McpServer): void {
       if (!hasPaths && !hasBase64 && !args.from_clipboard) {
         throw new McpToolError('Provide at least one input image via `images`, `images_base64`, or `from_clipboard`.');
       }
-      // Confirm-gate local file inputs (see gemini_generate_image). base64 /
+      // Confirm-gate local file inputs (see gemini_image_generate). base64 /
       // clipboard inputs are not local-path reads and pass through ungated.
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, SEND_LOCAL_ACTION, GENERATE_ENDPOINT, args.images);
       if (gate) return gate;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
-      const fingerprint = fingerprintRequest('gemini_edit_image', {
+      const fingerprint = fingerprintRequest('gemini_image_edit', {
         model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
         thinking_level: args.thinking_level, google_search: args.google_search,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
       });
-      return dispatch({ toolName: 'gemini_edit_image', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return dispatch({ toolName: 'gemini_image_edit', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const seed = pickSeed(args.seed);
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
         const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });

@@ -28,11 +28,11 @@ function writePng(name: string): string {
 type Preview = { dryRun: boolean; willSend: { inputs: Array<{ path: string; mimeType: string; size: number }> }; note: string };
 
 describe('confirm-gate: local file inputs require confirm:true', () => {
-  it('gemini_edit_image without confirm returns a dry-run and makes NO API call', async () => {
+  it('gemini_image_edit without confirm returns a dry-run and makes NO API call', async () => {
     const spy = vi.spyOn(client, 'generate');
     const inPath = writePng('secret.png');
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_edit_image', { prompt: 'make it blue', images: [inPath], output_dir: dir });
+    const res = await h.callTool('gemini_image_edit', { prompt: 'make it blue', images: [inPath], output_dir: dir });
     expect(spy).not.toHaveBeenCalled();
     const p = parseToolResult<Preview>(res);
     expect(p.dryRun).toBe(true);
@@ -41,11 +41,11 @@ describe('confirm-gate: local file inputs require confirm:true', () => {
     await h.close();
   });
 
-  it('gemini_generate_image without confirm (image input) returns a dry-run and makes NO API call', async () => {
+  it('gemini_image_generate without confirm (image input) returns a dry-run and makes NO API call', async () => {
     const spy = vi.spyOn(client, 'generate');
     const inPath = writePng('ref.png');
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_generate_image', { prompt: 'style', images: [inPath], output_dir: dir });
+    const res = await h.callTool('gemini_image_generate', { prompt: 'style', images: [inPath], output_dir: dir });
     expect(spy).not.toHaveBeenCalled();
     const p = parseToolResult<Preview>(res);
     expect(p.dryRun).toBe(true);
@@ -53,13 +53,13 @@ describe('confirm-gate: local file inputs require confirm:true', () => {
     await h.close();
   });
 
-  it('gemini_generate_image without confirm (video input) previews without uploading', async () => {
+  it('gemini_image_generate without confirm (video input) previews without uploading', async () => {
     const up = vi.spyOn(client, 'uploadVideo');
     const gen = vi.spyOn(client, 'generate');
     const videoPath = join(dir, 'clip.mp4');
     writeFileSync(videoPath, Buffer.from('videobytes'));
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_generate_image', { prompt: 'flag', video_path: videoPath, output_dir: dir });
+    const res = await h.callTool('gemini_image_generate', { prompt: 'flag', video_path: videoPath, output_dir: dir });
     expect(up).not.toHaveBeenCalled();
     expect(gen).not.toHaveBeenCalled();
     const p = parseToolResult<Preview>(res);
@@ -67,11 +67,11 @@ describe('confirm-gate: local file inputs require confirm:true', () => {
     await h.close();
   });
 
-  it('gemini_generate_set without confirm (master_images) returns a dry-run and makes NO API call', async () => {
+  it('gemini_image_set without confirm (master_images) returns a dry-run and makes NO API call', async () => {
     const spy = vi.spyOn(client, 'generate');
     const inPath = writePng('master.png');
     const h = await createTestHarness(registerSetTools);
-    const res = await h.callTool('gemini_generate_set', { master_prompt: 'fox', count: 2, master_images: [inPath], output_dir: dir });
+    const res = await h.callTool('gemini_image_set', { master_prompt: 'fox', count: 2, master_images: [inPath], output_dir: dir });
     expect(spy).not.toHaveBeenCalled();
     const p = parseToolResult<Preview>(res);
     expect(p.dryRun).toBe(true);
@@ -107,19 +107,19 @@ describe('confirm-gate: local file inputs require confirm:true', () => {
   });
 
   // Pure text-to-image (no local input file) must NOT be gated.
-  it('gemini_generate_image with no local input is unaffected (proceeds without confirm)', async () => {
+  it('gemini_image_generate with no local input is unaffected (proceeds without confirm)', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_generate_image', { prompt: 'a red circle', output_dir: dir });
+    const res = await h.callTool('gemini_image_generate', { prompt: 'a red circle', output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledOnce();
     await h.close();
   });
 
-  it('gemini_edit_image with base64 input is unaffected (proceeds without confirm)', async () => {
+  it('gemini_image_edit with base64 input is unaffected (proceeds without confirm)', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness(registerGenerateTools);
-    const res = await h.callTool('gemini_edit_image', { prompt: 'brighter', images_base64: [PNG], output_dir: dir });
+    const res = await h.callTool('gemini_image_edit', { prompt: 'brighter', images_base64: [PNG], output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledOnce();
     await h.close();

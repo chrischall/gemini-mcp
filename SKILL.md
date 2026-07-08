@@ -91,38 +91,49 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 ### Image Generation
 | Tool | Description |
 |------|-------------|
-| `gemini_generate_image(prompt, count?, images?, images_base64?, video_url?, video_path?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Generate image(s) from a text prompt (optionally image-conditioned via `images`/`images_base64`, or video-conditioned via `video_url`/`video_path`) |
-| `gemini_edit_image(prompt, images?, images_base64?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Edit or compose input image(s) — by **path** (`images`) or **value** (`images_base64`: data URI or raw base64) — with a text instruction. Requires ≥1 input |
-| `gemini_generate_set(master_prompt, scenes? \| count?, reference_mode?, master_images?, master_images_base64?, google_search?, seed?, basename?, model?, thinking_level?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it |
+| `gemini_image_generate(prompt, count?, images?, images_base64?, video_url?, video_path?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Generate image(s) from a text prompt (optionally image-conditioned via `images`/`images_base64`, or video-conditioned via `video_url`/`video_path`) |
+| `gemini_image_edit(prompt, images?, images_base64?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Edit or compose input image(s) — by **path** (`images`) or **value** (`images_base64`: data URI or raw base64) — with a text instruction. Requires ≥1 input |
+| `gemini_image_set(master_prompt, scenes? \| count?, reference_mode?, master_images?, master_images_base64?, google_search?, seed?, basename?, model?, thinking_level?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it |
 
 ### Multi-turn (Interactions API)
 | Tool | Description |
 |------|-------------|
 | `gemini_interact(input, previous_interaction_id?, continue_last?, images?, images_base64?, video_url?, video_path?, google_search?, search_types?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | **Preferred tool for iterative refinement.** Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` (or set `continue_last: true` to reuse the session's most recent one) to **iteratively refine the same image** conversationally — do NOT start a new interaction or re-upload the image per tweak. Output is **JPEG**. |
 
+### Video & Music (preview — funded account)
+| Tool | Description |
+|------|-------------|
+| `gemini_video_generate(prompt, aspect_ratio?, task?, images?, images_base64?, from_clipboard?, previous_interaction_id?, continue_last?, model?, filename?, output_dir?, timeout_ms?, idempotency_key?, async?)` | Generate a short video via the Gemini omni model: `text_to_video` (default), `image_to_video` / `reference_to_video` (supply reference image[s]), or `edit` (with `previous_interaction_id` / `continue_last`). `aspect_ratio` is `16:9` or `9:16`. Written to disk as **MP4**. Runs long — use `async: true` + `gemini_get_result`, or raise `timeout_ms`. |
+| `gemini_music_generate(prompt, model?, audio_format?, images?, images_base64?, from_clipboard?, previous_interaction_id?, continue_last?, filename?, output_dir?, inline?, timeout_ms?, idempotency_key?, async?)` | Generate music from a prompt (mood/genre/instruments/structure/lyrics) via a Lyria model: `lyria-3-clip-preview` (~30s, default) or `lyria-3-pro-preview` (longer, WAV-capable). `audio_format` `mp3` (default) or `wav` (**Pro-only**). Written to disk as MP3/WAV, or returned inline. |
+
+### Async / idempotency (any generation tool)
+| Tool | Description |
+|------|-------------|
+| `gemini_get_result(job_id)` | Fetch a generation started with `async: true`. Returns `running` while in flight, then the normal result on completion. Lets a long video/music/image generation outlive a host's `tools/call` timeout. All generation tools also accept `idempotency_key` — a repeat call with the same key returns the recorded result (`reused: true`) instead of billing again. |
+
 ## Workflows
 
 **Generate a single image:**
 ```
-gemini_generate_image(prompt: "a red maple leaf on white background, studio photo")
+gemini_image_generate(prompt: "a red maple leaf on white background, studio photo")
 → returns path to saved PNG
 ```
 
 **Generate multiple variations:**
 ```
-gemini_generate_image(prompt: "a cartoon fox", count: 4, output_dir: "/tmp/foxes")
+gemini_image_generate(prompt: "a cartoon fox", count: 4, output_dir: "/tmp/foxes")
 → returns paths to 4 PNG files
 ```
 
 **Edit an existing image:**
 ```
-gemini_edit_image(prompt: "make the background blue", images: ["/path/to/image.png"])
+gemini_image_edit(prompt: "make the background blue", images: ["/path/to/image.png"])
 → returns path to edited PNG
 ```
 
 **Generate a consistent set (master + scenes):**
 ```
-gemini_generate_set(
+gemini_image_set(
   master_prompt: "a cartoon fox named Rusty, orange fur, blue scarf",
   scenes: ["Rusty waving hello", "Rusty eating an apple", "Rusty sleeping"]
 )
@@ -131,7 +142,7 @@ gemini_generate_set(
 
 **Generate variations of a concept:**
 ```
-gemini_generate_set(
+gemini_image_set(
   master_prompt: "minimalist logo for a coffee shop",
   count: 5
 )
@@ -140,7 +151,7 @@ gemini_generate_set(
 
 **Use a reference photo by value (when you have the bytes):**
 ```
-gemini_edit_image(
+gemini_image_edit(
   prompt: "place this house on a vintage travel-poster background",
   images_base64: ["data:image/jpeg;base64,/9j/4AAQ..."]   // or raw base64
 )
@@ -159,7 +170,24 @@ r2 = gemini_interact(input: "add a sleeping cat on the chair",
 r3 = gemini_interact(input: "warmer lighting", continue_last: true)
    → same chain, without threading the id (uses the session's most recent interaction)
 ```
-Prefer this over re-running `gemini_edit_image` when you're making a *series* of incremental edits — the model keeps the prior result in context. Every result echoes `interaction_id` (and `previous_interaction_id` when chaining) plus a `hint` with the exact follow-up call.
+Prefer this over re-running `gemini_image_edit` when you're making a *series* of incremental edits — the model keeps the prior result in context. Every result echoes `interaction_id` (and `previous_interaction_id` when chaining) plus a `hint` with the exact follow-up call.
+
+**Generate a video (preview — runs long, use async):**
+```
+job = gemini_video_generate(prompt: "a paper boat sailing down a rain gutter, cinematic",
+                            aspect_ratio: "16:9", async: true)
+   → { job_id, status: "running" }   (returns immediately — no host timeout)
+gemini_get_result(job_id: job.job_id)
+   → "running" until done, then the MP4 path on disk
+# Animate a still instead: gemini_video_generate(prompt: "…", task: "image_to_video", images: ["/path/still.png"])
+```
+
+**Generate music (preview):**
+```
+gemini_music_generate(prompt: "warm lo-fi hip hop, mellow Rhodes, vinyl crackle, 70bpm")
+   → ~30s MP3 on disk (lyria-3-clip-preview)
+# Longer / WAV: gemini_music_generate(prompt: "…", model: "lyria-3-pro-preview", audio_format: "wav")
+```
 **⚠️ Chat-pasted/attached images can't be fed to these tools directly.** A pasted
 image reaches the assistant as a *vision* block — the assistant can SEE it but
 never receives the original bytes, and the host doesn't write it to disk. So
@@ -176,9 +204,9 @@ extraction:
   clipboard itself (osascript), downscales it, and uses it. The user just needs
   to **copy** the image (⌘C — distinct from pasting it inline into chat, which
   doesn't keep it on the clipboard). Works on every image tool:
-  `gemini_edit_image(prompt: "…", from_clipboard: true)`.
+  `gemini_image_edit(prompt: "…", from_clipboard: true)`.
 - **`GEMINI_INPUT_DIR`** — point it at a folder (e.g. Cowork's `uploads/`); then a
-  **bare filename** resolves against it: `gemini_edit_image(prompt: "…", images: ["house.jpg"])`.
+  **bare filename** resolves against it: `gemini_image_edit(prompt: "…", images: ["house.jpg"])`.
 
 ## Prompting playbook
 
@@ -220,10 +248,10 @@ Condensed from Google's official Nano Banana prompting guide. Core rule:
 - **Model text.** When the model returns a caption/explanation (mostly Gemini 3 **Pro**), it's surfaced as `text` in the result metadata.
 - **`google_search: true`** grounds the image in live Google Search (current events, weather, real data — great for infographics). The result metadata includes `grounding` with the `queries` run and the `sources` (`{uri, title}`) used. (`gemini_interact` surfaces `grounding.queries` — the Interactions API returns no clean source list.)
 - **`search_types`** (`gemini_interact` only): `["web_search", "image_search"]` picks the grounding search types (setting it implies `google_search`). **`image_search`** (gemini-3.1-flash-image only) pulls web images via Google Image Search as *visual* references — useful for real-world subjects (a specific butterfly species, a landmark, a product). ⚠️ Two catches: Google ToS require **displaying the returned `grounding.search_suggestions` HTML chips** to the user, and image_search won't depict real people from web images.
-- **`video_url`** (a public YouTube URL, on `gemini_generate_image` / `gemini_interact`) generates an image from a video reference — **requires a Flash model** (e.g. `model: "gemini-3.1-flash-image"`). For a **local video file**, use **`video_path`** instead: the file is uploaded to the Gemini Files API (streamed from disk, 2 GB max), waited to `ACTIVE`, and referenced by its `files/…` uri. The result metadata echoes `video_file` (`{uri, name, expires}`, ~48h retention) — reuse that uri as `video_url` in later calls to skip re-uploading.
+- **`video_url`** (a public YouTube URL, on `gemini_image_generate` / `gemini_interact`) generates an image from a video reference — **requires a Flash model** (e.g. `model: "gemini-3.1-flash-image"`). For a **local video file**, use **`video_path`** instead: the file is uploaded to the Gemini Files API (streamed from disk, 2 GB max), waited to `ACTIVE`, and referenced by its `files/…` uri. The result metadata echoes `video_file` (`{uri, name, expires}`, ~48h retention) — reuse that uri as `video_url` in later calls to skip re-uploading.
 - **`gemini_interact`** is the multi-turn path: it returns an `interaction_id`; thread it back via `previous_interaction_id` for conversational refinement. Output is **JPEG only**. (The Interactions API is GA as of 2026-07; it uses a different request shape than the `generate`/`edit`/`set` tools.)
 - `output_dir` per-call overrides `$GEMINI_OUTPUT_DIR` overrides cwd. `inline: true` returns bytes (with a metadata text block) instead of writing.
-- `count` and `scenes` are mutually exclusive in `gemini_generate_set`; `reference_mode: "chain"` references the previous image instead of the master.
+- `count` and `scenes` are mutually exclusive in `gemini_image_set`; `reference_mode: "chain"` references the previous image instead of the master.
 - Aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `2:3`, `3:2`, … · Image sizes: `512` (0.5K, Flash only), `1K`, `2K`, `4K`. `4K` is the max native output — true 18×24 in @ 300 DPI (5400×7200) needs an external upscale step.
 - All generated images carry a **SynthID** watermark (Google).
 - The model can mis-render text/Roman numerals (e.g. years) — verify any text in the output; it's a model limitation, not a tool setting.
