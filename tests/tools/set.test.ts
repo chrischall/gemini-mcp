@@ -53,6 +53,22 @@ describe('gemini_generate_set (master mode)', () => {
   });
 });
 
+describe('gemini_generate_set timeout_risk hint', () => {
+  it('always surfaces meta.timeout_risk — a set is master + N scenes in one call (multi-image)', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerSetTools);
+    const res = await h.callTool('gemini_generate_set', {
+      master_prompt: 'a cartoon fox named Rusty',
+      scenes: ['Rusty waving', 'Rusty eating an apple'],
+      output_dir: dir, // Flash + default size, yet 3 images ⇒ still timeout-prone
+    });
+    const data = parseToolResult<{ images: string[]; timeout_risk?: string }>(res);
+    expect(data.images).toHaveLength(3);
+    expect(data.timeout_risk).toContain('count=3');
+    await h.close();
+  });
+});
+
 describe('gemini_generate_set master_images_base64', () => {
   it('passes master_images_base64 as input images to the master generate call', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });

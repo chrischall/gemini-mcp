@@ -75,6 +75,23 @@ describe('gemini_interact', () => {
     await h.close();
   });
 
+  it('surfaces meta.timeout_risk for a 4K config, omits it for the default fast config', async () => {
+    vi.spyOn(client, 'interact').mockResolvedValue({
+      id: 'test-interaction-id',
+      images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
+    });
+    const h = await createTestHarness(registerInteractTools);
+    const slow = parseToolResult<{ timeout_risk?: string }>(
+      await h.callTool('gemini_interact', { input: 'a red circle', image_size: '4K', output_dir: dir }),
+    );
+    expect(slow.timeout_risk).toContain('-32001');
+    const fast = parseToolResult<{ timeout_risk?: string }>(
+      await h.callTool('gemini_interact', { input: 'a red circle', output_dir: dir }),
+    );
+    expect(fast.timeout_risk).toBeUndefined();
+    await h.close();
+  });
+
   it('surfaces grounding in meta when the client returns it', async () => {
     vi.spyOn(client, 'interact').mockResolvedValue({
       id: 'gs',

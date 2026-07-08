@@ -122,6 +122,20 @@ describe('gemini_generate_image timeout_risk hint', () => {
     expect(data.timeout_risk).toBeUndefined();
     await h.close();
   });
+
+  it('surfaces meta.timeout_risk on gemini_edit_image for a 4K config, omits it otherwise', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness(registerGenerateTools);
+    const slow = parseToolResult<{ timeout_risk?: string }>(
+      await h.callTool('gemini_edit_image', { prompt: 'brighter', images_base64: [PNG], image_size: '4K', output_dir: dir }),
+    );
+    expect(slow.timeout_risk).toContain('-32001');
+    const fast = parseToolResult<{ timeout_risk?: string }>(
+      await h.callTool('gemini_edit_image', { prompt: 'brighter', images_base64: [PNG], output_dir: dir }),
+    );
+    expect(fast.timeout_risk).toBeUndefined();
+    await h.close();
+  });
 });
 
 describe('gemini_generate_image with reference inputs', () => {

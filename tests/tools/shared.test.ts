@@ -131,6 +131,15 @@ describe('timeoutRiskHint', () => {
     expect(timeoutRiskHint({ model: 'gemini-3.1-flash-image', imageSize: '2K', count: 1 })).toBeUndefined();
     expect(timeoutRiskHint({ model: 'gemini-2.5-flash-image' })).toBeUndefined();
   });
+
+  it('matches "pro" only as a delimiter-bounded segment (no substring false-positives)', () => {
+    // Real Pro ids (delimiter-bounded) still flag.
+    expect(timeoutRiskHint({ model: 'gemini-3-pro-image' })).toBeDefined();
+    expect(timeoutRiskHint({ model: 'nano-banana-pro' })).toBeDefined();
+    // Substrings that merely contain "pro" must NOT flag.
+    expect(timeoutRiskHint({ model: 'gemini-3.1-prototype-image' })).toBeUndefined();
+    expect(timeoutRiskHint({ model: 'gemini-3.1-flash-proxy' })).toBeUndefined();
+  });
 });
 
 describe('withProgressHeartbeat', () => {

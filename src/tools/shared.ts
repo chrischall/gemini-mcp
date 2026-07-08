@@ -194,7 +194,9 @@ export async function withProgressHeartbeat<T>(
  * `undefined` for fast configs (no field added).
  */
 export function timeoutRiskHint(opts: { model: string; imageSize?: string; count?: number }): string | undefined {
-  const proModel = /pro/i.test(opts.model);
+  // Delimiter-anchored so real Pro ids (gemini-3-pro-image, nano-banana-pro)
+  // match but incidental substrings (…-prototype-…, …-flash-proxy) don't.
+  const proModel = /(?:^|[-_./])pro(?:[-_./]|$)/i.test(opts.model);
   const fourK = opts.imageSize === '4K';
   const multi = (opts.count ?? 1) > 1;
   if (!proModel && !fourK && !multi) return undefined;
