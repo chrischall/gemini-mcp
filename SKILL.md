@@ -1,11 +1,11 @@
 ---
 name: gemini-mcp
-description: Generate and edit images with Google Gemini image models via MCP. Use when the user asks to generate, create, or edit images using Gemini or Nano Banana models, wants to produce a consistent set of images from a prompt, or needs to compose/blend multiple images. Triggers on phrases like "generate an image of", "edit this image with Gemini", "create a set of consistent images", "use Nano Banana to make", or any request to produce images via the Gemini image API. Requires the @chrischall/gemini-mcp package installed and the gemini server registered (see Setup below).
+description: Generate and edit images, video, and music with Google Gemini models via MCP. Use when the user asks to generate, create, or edit images (Gemini / Nano Banana), produce a consistent set of images, compose/blend multiple images, generate a short video (text→video or image→video, via the omni model), or generate music/audio clips (via Lyria). Triggers on phrases like "generate an image of", "edit this image with Gemini", "create a set of consistent images", "make a video of", "generate a video", "generate music", "make a song/audio clip", "use Nano Banana to make", or any request to produce images, video, or music via the Gemini API. Requires the @chrischall/gemini-mcp package installed and the gemini server registered (see Setup below).
 ---
 
 # gemini-mcp
 
-MCP server for Google Gemini image generation and editing — natural-language image creation via the Gemini API (Nano Banana / Nano Banana Pro models).
+MCP server for Google Gemini media generation — natural-language **image**, **video**, and **music** creation via the Gemini API (Nano Banana / Nano Banana Pro images, omni video, Lyria music).
 
 - **npm:** [npmjs.com/package/@chrischall/gemini-mcp](https://www.npmjs.com/package/@chrischall/gemini-mcp)
 - **Source:** [github.com/chrischall/gemini-mcp](https://github.com/chrischall/gemini-mcp)
