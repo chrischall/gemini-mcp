@@ -53,7 +53,7 @@ export function registerGenerateTools(server: McpServer): void {
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         video_url: args.video_url, video_path: args.video_path,
       });
-      return dispatch({ toolName: 'gemini_generate_image', fingerprint, idempotencyKey: args.idempotency_key }, async () => {
+      return dispatch({ toolName: 'gemini_generate_image', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const seed = pickSeed(args.seed);
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
         const refInputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
@@ -134,7 +134,7 @@ export function registerGenerateTools(server: McpServer): void {
         thinking_level: args.thinking_level, google_search: args.google_search,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
       });
-      return dispatch({ toolName: 'gemini_edit_image', fingerprint, idempotencyKey: args.idempotency_key }, async () => {
+      return dispatch({ toolName: 'gemini_edit_image', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const seed = pickSeed(args.seed);
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
         const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
