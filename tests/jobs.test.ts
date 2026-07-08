@@ -145,4 +145,14 @@ describe('dispatch — async job handle', () => {
     expect(metaOf(second).job_id).toBe(metaOf(first).job_id);
     d.resolve(textResultOf({ images: ['a.png'] }));
   });
+
+  it('an async call attaches to a matching in-flight job by fingerprint (no key, same job_id)', async () => {
+    const d = deferred<CallToolResult>();
+    let calls = 0;
+    const first = await dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => { calls++; return d.promise; });
+    const second = await dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => { calls++; return d.promise; });
+    expect(calls).toBe(1); // fingerprint dedup fired even without an idempotency_key
+    expect(metaOf(second).job_id).toBe(metaOf(first).job_id);
+    d.resolve(textResultOf({ images: ['a.png'] }));
+  });
 });
