@@ -268,6 +268,24 @@ describe('gemini_generate_image thinking_level passthrough', () => {
   });
 });
 
+describe('gemini_edit_image idempotency', () => {
+  it('returns the recorded result for a repeat idempotency_key (no second generation)', async () => {
+    let calls = 0;
+    vi.spyOn(client, 'generate').mockImplementation(() => {
+      calls++;
+      return Promise.resolve({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    });
+    const h = await createTestHarness(registerGenerateTools);
+    const args = { prompt: 'brighter', images_base64: [PNG], output_dir: dir, idempotency_key: 'ek' };
+    const r1 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_edit_image', args));
+    const r2 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_edit_image', args));
+    expect(calls).toBe(1);
+    expect(r2.reused).toBe(true);
+    expect(r2.images).toEqual(r1.images);
+    await h.close();
+  });
+});
+
 describe('gemini_edit_image images_base64 + optional images', () => {
   it('accepts images_base64 without images', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
