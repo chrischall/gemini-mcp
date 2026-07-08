@@ -59,8 +59,8 @@ src/
                   #   getJobResult(), __resetJobRegistry() (test-only)
   tools/
     models.ts     # gemini_list_models                       (registerModelTools)
-    generate.ts   # gemini_generate_image, gemini_edit_image (registerGenerateTools)
-    set.ts        # gemini_generate_set                       (registerSetTools)
+    generate.ts   # gemini_image_generate, gemini_image_edit (registerGenerateTools)
+    set.ts        # gemini_image_set                       (registerSetTools)
     interact.ts   # gemini_interact                           (registerInteractTools)
     jobs.ts       # gemini_get_result (async poll)            (registerJobTools)
     shared.ts     # ASPECT_RATIOS, IMAGE_SIZES, sharedImageSchema, pickSeed,
@@ -100,9 +100,9 @@ shared util, configured non-Bearer.
 | Tool | File | Endpoint / model | Kind |
 | --- | --- | --- | --- |
 | `gemini_list_models` | `tools/models.ts` | `GET /v1beta/models?pageSize=200` (filtered to image models) | read |
-| `gemini_generate_image` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (×`count`) | write (binary-out) |
-| `gemini_edit_image` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (input images required) | write (binary-out) |
-| `gemini_generate_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode) | write (binary-out) |
+| `gemini_image_generate` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (×`count`) | write (binary-out) |
+| `gemini_image_edit` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (input images required) | write (binary-out) |
+| `gemini_image_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode) | write (binary-out) |
 | `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (GA since 2026-07) | write (binary-out) |
 | `gemini_get_result` | `tools/jobs.ts` | none (reads the in-memory job registry) | read |
 
@@ -157,10 +157,10 @@ sync-vs-async and all dedup.
 
 **Image inputs** (`gatherImageInputs`) come from `images` (file paths),
 `images_base64` (raw base64 or `data:` URIs, MIME sniffed from bytes), and
-`from_clipboard` (macOS only — see Quirks, issue #13). `gemini_edit_image`
+`from_clipboard` (macOS only — see Quirks, issue #13). `gemini_image_edit`
 requires at least one input source.
 
-**Video inputs** (`gemini_generate_image` / `gemini_interact`): `video_url`
+**Video inputs** (`gemini_image_generate` / `gemini_interact`): `video_url`
 (public YouTube URL, or a previously uploaded `files/…` uri) or `video_path`
 (local file). A `video_path` goes through `resolveVideoInput` (`tools/shared.ts`):
 resolve the path, `client.uploadVideo()` to the Files API (resumable protocol,

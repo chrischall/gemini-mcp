@@ -19,16 +19,16 @@ function deferred<T>() {
 
 describe('fingerprintRequest', () => {
   it('is stable for identical inputs and differs when the request changes', () => {
-    const a = fingerprintRequest('gemini_generate_image', { model: 'm', prompt: 'x' });
-    const b = fingerprintRequest('gemini_generate_image', { model: 'm', prompt: 'x' });
-    const c = fingerprintRequest('gemini_generate_image', { model: 'm', prompt: 'y' });
+    const a = fingerprintRequest('gemini_image_generate', { model: 'm', prompt: 'x' });
+    const b = fingerprintRequest('gemini_image_generate', { model: 'm', prompt: 'x' });
+    const c = fingerprintRequest('gemini_image_generate', { model: 'm', prompt: 'y' });
     expect(a).toBe(b);
     expect(a).not.toBe(c);
   });
 
   it('is namespaced by tool so identical params across tools do not collide', () => {
-    expect(fingerprintRequest('gemini_generate_image', { prompt: 'x' }))
-      .not.toBe(fingerprintRequest('gemini_edit_image', { prompt: 'x' }));
+    expect(fingerprintRequest('gemini_image_generate', { prompt: 'x' }))
+      .not.toBe(fingerprintRequest('gemini_image_edit', { prompt: 'x' }));
   });
 });
 

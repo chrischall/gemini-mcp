@@ -10,7 +10,7 @@ import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js'
 
 export function registerSetTools(server: McpServer): void {
   server.registerTool(
-    'gemini_generate_set',
+    'gemini_image_set',
     {
       description:
         'Generate a consistent SET of images: a master image from master_prompt, then one image per scene that references the master so the subject/style stays consistent. Provide `scenes` (explicit per-image prompts) OR `count` (variations of the master).',
@@ -37,13 +37,13 @@ export function registerSetTools(server: McpServer): void {
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local master image input(s) to the Gemini API', '/v1beta/models/{model}:generateContent', args.master_images);
       if (gate) return gate;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
-      const fingerprint = fingerprintRequest('gemini_generate_set', {
+      const fingerprint = fingerprintRequest('gemini_image_set', {
         model, master_prompt: args.master_prompt, scenes: args.scenes, count: args.count,
         reference_mode: args.reference_mode, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
         thinking_level: args.thinking_level, google_search: args.google_search,
         master_images: args.master_images, master_images_base64: args.master_images_base64, from_clipboard: args.from_clipboard,
       });
-      return dispatch({ toolName: 'gemini_generate_set', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return dispatch({ toolName: 'gemini_image_set', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const seed = pickSeed(args.seed);
         const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level, googleSearch: args.google_search, timeoutMs: args.timeout_ms };
         const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
