@@ -49,6 +49,18 @@ export const idempotencyKeySchema = z
   );
 
 /**
+ * Async escape hatch shared by every generation tool: return a `job_id`
+ * immediately so a long (Pro/4K) generation can't hit a host's fixed tools/call
+ * timeout (`-32001`). The caller polls `gemini_get_result`.
+ */
+export const asyncSchema = z
+  .boolean()
+  .optional()
+  .describe(
+    'Run in the background and return a job_id immediately instead of the image, so a long (Pro/4K) generation cannot hit the host tools/call timeout (-32001). Poll gemini_get_result with the job_id to fetch the result (jobs are per-process and expire ~10 min after completion).',
+  );
+
+/**
  * The model/aspect/size/output fields every generation tool shares. Defined once
  * here so descriptions can't drift between `generate.ts` and `set.ts`. Spread
  * into each tool's `inputSchema`.
@@ -72,6 +84,7 @@ export const sharedImageSchema = {
   from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS system clipboard as an input (downscaled to JPEG)'),
   timeout_ms: timeoutMsSchema,
   idempotency_key: idempotencyKeySchema,
+  async: asyncSchema,
 };
 
 /** A generated image plus the base filename (no extension) to write it under. */

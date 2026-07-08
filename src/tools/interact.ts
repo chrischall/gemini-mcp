@@ -4,7 +4,7 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { client } from '../client.js';
 import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar } from '../images.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
 import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -130,6 +130,7 @@ export function registerInteractTools(server: McpServer): void {
         video_path: videoPathSchema,
         timeout_ms: timeoutMsSchema,
         idempotency_key: idempotencyKeySchema,
+        async: asyncSchema,
         from_clipboard: z
           .boolean()
           .optional()
@@ -166,7 +167,7 @@ export function registerInteractTools(server: McpServer): void {
         images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         video_url: args.video_url, video_path: args.video_path,
       });
-      return dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key }, async () => {
+      return dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
         const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
         const r = await withProgressHeartbeat(extra, 'Generating image (Gemini Interactions API)', () =>
