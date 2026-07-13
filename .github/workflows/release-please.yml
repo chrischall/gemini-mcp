@@ -48,6 +48,15 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
+      # mcp-publish's "Package skill" and "Publish skill to ClawHub" steps
+      # look for SKILL.md at the repo root; the plugin layout keeps the
+      # source of truth at skills/gemini-mcp/SKILL.md (Claude Code requires
+      # plugin skills to live in directories). Stage a root copy so the
+      # .skill release artifact and ClawHub publish keep working. The copy
+      # is CI-only and excluded from the .mcpb via .mcpbignore.
+      - name: Stage SKILL.md at repo root for mcp-publish
+        run: cp skills/gemini-mcp/SKILL.md SKILL.md
+
       - uses: chrischall/workflows/.github/actions/mcp-publish@main
         with:
           version: ${{ needs.release-please.outputs.version }}
