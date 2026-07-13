@@ -1335,7 +1335,7 @@ git add -A && git commit -m "test: exact roster + server-boot smoke test"
 ### Task 16: Publish scaffold (mcpb / registry / plugin)
 
 **Files (copy from `~/git/splitwise-mcp`, then substitute):**
-- Create: `manifest.json`, `server.json`, `.mcp.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `SKILL.md` (or `skills/gemini-mcp/SKILL.md` if splitwise uses that layout), `.mcpbignore`
+- Create: `manifest.json`, `server.json`, `.mcp.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `skills/gemini-mcp/SKILL.md` (Claude Code plugin skills must live under `skills/<name>/SKILL.md`; CI stages a root copy for mcp-publish), `.mcpbignore`
 
 - [ ] **Step 1: Copy each file from splitwise and substitute** `splitwise`→`gemini`, `Splitwise`→`Gemini`, mcpName `io.github.chrischall/gemini-mcp`, version `0.1.0`, env block `SPLITWISE_API_KEY`→`GEMINI_API_KEY` (plus optional `GEMINI_IMAGE_MODEL`, `GEMINI_OUTPUT_DIR`), and the tool list/descriptions to the 4 gemini tools.
 
