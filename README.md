@@ -66,4 +66,4 @@ progress), two guards make re-issuing safe and unnecessary:
 }
 ```
 
-See [SKILL.md](./SKILL.md) for full usage documentation.
+See [SKILL.md](./skills/gemini-mcp/SKILL.md) for full usage documentation.
