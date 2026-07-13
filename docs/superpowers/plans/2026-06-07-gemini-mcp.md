@@ -66,7 +66,7 @@ export default defineConfig({
   "keywords": ["mcp", "model-context-protocol", "claude", "ai", "gemini", "nano-banana", "image-generation", "image-editing", "text-to-image", "google-gemini"],
   "type": "module",
   "bin": { "gemini-mcp": "dist/index.js" },
-  "files": ["dist", ".claude-plugin", "SKILL.md", ".mcp.json", "server.json"],
+  "files": ["dist", ".claude-plugin", "skills/", ".mcp.json", "server.json"],
   "scripts": {
     "build": "tsc && npm run bundle",
     "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --external:dotenv --outfile=dist/bundle.js",
