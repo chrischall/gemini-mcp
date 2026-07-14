@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/chrischall/gemini-mcp/compare/v1.0.0...v1.0.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **plugin:** move SKILL.md into skills/ directory so plugin skills load ([#78](https://github.com/chrischall/gemini-mcp/issues/78)) ([529ffb5](https://github.com/chrischall/gemini-mcp/commit/529ffb57effd92483305cff4a7e632e4c2815f03))
+* **plugin:** stage root SKILL.md copy in CI so mcp-publish keeps working ([#80](https://github.com/chrischall/gemini-mcp/issues/80)) ([511d901](https://github.com/chrischall/gemini-mcp/commit/511d901f0e40a5e336c71df833b0e8354dd52070))
+
 ## [1.0.0](https://github.com/chrischall/gemini-mcp/compare/v0.9.0...v1.0.0) (2026-07-08)
 
 
