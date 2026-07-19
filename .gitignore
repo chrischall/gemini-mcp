@@ -4,3 +4,6 @@ coverage/
 .env
 .env.*
 *.tgz
+
+# Agent worktrees (.claude/worktrees/<name>/ is a full checkout of this repo)
+.claude/
