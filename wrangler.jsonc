@@ -48,6 +48,14 @@
     }
   ],
 
+  // MUST be explicit. Wrangler resolves `workers_dev` to `routes.length === 0`
+  // when omitted, so setting `routes` above silently turns it OFF (the JSON
+  // schema's `"default": true` does not apply here). Without it no
+  // *.workers.dev URL is provisioned, and docs/DEPLOY-CONNECTOR.md step 6 —
+  // the only way to verify a deploy while the custom domain's TLS cert
+  // provisions — has nothing to curl.
+  "workers_dev": true,
+
   "observability": {
     "enabled": true
   }

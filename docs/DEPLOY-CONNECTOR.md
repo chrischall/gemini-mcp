@@ -97,12 +97,24 @@ Local iteration:
 
 ```bash
 npm run worker:dev         # wrangler dev
-npm run worker:test        # vitest run -c vitest.workers.config.ts (workerd pool)
+npm run worker:test        # tsc -p tsconfig.worker.json, then the workerd pool
 ```
 
 `npm test` runs the **Node** suite only; `tests/worker*.test.ts` is excluded
 there because worker sources import `cloudflare:workers` / `agents`, which cannot
 load outside workerd. Run both before deploying.
+
+Neither wrangler nor the vitest pool checks types, so `worker:test` runs
+`worker:typecheck` first — that is the only thing that typechecks `src/worker.ts`.
+Binding types live in `worker-env.d.ts` (merged into `Cloudflare.Env`); keep it in
+step with the bindings in `wrangler.jsonc`.
+
+> **`src/worker.ts` is still a placeholder.** It exports the `GeminiMcpAgent`
+> Durable Object class that migration `v1` names and answers a health probe, so
+> the config is deployable and testable end to end. The real connector — an
+> `agents` McpAgent behind @cloudflare/workers-oauth-provider, serving the gemini
+> tools with media written to R2 — lands separately. Deploying now gets you a
+> reachable Worker that serves no tools.
 
 ## 6. The custom domain is not ready the moment deploy finishes
 
