@@ -3,8 +3,38 @@ import { fileURLToPath } from 'node:url';
 import { loadDotenvSafely, readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, DEFAULT_VIDEO_MODEL, DEFAULT_MUSIC_MODEL, type GeminiModel, type RawModel } from './models.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-await loadDotenvSafely({ path: join(__dirname, '..', '.env'), override: false });
+/**
+ * Load the `.env` sitting next to `dist/`, if we're on a runtime that has one.
+ *
+ * **Do not "simplify" this back to a bare `fileURLToPath(import.meta.url)` at
+ * module scope.** In a *deployed* Cloudflare Worker `import.meta.url` is
+ * `undefined`, so `fileURLToPath(undefined)` throws while the Worker's startup
+ * validation runs the module body — and `wrangler deploy` fails with error code
+ * 10021 ("The 'path' argument must be of type string. Received undefined").
+ * This has broken every connector build in the fleet at least once, and the
+ * usual gates do NOT catch it: neither `wrangler deploy --dry-run` nor the
+ * Miniflare test pool executes the module the way a real deploy does. Only a
+ * real deploy fails. Hence the belt-and-braces try/catch: under Node it loads
+ * `.env` exactly as before; anywhere without a usable module url (or without
+ * `node:fs`) it silently skips, which is correct — a Worker gets its config
+ * from bindings, not a dotfile.
+ *
+ * Exported (and taking `metaUrl` as an argument rather than reading
+ * `import.meta.url` directly) purely so the trap is directly unit-testable.
+ *
+ * @returns whether a `.env` was actually loaded; `false` means we skipped.
+ */
+export async function loadLocalEnv(metaUrl: string | undefined): Promise<boolean> {
+  try {
+    if (!metaUrl) return false;
+    const dir = dirname(fileURLToPath(metaUrl));
+    return await loadDotenvSafely({ path: join(dir, '..', '.env'), override: false });
+  } catch {
+    return false;
+  }
+}
+
+await loadLocalEnv(import.meta.url);
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'; // v1 lacks gemini-3-pro-image; confirmed via Task 5
 const SERVICE = 'Gemini';
