@@ -2,8 +2,9 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
-import { client } from '../client.js';
-import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar } from '../images.js';
+import { client, ChainNotFoundError } from '../client.js';
+import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
+import { findInteractionImages, latestInteractionId } from '../sidecar.js';
 import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
 import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
@@ -66,6 +67,8 @@ export function registerInteractTools(server: McpServer): void {
         'If a call times out on the client side, the generation usually still completes: the image plus a ' +
         '`<image>.json` sidecar recording its interaction id land in the output dir, and `continue_last: true` ' +
         'still resumes that interaction — check the output dir before re-issuing (a re-issue is a second billable generation). ' +
+        'If the chain does expire upstream, this tool re-anchors itself on the prior output image and reports ' +
+        '`chain_recovered` — you do not need to re-issue the call by hand. ' +
         'Output is JPEG.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
@@ -77,7 +80,7 @@ export function registerInteractTools(server: McpServer): void {
         continue_last: z
           .boolean()
           .optional()
-          .describe('Continue from the most recent interaction this server created (convenience for previous_interaction_id; an explicit id wins)'),
+          .describe('Continue from the most recent interaction this server created (convenience for previous_interaction_id; an explicit id wins). Survives a server restart by falling back to the newest <image>.json sidecar in the output dir.'),
         images: z
           .array(z.string().min(1))
           .optional()
@@ -140,13 +143,23 @@ export function registerInteractTools(server: McpServer): void {
     },
     async (args, extra) => {
       let previousInteractionId = args.previous_interaction_id;
+      // `continue_last` resumes the in-memory id first, then falls back to the
+      // newest sidecar in the output dir. The in-memory id dies with the server
+      // process, but the interaction itself lives on upstream — without the
+      // sidecar fallback an MCP restart mid-workflow reads as an expired chain
+      // and costs the caller a manual re-anchor for no reason.
+      let continuedFromSidecar = false;
       if (!previousInteractionId && args.continue_last) {
-        if (!lastInteractionId) {
+        previousInteractionId = lastInteractionId;
+        if (!previousInteractionId) {
+          previousInteractionId = await latestInteractionId(resolveOutputDir(args.output_dir));
+          continuedFromSidecar = previousInteractionId !== undefined;
+        }
+        if (!previousInteractionId) {
           throw new McpToolError('No previous interaction to continue in this session.', {
             hint: 'Call gemini_interact once without continue_last first, or pass an explicit previous_interaction_id.',
           });
         }
-        previousInteractionId = lastInteractionId;
       }
       let images = args.images;
       let dropped: string[] = [];
@@ -170,25 +183,45 @@ export function registerInteractTools(server: McpServer): void {
       return dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
         const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
-        const r = await withProgressHeartbeat(extra, 'Generating image (Gemini Interactions API)', () =>
-          client.interact({
-            input: args.input,
-            images: inputs.length ? inputs : undefined,
-            model: args.model,
-            aspectRatio: args.aspect_ratio,
-            imageSize: args.image_size,
-            thinkingLevel: args.thinking_level,
-            previousInteractionId,
-            googleSearch: args.google_search,
-            searchTypes: args.search_types,
-            videoUrl: video.videoUrl,
-            videoMimeType: video.videoMimeType,
-            timeoutMs: args.timeout_ms,
-          }));
+        const callOpts = {
+          input: args.input,
+          model: args.model,
+          aspectRatio: args.aspect_ratio,
+          imageSize: args.image_size,
+          thinkingLevel: args.thinking_level,
+          googleSearch: args.google_search,
+          searchTypes: args.search_types,
+          videoUrl: video.videoUrl,
+          videoMimeType: video.videoMimeType,
+          timeoutMs: args.timeout_ms,
+        };
+        // When the chain is genuinely gone upstream (retries exhausted), recover
+        // the way a human would: re-attach that turn's output image — located by
+        // id via its sidecar, never "the newest image", since re-anchoring on the
+        // wrong picture would silently corrupt the edit — and re-issue un-chained.
+        // The 404'd attempt generated nothing, so this costs one generation, the
+        // same one the caller would have paid for re-anchoring by hand.
+        let chainRecovered: { expired_interaction_id: string; reanchored_on: string[] } | undefined;
+        const r = await withProgressHeartbeat(extra, 'Generating image (Gemini Interactions API)', async () => {
+          try {
+            return await client.interact({ ...callOpts, images: inputs.length ? inputs : undefined, previousInteractionId });
+          } catch (err) {
+            if (!(err instanceof ChainNotFoundError)) throw err;
+            const reanchorOn = await findInteractionImages(resolveOutputDir(args.output_dir), err.previousInteractionId);
+            if (!reanchorOn.length) throw err;
+            const carried = await Promise.all(reanchorOn.map((p) => readImageAsInline(p)));
+            chainRecovered = { expired_interaction_id: err.previousInteractionId, reanchored_on: reanchorOn };
+            return await client.interact({ ...callOpts, images: [...carried, ...inputs], previousInteractionId: undefined });
+          }
+        });
         lastInteractionId = r.id;
 
         const meta: Record<string, unknown> = { model, interaction_id: r.id };
-        if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
+        // On recovery the prior id was NOT used — reporting it as
+        // previous_interaction_id would misrepresent what the model saw.
+        if (chainRecovered) meta.chain_recovered = chainRecovered;
+        else if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
+        if (continuedFromSidecar) meta.continued_from_sidecar = true;
         if (dropped.length) meta.dropped_previous_output = dropped;
         meta.hint =
           `To refine this image, call gemini_interact again with previous_interaction_id: "${r.id}" (or continue_last: true) — ` +

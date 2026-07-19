@@ -48,6 +48,23 @@ const FILE_POLL_MAX_ATTEMPTS = 150;
 const CHAIN_404_RETRIES = 2;
 const CHAIN_404_RETRY_MS = 2_000;
 
+/**
+ * A chained call's `previous_interaction_id` was not found upstream, after the
+ * store-lag retries were exhausted — the chain is genuinely broken.
+ *
+ * Its own type (rather than a message to regex) so `tools/interact.ts` can key
+ * an automatic sidecar re-anchor off it; `previousInteractionId` names the dead
+ * interaction, which is what identifies the image to re-attach.
+ */
+export class ChainNotFoundError extends McpToolError {
+  constructor(readonly previousInteractionId: string, opts: { hint: string; cause?: unknown }) {
+    super(
+      `Previous interaction "${previousInteractionId}" was not found (retried ${CHAIN_404_RETRIES}× — the interactions store can lag briefly after a turn completes). If the id is old: interactions are retained 55 days on the paid tier (1 day on the free tier) and are scoped to the API key that created them.`,
+      opts,
+    );
+  }
+}
+
 export interface GeneratedImage { base64: string; mimeType: string; }
 
 /** A single grounding source. Both fields optional — defensive against a beta
@@ -516,13 +533,10 @@ export class GeminiClient {
           await this.sleep(CHAIN_404_RETRY_MS * (attempt + 1));
           continue;
         }
-        throw new McpToolError(
-          `Previous interaction "${opts.previousInteractionId}" was not found (retried ${CHAIN_404_RETRIES}× — the interactions store can lag briefly after a turn completes). If the id is old: interactions are retained 55 days on the paid tier (1 day on the free tier) and are scoped to the API key that created them.`,
-          {
-            hint: 'Retry once more in a few seconds; if it keeps failing, start a new chain by re-attaching the last output as an input plus the same instruction, then chain the NEW interaction id.',
-            cause: err,
-          },
-        );
+        throw new ChainNotFoundError(opts.previousInteractionId, {
+          hint: 'Retry once more in a few seconds; if it keeps failing, start a new chain by re-attaching the last output as an input plus the same instruction, then chain the NEW interaction id.',
+          cause: err,
+        });
       }
     }
   }

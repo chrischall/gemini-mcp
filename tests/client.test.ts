@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GeminiClient } from '../src/client.js';
+import { GeminiClient, ChainNotFoundError } from '../src/client.js';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const listFixture = JSON.parse(readFileSync(join(FIX, 'list-models-response.json'), 'utf8'));
@@ -776,6 +776,22 @@ describe('interact', () => {
     expect(err.message).toMatch(/55 days|1 day/);
     expect(err.hint).toMatch(/start a new chain/i);
     expect(err.hint).toMatch(/re-attach/i); // media-agnostic hint (shared by interact/video/music)
+  });
+
+  it('throws a ChainNotFoundError carrying the dead id so callers can auto-recover', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fetchImpl = (async () => ({
+      ok: false, status: 404, json: async () => ({}),
+      text: async () => JSON.stringify({ error: { message: 'Requested entity was not found.', code: 'not_found' } }),
+    })) as unknown as typeof fetch;
+    const c = new GeminiClient({ fetchImpl, sleep: vi.fn().mockResolvedValue(undefined) });
+    const err = await c
+      .interact({ input: 'make it blue', previousInteractionId: 'v1_stale' })
+      .then(() => { throw new Error('expected rejection'); }, (e: unknown) => e);
+    // Discriminable by type (not message-matching) — tools/interact.ts keys its
+    // sidecar re-anchor off this, and the id names which sidecar to re-attach.
+    expect(err).toBeInstanceOf(ChainNotFoundError);
+    expect((err as ChainNotFoundError).previousInteractionId).toBe('v1_stale');
   });
 
   it('passes a 404 through untouched (no retries) when no previous_interaction_id was sent', async () => {

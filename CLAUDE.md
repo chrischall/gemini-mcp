@@ -61,6 +61,11 @@ src/
                   #   aggregation) + output writing (slugify, uniquePath, writeImage,
                   #   resolveOutputDir, resolveImagePath)
   clipboard.ts    # readClipboardImage() — macOS-only osascript+sips clipboard grab
+  sidecar.ts      # readSidecars()/findInteractionImages()/latestInteractionId() —
+                  #   reads the <image>.json sidecars as an on-disk chain index;
+                  #   backs both chain recoveries in tools/interact.ts. Never throws
+                  #   (missing dir / malformed JSON are skipped) — recovery is
+                  #   best-effort and must not fail a recoverable call
   jobs.ts         # in-memory per-process job registry: dispatch() dedups
                   #   in-flight/keyed identical generation calls (idempotency #53)
                   #   and backs async job handles (#52); fingerprintRequest(),
@@ -146,7 +151,21 @@ from an existing job instead of billing a fresh generation — see Idempotency).
 to chain from the server process's most recent interaction id (in-memory;
 explicit `previous_interaction_id` wins), and in disk mode writes an
 `<image>.json` sidecar carrying the result meta so the interaction id survives
-a host-side timeout (see Quirks). On a *chained* interact call, `images`
+a host-side timeout (see Quirks).
+
+**Chain recovery is automatic (both directions).** Sidecars are an on-disk index
+of the chain (`sidecar.ts`), and `gemini_interact` recovers from them rather than
+telling the caller to redo the turn: `continue_last` with no in-memory id falls
+back to the newest sidecar (`continued_from_sidecar: true`) — a server restart
+doesn't end a chain that's alive upstream; and a `ChainNotFoundError` (the
+exhausted-retries 404, now its own class in `client.ts` so it's discriminable by
+type, carrying `previousInteractionId`) is caught in the tool, which looks up
+*that id's* sidecar, re-attaches the image it produced, and re-issues un-chained
+(`chain_recovered: { expired_interaction_id, reanchored_on }`). Match by id only
+— never "the newest image"; re-anchoring on the wrong picture silently corrupts
+the edit, so no matching sidecar means rethrow, not guess. The 404'd attempt
+generates nothing, so recovery costs one generation, not two. Video/music still
+surface the error for manual recovery (they don't write sidecars). On a *chained* interact call, `images`
 entries that resolve to files this server itself generated are dropped and
 echoed as `dropped_previous_output` — the interaction state already contains
 the prior output, and re-attaching it anchors the model against the edit.
