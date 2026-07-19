@@ -28,21 +28,31 @@ anyway: the image is written to the output dir, `gemini_interact` also writes an
 `<image>.json` sidecar recording the `interaction_id`, and `continue_last: true` resumes the
 interaction the lost response belonged to.
 
-### When the chain breaks
+### When a chained call 404s
 
-Interaction ids don't live forever (55 days paid / 1 day free, scoped to the API key), and the
-in-memory "last interaction" dies with the server process. Both used to surface as an expired
-chain you had to re-anchor by hand; `gemini_interact` now recovers from the sidecars on disk:
+A 404 on a request carrying `previous_interaction_id` is **not** proof the chain expired. The
+only 404 body observed live is generic — `"Requested entity was not found."` — and never names
+*which* entity. An unknown or renamed **model id**, and an expired Files API **`files/…` uri**
+(~48h TTL), return exactly the same thing. So the server no longer asserts a cause it can't
+establish: the upstream text is surfaced verbatim, and `gemini_interact` runs an experiment to
+find out which it was.
 
-- **`continue_last` outliving a restart** — with no in-memory id, it resumes from the newest
-  `<image>.json` sidecar in the output dir and reports `continued_from_sidecar: true`. The
-  interaction was alive upstream the whole time.
-- **An id that's genuinely gone** — after the store-lag retries are exhausted, the tool looks up
-  that id's sidecar, re-attaches the image it produced, and re-issues the call un-chained,
-  reporting `chain_recovered: { expired_interaction_id, reanchored_on }`. The 404'd attempt
+After the store-lag retries are exhausted, the tool looks up that id's sidecar, re-attaches the
+image it produced, and re-issues the request **without** the chain:
+
+- **The re-issue succeeds** → the chain really was the problem, and you get your image anyway,
+  reported as `chain_recovered: { expired_interaction_id, reanchored_on }`. The 404'd attempt
   generates nothing, so this costs the one generation you'd have paid for re-anchoring manually.
-  If no sidecar matches the dead id, it fails with the actionable error instead of guessing at
-  an image — re-anchoring on the wrong picture would silently corrupt the edit.
+- **The re-issue 404s too** → the interaction id was never the cause. You get told exactly that,
+  with the upstream text, and pointed at the model id and any `files/…` uri instead of being
+  sent to chase an interaction that was fine all along.
+- **No sidecar matches the dead id** → the original error, rather than a guess. Re-anchoring on
+  the wrong picture would silently corrupt the edit.
+
+Separately, `continue_last` no longer dies with the server process: with no in-memory id it
+resumes from the newest `<image>.json` sidecar in the output dir and reports
+`continued_from_sidecar: true`. That case was never an expired chain at all — the interaction
+was alive upstream the whole time; only our memory of its id was gone.
 
 For hosts whose timeout can't be tamed (e.g. Claude Desktop, a fixed ~30s cap that ignores
 progress), two guards make re-issuing safe and unnecessary:

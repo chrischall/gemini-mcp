@@ -3,8 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
+import { ApiError } from '@chrischall/mcp-utils';
 import { registerInteractTools, __resetInteractSessionForTest } from '../../src/tools/interact.js';
-import { client, ChainNotFoundError } from '../../src/client.js';
+import { client, ChainedRequest404Error } from '../../src/client.js';
 
 const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AJQAB/9k=';
 
@@ -57,7 +58,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
   it('retries un-chained with the dead turn\'s image re-attached', async () => {
     const image = seedPriorTurn('v11', 'id-v11');
     const spy = vi.spyOn(client, 'interact')
-      .mockRejectedValueOnce(new ChainNotFoundError('id-v11', { hint: 'x' }))
+      .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', 'Gemini Interactions error 404: Requested entity was not found.', { hint: 'x' }))
       .mockResolvedValueOnce(ok('id-v12'));
     const h = await createTestHarness(registerInteractTools);
 
@@ -84,7 +85,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     const reference = join(dir, 'style.jpg');
     writeFileSync(reference, Buffer.from(JPEG_BASE64, 'base64'));
     const spy = vi.spyOn(client, 'interact')
-      .mockRejectedValueOnce(new ChainNotFoundError('id-v11', { hint: 'x' }))
+      .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', 'Gemini Interactions error 404: Requested entity was not found.', { hint: 'x' }))
       .mockResolvedValueOnce(ok('id-v12'));
     const h = await createTestHarness(registerInteractTools);
 
@@ -103,7 +104,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     // silently corrupt the edit, so fail with the actionable error instead.
     seedPriorTurn('unrelated', 'id-other');
     const spy = vi.spyOn(client, 'interact')
-      .mockRejectedValue(new ChainNotFoundError('id-gone', { hint: 'start a new chain' }));
+      .mockRejectedValue(new ChainedRequest404Error('id-gone', 'Gemini Interactions error 404: Requested entity was not found.', { hint: 'probe' }));
     const h = await createTestHarness(registerInteractTools);
 
     const res = await h.callTool('gemini_interact', {
@@ -113,6 +114,31 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/was not found/i);
     expect(spy).toHaveBeenCalledTimes(1); // no re-anchor attempted
+    await h.close();
+  });
+
+  it('reports the chain was NOT the cause when the un-chained re-issue also 404s', async () => {
+    // The whole point of the probe: a 404 on a chained request only proves
+    // *something* was missing. Dropping the chain and still getting 404 proves
+    // it wasn't the interaction id — it's the model id, an expired files/… uri,
+    // or the route. Blaming the chain there sends the caller down a dead end.
+    seedPriorTurn('v11', 'id-v11');
+    const upstream = 'Gemini Interactions error 404: models/gemini-9-imaginary is not found.';
+    const spy = vi.spyOn(client, 'interact')
+      .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', upstream, { hint: 'x' }))
+      .mockRejectedValueOnce(new ApiError(404, upstream));
+    const h = await createTestHarness(registerInteractTools);
+
+    const res = await h.callTool('gemini_interact', {
+      input: 'make it blue', previous_interaction_id: 'id-v11', output_dir: dir,
+    });
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(res.isError).toBe(true);
+    const text = JSON.stringify(res.content);
+    expect(text).toMatch(/not.*(caused by|about).*interaction id|interaction id is not the cause/i);
+    expect(text).toContain('gemini-9-imaginary'); // the real cause, surfaced
+    expect(text).toMatch(/model id/i);
     await h.close();
   });
 

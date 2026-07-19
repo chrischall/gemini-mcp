@@ -49,17 +49,32 @@ const CHAIN_404_RETRIES = 2;
 const CHAIN_404_RETRY_MS = 2_000;
 
 /**
- * A chained call's `previous_interaction_id` was not found upstream, after the
- * store-lag retries were exhausted — the chain is genuinely broken.
+ * A request carrying `previous_interaction_id` returned HTTP 404, after the
+ * store-lag retries were exhausted.
+ *
+ * Deliberately NOT named "chain expired": the only 404 body observed live is
+ * generic ("Requested entity was not found.") and never says *which* entity was
+ * missing. An unknown/renamed model id and an expired Files API `files/…` uri
+ * (~48h TTL) produce the same status and the same generic text, so a 404 on a
+ * chained request is evidence of *a* missing entity, not proof it was the
+ * interaction. Asserting otherwise fabricates a cause and hides the real one —
+ * which is why the upstream text is carried in the message rather than replaced.
  *
  * Its own type (rather than a message to regex) so `tools/interact.ts` can key
- * an automatic sidecar re-anchor off it; `previousInteractionId` names the dead
- * interaction, which is what identifies the image to re-attach.
+ * its sidecar re-anchor off it; that re-issue doubles as the probe that tells
+ * the cases apart (see `chain_recovered` / `chain_not_the_cause` there).
  */
-export class ChainNotFoundError extends McpToolError {
-  constructor(readonly previousInteractionId: string, opts: { hint: string; cause?: unknown }) {
+export class ChainedRequest404Error extends McpToolError {
+  constructor(
+    readonly previousInteractionId: string,
+    /** The upstream error text, verbatim (already redacted + truncated). */
+    readonly upstreamMessage: string,
+    opts: { hint: string; cause?: unknown },
+  ) {
     super(
-      `Previous interaction "${previousInteractionId}" was not found (retried ${CHAIN_404_RETRIES}× — the interactions store can lag briefly after a turn completes). If the id is old: interactions are retained 55 days on the paid tier (1 day on the free tier) and are scoped to the API key that created them.`,
+      `Gemini returned HTTP 404 for a chained request (previous_interaction_id: "${previousInteractionId}"), retried ${CHAIN_404_RETRIES}× for store lag. Upstream said: ${upstreamMessage}. ` +
+        'This does not necessarily mean the interaction expired — an unknown model id or an expired files/… uri returns the same generic 404. ' +
+        '(For reference: interactions are retained 55 days on the paid tier, 1 day on the free tier, and are scoped to the API key that created them.)',
       opts,
     );
   }
@@ -523,18 +538,21 @@ export class GeminiClient {
       try {
         return await interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', { body });
       } catch (err) {
-        // A 404 on a chained call means the referenced interaction wasn't found:
-        // (a) store lag right after the id was created — retry with backoff; or
-        // (b) genuinely gone — interactions are retained 55 days (paid) / 1 day
-        // (free), scoped to the API key's project. The chain is recoverable from
-        // the last output file, so the exhausted-retries error says how.
+        // A 404 on a chained call is worth retrying: the interactions store is
+        // eventually consistent, so a freshly returned id can 404 briefly.
+        //
+        // What it is NOT is a diagnosis. We only know the status; the body is
+        // generic ("Requested entity was not found.") and covers a bad model id
+        // and an expired files/… uri just as well as a dead interaction. So the
+        // error carries the upstream text and says what it doesn't know — the
+        // caller (tools/interact.ts) probes to find out which it was.
         if (!(opts.previousInteractionId && err instanceof ApiError && err.status === 404)) throw err;
         if (attempt < CHAIN_404_RETRIES) {
           await this.sleep(CHAIN_404_RETRY_MS * (attempt + 1));
           continue;
         }
-        throw new ChainNotFoundError(opts.previousInteractionId, {
-          hint: 'Retry once more in a few seconds; if it keeps failing, start a new chain by re-attaching the last output as an input plus the same instruction, then chain the NEW interaction id.',
+        throw new ChainedRequest404Error(opts.previousInteractionId, err.message, {
+          hint: 'Re-issue the request WITHOUT previous_interaction_id (re-attaching the prior output image if you were editing). If that also 404s, the interaction id is not the cause — check the model id and any files/… uri (they expire ~48h). gemini_interact does this probe automatically.',
           cause: err,
         });
       }
