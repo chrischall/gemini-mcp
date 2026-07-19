@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { getJobResult } from '../jobs.js';
+import type { GeminiClient } from '../client.js';
 
 /**
  * Poll tool for the async generation pattern (issue #52). A generation tool
@@ -8,7 +9,9 @@ import { getJobResult } from '../jobs.js';
  * past a host's tools/call timeout); this tool retrieves that job's status and,
  * once complete, its normal result payload.
  */
-export function registerJobTools(server: McpServer): void {
+// Takes `_client` purely so every registrar shares the ToolRegistrar<GeminiClient>
+// shape runMcp's `deps` threads; this tool only reads the in-memory job registry.
+export function registerJobTools(server: McpServer, _client?: GeminiClient): void {
   server.registerTool(
     'gemini_get_result',
     {

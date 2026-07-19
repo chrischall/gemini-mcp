@@ -1,8 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { textResult } from '@chrischall/mcp-utils';
-import { client } from '../client.js';
+import type { GeminiClient } from '../client.js';
 
-export function registerModelTools(server: McpServer): void {
+export function registerModelTools(server: McpServer, client: GeminiClient): void {
   server.registerTool(
     'gemini_list_models',
     {

@@ -21,7 +21,7 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMo
 
 describe('gemini_interact description', () => {
   it('states it is the preferred tool for iterative refinement and how to chain', async () => {
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const { tools } = await h.client.listTools();
     const desc = tools.find((t) => t.name === 'gemini_interact')?.description ?? '';
     expect(desc).toMatch(/^Preferred tool for iterative/i);
@@ -32,7 +32,7 @@ describe('gemini_interact description', () => {
   });
 
   it('images params warn against re-attaching the prior output when chaining', async () => {
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const { tools } = await h.client.listTools();
     const schema = tools.find((t) => t.name === 'gemini_interact')?.inputSchema as {
       properties?: Record<string, { description?: string }>;
@@ -47,7 +47,7 @@ describe('gemini_interact description', () => {
   });
 
   it('model param describes when to pick each model', async () => {
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const { tools } = await h.client.listTools();
     const schema = tools.find((t) => t.name === 'gemini_interact')?.inputSchema as {
       properties?: Record<string, { description?: string }>;
@@ -66,7 +66,7 @@ describe('gemini_interact idempotency', () => {
       calls++;
       return Promise.resolve({ id: 'iid', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const args = { input: 'a red circle', output_dir: dir, idempotency_key: 'ik' };
     const r1 = parseToolResult<{ images: string[]; reused?: boolean; interaction_id: string }>(await h.callTool('gemini_interact', args));
     const r2 = parseToolResult<{ images: string[]; reused?: boolean; interaction_id: string }>(await h.callTool('gemini_interact', args));
@@ -84,7 +84,7 @@ describe('gemini_interact', () => {
       id: 'test-interaction-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'a red circle', output_dir: dir });
     const data = parseToolResult<{ images: string[]; interaction_id: string; model: string }>(res);
     expect(data.images).toHaveLength(1);
@@ -100,7 +100,7 @@ describe('gemini_interact', () => {
       id: 'test-interaction-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const slow = parseToolResult<{ timeout_risk?: string }>(
       await h.callTool('gemini_interact', { input: 'a red circle', image_size: '4K', output_dir: dir }),
     );
@@ -118,7 +118,7 @@ describe('gemini_interact', () => {
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
       grounding: { queries: ['sf weather'] },
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'weather', google_search: true, output_dir: dir });
     const data = parseToolResult<{ grounding?: { queries?: string[] } }>(res);
     expect(data.grounding).toEqual({ queries: ['sf weather'] });
@@ -130,7 +130,7 @@ describe('gemini_interact', () => {
       id: 'new-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', {
       input: 'now add a triangle',
       previous_interaction_id: 'prior-id-42',
@@ -145,7 +145,7 @@ describe('gemini_interact', () => {
       id: 'img-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'edit this', images_base64: [PNG], output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
@@ -160,7 +160,7 @@ describe('gemini_interact', () => {
       id: 'path-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'edit this', images: [inPath], confirm: true, output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
@@ -173,7 +173,7 @@ describe('gemini_interact', () => {
       id: 'think-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'circle', thinking_level: 'high', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ thinkingLevel: 'high' }));
     await h.close();
@@ -184,7 +184,7 @@ describe('gemini_interact', () => {
       id: 'size-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'circle', aspect_ratio: '16:9', image_size: '2K', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ aspectRatio: '16:9', imageSize: '2K' }));
     await h.close();
@@ -196,7 +196,7 @@ describe('gemini_interact', () => {
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
       text: 'Here is the image.',
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
     const data = parseToolResult<{ images: string[]; text?: string }>(res);
     expect(data.text).toBe('Here is the image.');
@@ -208,7 +208,7 @@ describe('gemini_interact', () => {
       id: 'notxt-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
     const data = parseToolResult<{ images: string[]; text?: string }>(res);
     expect(data.text).toBeUndefined();
@@ -220,7 +220,7 @@ describe('gemini_interact', () => {
       id: 'fn-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'circle', filename: 'my-output', output_dir: dir });
     const data = parseToolResult<{ images: string[] }>(res);
     expect(basename(data.images[0])).toBe('my-output.jpg');
@@ -232,7 +232,7 @@ describe('gemini_interact', () => {
       id: 'slug-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'red circle', output_dir: dir });
     const data = parseToolResult<{ images: string[] }>(res);
     expect(basename(data.images[0])).toBe('red-circle.jpg');
@@ -244,7 +244,7 @@ describe('gemini_interact', () => {
       id: 'inline-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'circle', inline: true });
     expect(res.content[0].type).toBe('text');
     expect(res.content[1]).toMatchObject({ type: 'image', mimeType: 'image/jpeg' });
@@ -256,7 +256,7 @@ describe('gemini_interact', () => {
       id: 'noseed-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.not.objectContaining({ seed: expect.anything() }));
     await h.close();
@@ -267,7 +267,7 @@ describe('gemini_interact', () => {
       id: 'chain-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
     const data = parseToolResult<{ interaction_id?: string; seed?: number }>(res);
     expect(data.interaction_id).toBe('chain-id');
@@ -280,7 +280,7 @@ describe('gemini_interact', () => {
       id: 'hint-id-99',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
     const data = parseToolResult<{ hint?: string }>(res);
     expect(data.hint).toContain('previous_interaction_id');
@@ -293,7 +293,7 @@ describe('gemini_interact', () => {
       id: 'hint-guard-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
     const data = parseToolResult<{ hint?: string }>(res);
     expect(data.hint).toMatch(/do NOT re-attach/);
@@ -305,7 +305,7 @@ describe('gemini_interact', () => {
       id: 'next-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', {
       input: 'add a hat',
       previous_interaction_id: 'prior-id-7',
@@ -322,7 +322,7 @@ describe('gemini_interact', () => {
       id: 'first-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
     const data = parseToolResult<{ previous_interaction_id?: string }>(res);
     expect(data.previous_interaction_id).toBeUndefined();
@@ -334,7 +334,7 @@ describe('gemini_interact', () => {
       id: 'st-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', {
       input: 'a butterfly painting',
       search_types: ['web_search', 'image_search'],
@@ -346,7 +346,7 @@ describe('gemini_interact', () => {
 
   it('rejects an unknown search_types value via schema validation', async () => {
     const spy = vi.spyOn(client, 'interact');
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'x', search_types: ['video_search'], output_dir: dir });
     expect(res.isError).toBe(true);
     expect(spy).not.toHaveBeenCalled();
@@ -358,7 +358,7 @@ describe('gemini_interact', () => {
       id: 'gs-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'circle', google_search: true, output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ googleSearch: true }));
     await h.close();
@@ -369,7 +369,7 @@ describe('gemini_interact', () => {
       id: 'vid-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'describe', video_url: 'https://www.youtube.com/watch?v=xyz', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: 'https://www.youtube.com/watch?v=xyz' }));
     await h.close();
@@ -382,7 +382,7 @@ describe('gemini_interact timeout & recovery', () => {
       id: 'to-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'circle', timeout_ms: 120_000, output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 120_000 }));
     await h.close();
@@ -393,7 +393,7 @@ describe('gemini_interact timeout & recovery', () => {
       id: 'sidecar-id-1',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'circle', output_dir: dir });
     const data = parseToolResult<{ images: string[] }>(res);
     const sidecarPath = `${data.images[0]}.json`;
@@ -409,7 +409,7 @@ describe('gemini_interact timeout & recovery', () => {
       id: 'sc-next',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', {
       input: 'add a hat',
       previous_interaction_id: 'sc-prior',
@@ -423,7 +423,7 @@ describe('gemini_interact timeout & recovery', () => {
   });
 
   it('description explains that a timed-out call usually still completes (sidecar + continue_last recovery)', async () => {
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const { tools } = await h.client.listTools();
     const desc = tools.find((t) => t.name === 'gemini_interact')?.description ?? '';
     expect(desc).toMatch(/times? out/i);
@@ -440,7 +440,7 @@ describe('gemini_interact timeout & recovery', () => {
         images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
       }), 120)),
     );
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const progress: unknown[] = [];
     await h.client.callTool(
       { name: 'gemini_interact', arguments: { input: 'circle', output_dir: dir } },
@@ -459,7 +459,7 @@ describe('gemini_interact from_clipboard', () => {
       id: 'clip-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'edit this', from_clipboard: true, output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
@@ -478,7 +478,7 @@ describe('gemini_interact video_path (Files API upload)', () => {
     writeFileSync(videoPath, Buffer.from('vid'));
     const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
     const spy = vi.spyOn(client, 'interact').mockResolvedValue({ id: 'i1', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'flag', video_path: videoPath, confirm: true, output_dir: dir });
     expect(up).toHaveBeenCalledWith(videoPath, 'video/webm');
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: FILE_URI, videoMimeType: 'video/webm' }));
@@ -489,7 +489,7 @@ describe('gemini_interact video_path (Files API upload)', () => {
 
   it('rejects video_path together with video_url', async () => {
     const up = vi.spyOn(client, 'uploadVideo');
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', {
       input: 'flag',
       video_path: '/tmp/clip.mp4',

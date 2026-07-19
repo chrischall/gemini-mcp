@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { McpToolError } from '@chrischall/mcp-utils';
-import { client } from '../client.js';
+import type { GeminiClient } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
 import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, type NamedMedia } from './shared.js';
@@ -18,7 +18,7 @@ let lastVideoInteractionId: string | undefined;
 /** Test-only: clear the module-level session memory. */
 export function __resetVideoMemory(): void { lastVideoInteractionId = undefined; }
 
-export function registerVideoTools(server: McpServer): void {
+export function registerVideoTools(server: McpServer, client: GeminiClient): void {
   server.registerTool(
     'gemini_video_generate',
     {

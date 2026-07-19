@@ -20,7 +20,7 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMo
 describe('gemini_music_generate', () => {
   it('writes an MP3 to disk and returns the interaction id + path', async () => {
     vi.spyOn(client, 'generateMusic').mockResolvedValue({ id: 'mus1', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] });
-    const h = await createTestHarness(registerMusicTools);
+    const h = await createTestHarness((srv) => registerMusicTools(srv, client));
     const res = await h.callTool('gemini_music_generate', { prompt: 'lofi hip hop', output_dir: dir });
     const data = parseToolResult<{ audios: string[]; interaction_id: string }>(res);
     expect(data.audios).toHaveLength(1);
@@ -32,7 +32,7 @@ describe('gemini_music_generate', () => {
 
   it('returns audio inline when inline: true', async () => {
     vi.spyOn(client, 'generateMusic').mockResolvedValue({ id: 'm', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] });
-    const h = await createTestHarness(registerMusicTools);
+    const h = await createTestHarness((srv) => registerMusicTools(srv, client));
     const res = await h.callTool('gemini_music_generate', { prompt: 'x', inline: true, output_dir: dir });
     const audioBlock = res.content.find((c: { type: string }) => c.type === 'audio') as { type: string; mimeType: string; data: string } | undefined;
     expect(audioBlock).toBeDefined();
@@ -42,7 +42,7 @@ describe('gemini_music_generate', () => {
 
   it('rejects wav on a clip model (WAV is Pro-only)', async () => {
     const spy = vi.spyOn(client, 'generateMusic');
-    const h = await createTestHarness(registerMusicTools);
+    const h = await createTestHarness((srv) => registerMusicTools(srv, client));
     const res = await h.callTool('gemini_music_generate', { prompt: 'x', audio_format: 'wav', output_dir: dir });
     expect(res.isError).toBe(true);
     expect(spy).not.toHaveBeenCalled(); // rejected before any API call
@@ -51,7 +51,7 @@ describe('gemini_music_generate', () => {
 
   it('allows wav on the Pro model and passes the format through', async () => {
     const spy = vi.spyOn(client, 'generateMusic').mockResolvedValue({ id: 'm', audios: [{ base64: MP3, mimeType: 'audio/wav' }] });
-    const h = await createTestHarness(registerMusicTools);
+    const h = await createTestHarness((srv) => registerMusicTools(srv, client));
     await h.callTool('gemini_music_generate', { prompt: 'x', model: 'lyria-3-pro-preview', audio_format: 'wav', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ audioFormat: 'wav', model: 'lyria-3-pro-preview' }));
     await h.close();
@@ -59,7 +59,7 @@ describe('gemini_music_generate', () => {
 
   it('returns a job_id immediately with async: true', async () => {
     vi.spyOn(client, 'generateMusic').mockResolvedValue({ id: 'm', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] });
-    const h = await createTestHarness(registerMusicTools);
+    const h = await createTestHarness((srv) => registerMusicTools(srv, client));
     const res = await h.callTool('gemini_music_generate', { prompt: 'x', output_dir: dir, async: true });
     const data = parseToolResult<{ job_id: string; status: string }>(res);
     expect(typeof data.job_id).toBe('string');
@@ -73,7 +73,7 @@ describe('gemini_music_generate', () => {
       calls++;
       return Promise.resolve({ id: 'm', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] });
     });
-    const h = await createTestHarness(registerMusicTools);
+    const h = await createTestHarness((srv) => registerMusicTools(srv, client));
     const args = { prompt: 'x', output_dir: dir, idempotency_key: 'mk' };
     const r1 = parseToolResult<{ audios: string[]; reused?: boolean }>(await h.callTool('gemini_music_generate', args));
     const r2 = parseToolResult<{ audios: string[]; reused?: boolean }>(await h.callTool('gemini_music_generate', args));

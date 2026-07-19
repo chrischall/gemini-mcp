@@ -7,17 +7,18 @@ import { registerInteractTools } from '../src/tools/interact.js';
 import { registerVideoTools } from '../src/tools/video.js';
 import { registerMusicTools } from '../src/tools/music.js';
 import { registerJobTools } from '../src/tools/jobs.js';
+import { client } from '../src/client.js';
 
 describe('tool roster', () => {
   it('registers exactly the expected tools', async () => {
     const h = await createTestHarness((s) => {
-      registerModelTools(s);
-      registerGenerateTools(s);
-      registerSetTools(s);
-      registerInteractTools(s);
-      registerVideoTools(s);
-      registerMusicTools(s);
-      registerJobTools(s);
+      registerModelTools(s, client);
+      registerGenerateTools(s, client);
+      registerSetTools(s, client);
+      registerInteractTools(s, client);
+      registerVideoTools(s, client);
+      registerMusicTools(s, client);
+      registerJobTools(s, client);
     });
     const names = (await h.listTools()).map((t) => t.name).sort();
     expect(names).toEqual([

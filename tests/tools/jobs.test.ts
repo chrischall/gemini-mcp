@@ -35,8 +35,8 @@ describe('gemini_get_result', () => {
   it('async generation returns a job_id; get_result polls running → done', async () => {
     let resolveGen!: (v: { images: { base64: string; mimeType: string }[] }) => void;
     vi.spyOn(client, 'generate').mockImplementation(() => new Promise((res) => { resolveGen = res; }));
-    const gen = await createTestHarness(registerGenerateTools);
-    const jobs = await createTestHarness(registerJobTools);
+    const gen = await createTestHarness((srv) => registerGenerateTools(srv, client));
+    const jobs = await createTestHarness((srv) => registerJobTools(srv, client));
 
     const started = parseToolResult<{ job_id: string; status: string }>(
       await gen.callTool('gemini_image_generate', { prompt: 'a red leaf', output_dir: dir, async: true }),
@@ -56,7 +56,7 @@ describe('gemini_get_result', () => {
   });
 
   it('returns an error for an unknown/expired job id', async () => {
-    const jobs = await createTestHarness(registerJobTools);
+    const jobs = await createTestHarness((srv) => registerJobTools(srv, client));
     const res = await jobs.callTool('gemini_get_result', { job_id: 'no-such-job' });
     expect(res.isError).toBe(true);
     await jobs.close();

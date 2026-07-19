@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
-import { client, type GroundingResult } from '../client.js';
+import type { GeminiClient, GroundingResult } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
 import { dispatch, fingerprintRequest } from '../jobs.js';
@@ -17,7 +17,7 @@ const REFINE_HINT =
   'To iteratively refine this image, use gemini_interact (pass the output file via `images` on the first call, ' +
   'then chain `previous_interaction_id` on each subsequent call).';
 
-export function registerGenerateTools(server: McpServer): void {
+export function registerGenerateTools(server: McpServer, client: GeminiClient): void {
   server.registerTool(
     'gemini_image_generate',
     {
@@ -59,7 +59,7 @@ export function registerGenerateTools(server: McpServer): void {
         const refInputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
         // Upload ONCE (before the count loop) — every generate call references
         // the same files/… uri.
-        const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
+        const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args, client));
         const named: NamedImage[] = [];
         let capturedText: string | undefined;
         // For count>1, surface the FIRST call's grounding (each call grounds

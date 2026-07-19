@@ -21,7 +21,7 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMo
 describe('gemini_video_generate', () => {
   it('writes an MP4 to disk and returns the interaction id + path', async () => {
     vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'vid1', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
-    const h = await createTestHarness(registerVideoTools);
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
     const res = await h.callTool('gemini_video_generate', { prompt: 'a cat surfing', output_dir: dir });
     const data = parseToolResult<{ videos: string[]; interaction_id: string }>(res);
     expect(data.videos).toHaveLength(1);
@@ -33,7 +33,7 @@ describe('gemini_video_generate', () => {
 
   it('passes aspect_ratio and task through to the client', async () => {
     const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
-    const h = await createTestHarness(registerVideoTools);
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
     await h.callTool('gemini_video_generate', { prompt: 'x', aspect_ratio: '9:16', task: 'text_to_video', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ aspectRatio: '9:16', task: 'text_to_video' }));
     await h.close();
@@ -41,7 +41,7 @@ describe('gemini_video_generate', () => {
 
   it('image_to_video passes reference image inputs to the client', async () => {
     const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
-    const h = await createTestHarness(registerVideoTools);
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
     await h.callTool('gemini_video_generate', { prompt: 'animate this', task: 'image_to_video', images_base64: [PNG], output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
@@ -50,7 +50,7 @@ describe('gemini_video_generate', () => {
   });
 
   it('continue_last errors when there is no prior video interaction', async () => {
-    const h = await createTestHarness(registerVideoTools);
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
     const res = await h.callTool('gemini_video_generate', { prompt: 'x', continue_last: true, output_dir: dir });
     expect(res.isError).toBe(true);
     await h.close();
@@ -58,7 +58,7 @@ describe('gemini_video_generate', () => {
 
   it('continue_last chains from the most recent video interaction', async () => {
     const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'vid-A', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
-    const h = await createTestHarness(registerVideoTools);
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
     await h.callTool('gemini_video_generate', { prompt: 'first', output_dir: dir });
     spy.mockResolvedValue({ id: 'vid-B', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
     await h.callTool('gemini_video_generate', { prompt: 'edit it', task: 'edit', continue_last: true, output_dir: dir });
@@ -68,7 +68,7 @@ describe('gemini_video_generate', () => {
 
   it('returns a job_id immediately with async: true', async () => {
     vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
-    const h = await createTestHarness(registerVideoTools);
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
     const res = await h.callTool('gemini_video_generate', { prompt: 'x', output_dir: dir, async: true });
     const data = parseToolResult<{ job_id: string; status: string }>(res);
     expect(typeof data.job_id).toBe('string');
@@ -82,7 +82,7 @@ describe('gemini_video_generate', () => {
       calls++;
       return Promise.resolve({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
     });
-    const h = await createTestHarness(registerVideoTools);
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
     const args = { prompt: 'x', output_dir: dir, idempotency_key: 'vk' };
     const r1 = parseToolResult<{ videos: string[]; reused?: boolean }>(await h.callTool('gemini_video_generate', args));
     const r2 = parseToolResult<{ videos: string[]; reused?: boolean }>(await h.callTool('gemini_video_generate', args));

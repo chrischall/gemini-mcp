@@ -11,7 +11,7 @@ describe('gemini_list_models', () => {
     vi.spyOn(client, 'listModels').mockResolvedValue([
       { id: 'gemini-3-pro-image', displayName: 'Pro Image', description: 'pro' },
     ]);
-    const h = await createTestHarness(registerModelTools);
+    const h = await createTestHarness((srv) => registerModelTools(srv, client));
     const res = await h.callTool('gemini_list_models');
     const data = parseToolResult<{ default: string; models: unknown[] }>(res);
     expect(data.default).toBe('gemini-3-pro-image');

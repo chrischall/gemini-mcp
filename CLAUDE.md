@@ -90,11 +90,20 @@ tests/            # vitest, 1:1-ish mirror of src/ + tools/. fetch is mocked
                   #   version-sync.test.ts asserts all version files agree.
 ```
 
-Each `tools/*.ts` exports a `register<Name>Tools(server)` function that calls
-`server.registerTool(name, { description, annotations, inputSchema }, handler)`
-(high-level `McpServer` API with zod schemas). The tool handlers import the
-shared `client` singleton directly — `index.ts` only wires the `register*` list
-into `runMcp`.
+Each `tools/*.ts` exports a `register<Name>Tools(server, client)` function that
+calls `server.registerTool(name, { description, annotations, inputSchema },
+handler)` (high-level `McpServer` API with zod schemas).
+
+**The registrars are transport-neutral: the client is injected, never imported.**
+Every `tools/*.ts` imports only the *type* (`import type { GeminiClient }`) and
+takes the client as its second argument, so a non-stdio entry point can build one
+client **per authenticated user** (their own API key) instead of sharing the
+env-driven process singleton. `src/index.ts` — the stdio entry point — passes the
+`client` singleton via `runMcp`'s `deps`, which threads it to every registrar;
+that is the only place in `src/tools/` reachable from a `client` *value* import.
+Keep it that way: don't re-add `import { client }` to a tool module, and thread
+the client through helpers (`resolveVideoInput` in `tools/shared.ts` takes it as
+a parameter for exactly this reason).
 
 ### The custom `call()` client
 

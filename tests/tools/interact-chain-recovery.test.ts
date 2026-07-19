@@ -32,7 +32,7 @@ describe('continue_last across a server restart', () => {
     // upstream and named by the sidecar the previous process wrote.
     seedPriorTurn('v11', 'id-v11');
     const spy = vi.spyOn(client, 'interact').mockResolvedValue(ok('id-v12'));
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
 
     const res = await h.callTool('gemini_interact', { input: 'make it blue', continue_last: true, output_dir: dir });
 
@@ -44,7 +44,7 @@ describe('continue_last across a server restart', () => {
   it('prefers the in-memory id over the sidecar', async () => {
     seedPriorTurn('stale', 'id-stale');
     const spy = vi.spyOn(client, 'interact').mockResolvedValue(ok('id-live'));
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'a red circle', output_dir: dir });
 
     await h.callTool('gemini_interact', { input: 'make it blue', continue_last: true, output_dir: dir });
@@ -60,7 +60,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     const spy = vi.spyOn(client, 'interact')
       .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', 'Gemini Interactions error 404: Requested entity was not found.', { attempts: 7, waitedMs: 120_000 }, { hint: 'x' }))
       .mockResolvedValueOnce(ok('id-v12'));
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
 
     const res = await h.callTool('gemini_interact', {
       input: 'make it blue', previous_interaction_id: 'id-v11', output_dir: dir,
@@ -87,7 +87,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     const spy = vi.spyOn(client, 'interact')
       .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', 'Gemini Interactions error 404: Requested entity was not found.', { attempts: 7, waitedMs: 120_000 }, { hint: 'x' }))
       .mockResolvedValueOnce(ok('id-v12'));
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
 
     await h.callTool('gemini_interact', {
       // confirm: true — a local-file input is confirm-gated; without it the
@@ -105,7 +105,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     seedPriorTurn('unrelated', 'id-other');
     const spy = vi.spyOn(client, 'interact')
       .mockRejectedValue(new ChainedRequest404Error('id-gone', 'Gemini Interactions error 404: Requested entity was not found.', { attempts: 7, waitedMs: 120_000 }, { hint: 'probe' }));
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
 
     const res = await h.callTool('gemini_interact', {
       input: 'make it blue', previous_interaction_id: 'id-gone', output_dir: dir,
@@ -127,7 +127,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     const spy = vi.spyOn(client, 'interact')
       .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', upstream, { attempts: 7, waitedMs: 120_000 }, { hint: 'x' }))
       .mockRejectedValueOnce(new ApiError(404, upstream));
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
 
     const res = await h.callTool('gemini_interact', {
       input: 'make it blue', previous_interaction_id: 'id-v11', output_dir: dir,
@@ -145,7 +145,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
   it('does not re-anchor a non-chain failure', async () => {
     seedPriorTurn('v11', 'id-v11');
     const spy = vi.spyOn(client, 'interact').mockRejectedValue(new Error('safety filter blocked'));
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
 
     const res = await h.callTool('gemini_interact', {
       input: 'make it blue', previous_interaction_id: 'id-v11', output_dir: dir,
