@@ -5,7 +5,7 @@ import { resolveModel } from '../models.js';
 import type { GeminiClient, GroundingResult } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedImage } from './shared.js';
-import { dispatch, fingerprintRequest } from '../jobs.js';
+import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 const GENERATE_ENDPOINT = '/v1beta/models/{model}:generateContent';
@@ -57,7 +57,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         video_url: args.video_url, video_path: args.video_path,
       });
-      return dispatch({ toolName: 'gemini_image_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_image_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const seed = pickSeed(args.seed);
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
         const refInputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
@@ -139,7 +139,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         thinking_level: args.thinking_level, google_search: args.google_search,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
       });
-      return dispatch({ toolName: 'gemini_image_edit', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_image_edit', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const seed = pickSeed(args.seed);
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
         const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });

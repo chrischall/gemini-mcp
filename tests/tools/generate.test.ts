@@ -5,7 +5,6 @@ import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerGenerateTools } from '../../src/tools/generate.js';
 import { client } from '../../src/client.js';
-import { __resetJobRegistry } from '../../src/jobs.js';
 
 // Mock clipboard so from_clipboard tests don't shell out
 vi.mock('../../src/clipboard.js', () => ({
@@ -15,7 +14,7 @@ vi.mock('../../src/clipboard.js', () => ({
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-gen-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); __resetJobRegistry(); });
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); client.session.reset(); });
 
 describe('tool descriptions steer iterative refinement to gemini_interact', () => {
   it('gemini_image_generate points at gemini_interact for iterative work', async () => {

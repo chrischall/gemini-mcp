@@ -3,9 +3,8 @@ import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
-import { registerVideoTools, __resetVideoMemory } from '../../src/tools/video.js';
+import { registerVideoTools } from '../../src/tools/video.js';
 import { client } from '../../src/client.js';
-import { __resetJobRegistry } from '../../src/jobs.js';
 
 vi.mock('../../src/clipboard.js', () => ({
   readClipboardImage: vi.fn().mockResolvedValue({ base64: 'Y2xpcGJvYXJk', mimeType: 'image/jpeg' }),
@@ -16,7 +15,7 @@ const MP4 = 'AAAAIGZ0eXBpc29tAAAAAA=='; // arbitrary bytes — writeMedia just p
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-video-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); __resetVideoMemory(); __resetJobRegistry(); });
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); client.session.reset(); });
 
 describe('gemini_video_generate', () => {
   it('writes an MP4 to disk and returns the interaction id + path', async () => {

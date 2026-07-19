@@ -3,9 +3,8 @@ import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
-import { registerMusicTools, __resetMusicMemory } from '../../src/tools/music.js';
+import { registerMusicTools } from '../../src/tools/music.js';
 import { client } from '../../src/client.js';
-import { __resetJobRegistry } from '../../src/jobs.js';
 
 vi.mock('../../src/clipboard.js', () => ({
   readClipboardImage: vi.fn().mockResolvedValue({ base64: 'Y2xpcGJvYXJk', mimeType: 'image/jpeg' }),
@@ -15,7 +14,7 @@ const MP3 = 'SUQzBAAAAAAAI1RTU0UAAAAPAAAD'; // arbitrary bytes — writeMedia ju
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-music-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); __resetMusicMemory(); __resetJobRegistry(); });
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); client.session.reset(); });
 
 describe('gemini_music_generate', () => {
   it('writes an MP3 to disk and returns the interaction id + path', async () => {

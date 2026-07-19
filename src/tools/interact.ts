@@ -6,31 +6,14 @@ import { ChainedRequest404Error, type GeminiClient } from '../client.js';
 import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
 import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedImage } from './shared.js';
-import { dispatch, fingerprintRequest } from '../jobs.js';
+import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
-// The most recent interaction id this server process created — what
-// `continue_last: true` resumes. In-memory only: an MCP server lives for the
-// host session, so "last" means "last in this session".
-let lastInteractionId: string | undefined;
-
-// Absolute paths of every image this tool has written this session. Used to
-// drop a chained call's re-attached prior output: the interaction state
-// already contains that image, and re-sending it as a fresh reference anchors
-// the model against the requested edit (observed in the wild — callers pass
-// the last result path back via `images` despite the description saying not to).
-const writtenOutputs = new Set<string>();
-
-/**
- * Test-only: clear the module-level session memory (`lastInteractionId` and the
- * written-outputs set) so tests that assert the "no prior interaction" path are
- * order-independent — they can't rely on module-load state once other tests have
- * run first (e.g. under `--sequence.shuffle`).
- */
-export function __resetInteractSessionForTest(): void {
-  lastInteractionId = undefined;
-  writtenOutputs.clear();
-}
+// The last-interaction id and the written-outputs set used to live here, at
+// module scope. On the hosted connector that leaks across tenants — one
+// Cloudflare isolate serves many authenticated sessions, so `continue_last`
+// from user B would resume user A's interaction under B's key. Both now live
+// on `client.session` (src/session.ts), one per authenticated session.
 
 /** Shared warning for the reference-image params. */
 const NEW_REFERENCES_ONLY =
@@ -43,7 +26,7 @@ const NEW_REFERENCES_ONLY =
  * this server itself generated (which the interaction already contains).
  * Unresolvable paths are kept so `gatherImageInputs` surfaces its usual error.
  */
-function splitReattachedOutputs(images: string[]): { kept: string[]; dropped: string[] } {
+function splitReattachedOutputs(images: string[], writtenOutputs: ReadonlySet<string>): { kept: string[]; dropped: string[] } {
   const kept: string[] = [];
   const dropped: string[] = [];
   for (const p of images) {
@@ -167,7 +150,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
       // and costs the caller a manual re-anchor for no reason.
       let continuedFromSidecar = false;
       if (!previousInteractionId && args.continue_last) {
-        previousInteractionId = lastInteractionId;
+        previousInteractionId = client.session.lastInteractionId;
         if (!previousInteractionId && onDisk) {
           previousInteractionId = await latestInteractionId(resolveOutputDir(args.output_dir));
           continuedFromSidecar = previousInteractionId !== undefined;
@@ -183,7 +166,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
       let images = args.images;
       let dropped: string[] = [];
       if (previousInteractionId && images?.length) {
-        ({ kept: images, dropped } = splitReattachedOutputs(images));
+        ({ kept: images, dropped } = splitReattachedOutputs(images, client.session.writtenOutputs));
       }
       // Confirm-gate local file inputs AFTER the re-attach split, so the preview
       // reflects the paths actually sent (dropped prior-output paths aren't). A
@@ -199,7 +182,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         video_url: args.video_url, video_path: args.video_path,
       });
-      return dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
         const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args, client));
         const callOpts = {
@@ -257,7 +240,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
             }
           }
         });
-        lastInteractionId = r.id;
+        client.session.lastInteractionId = r.id;
 
         const meta: Record<string, unknown> = { model, interaction_id: r.id };
         // On recovery the prior id was NOT used — reporting it as
@@ -285,7 +268,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         // invokes this callback for a filesystem-backed sink, so there is no
         // branch here claiming a sidecar the hosted connector cannot write.
         return emit(named, { ...args, sink: client.mediaSink }, meta, async (paths) => {
-          for (const p of paths) writtenOutputs.add(p);
+          for (const p of paths) client.session.writtenOutputs.add(p);
           // Sidecar per image so the interaction id survives a lost MCP response
           // (host timeout). Best-effort: the image is already on disk and the id
           // is in the result — a sidecar failure shouldn't fail the call.

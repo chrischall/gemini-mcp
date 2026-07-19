@@ -5,7 +5,7 @@ import type { GeminiClient } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { DEFAULT_MUSIC_MODEL } from '../models.js';
 import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedMedia } from './shared.js';
-import { dispatch, fingerprintRequest } from '../jobs.js';
+import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 const MUSIC_MODELS = ['lyria-3-clip-preview', 'lyria-3-pro-preview'] as const;
@@ -13,10 +13,11 @@ const AUDIO_FORMATS = ['mp3', 'wav'] as const;
 /** WAV is Lyria-3-Pro-only (docs); reject it on the clip model up front. */
 function isProModel(model: string): boolean { return /pro/i.test(model); }
 
-// Most-recent music interaction id (this process), for continue_last.
-let lastMusicInteractionId: string | undefined;
-/** Test-only: clear the module-level session memory. */
-export function __resetMusicMemory(): void { lastMusicInteractionId = undefined; }
+// The most-recent music interaction id (for continue_last) lives on
+// `client.session`, NOT at module scope: one Cloudflare isolate serves many
+// authenticated connector sessions, so a module-level id would let one user's
+// continue_last resume another user's interaction under their own key.
+// See src/session.ts.
 
 export function registerMusicTools(server: McpServer, client: GeminiClient): void {
   server.registerTool(
@@ -56,12 +57,12 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
       }
       let previousInteractionId = args.previous_interaction_id;
       if (!previousInteractionId && args.continue_last) {
-        if (!lastMusicInteractionId) {
+        if (!client.session.lastMusicInteractionId) {
           throw new McpToolError('No previous music interaction to continue in this session.', {
             hint: 'Generate music first, or pass an explicit previous_interaction_id.',
           });
         }
-        previousInteractionId = lastMusicInteractionId;
+        previousInteractionId = client.session.lastMusicInteractionId;
       }
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local image input(s) to the Gemini Lyria API', '/v1beta/interactions', args.images);
       if (gate) return gate;
@@ -70,7 +71,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         previous_interaction_id: previousInteractionId,
       });
-      return dispatch({ toolName: 'gemini_music_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_music_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
         const r = await withProgressHeartbeat(extra, `Generating music (${model})`, () =>
           client.generateMusic({
@@ -81,7 +82,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
             previousInteractionId,
             timeoutMs: args.timeout_ms,
           }));
-        lastMusicInteractionId = r.id;
+        client.session.lastMusicInteractionId = r.id;
 
         const meta: Record<string, unknown> = { model, interaction_id: r.id };
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;

@@ -9,8 +9,7 @@ import { registerInteractTools } from '../../src/tools/interact.js';
 import { registerMusicTools } from '../../src/tools/music.js';
 import { GeminiClient, type GeminiClient as GeminiClientType } from '../../src/client.js';
 import { createDiskSink, createR2Sink, type MediaBucket, type MediaSink } from '../../src/storage/media.js';
-import { __resetJobRegistry } from '../../src/jobs.js';
-import { __resetInteractSessionForTest } from '../../src/tools/interact.js';
+import { SessionState } from '../../src/session.js';
 
 /**
  * The hosted connector runs on a Cloudflare Worker: no filesystem, so no disk
@@ -51,7 +50,9 @@ function describeTool(register: (server: never, client: never) => void, client: 
 
 /** A client stub carrying an explicit sink, as the Worker's buildClient does. */
 function stub(sink: MediaSink, methods: Record<string, unknown> = {}): GeminiClientType {
-  return { mediaSink: sink, ...methods } as unknown as GeminiClientType;
+  // Every stub gets its OWN session — the connector builds one per
+  // authenticated user, and the registrars read `client.session`.
+  return { mediaSink: sink, session: new SessionState(), ...methods } as unknown as GeminiClientType;
 }
 
 describe('media sink threading', () => {
@@ -60,8 +61,6 @@ describe('media sink threading', () => {
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
     vi.restoreAllMocks();
-    __resetJobRegistry();
-    __resetInteractSessionForTest();
   });
 
   it('defaults a client with no explicit sink to the disk sink (stdio unchanged)', () => {
@@ -142,8 +141,6 @@ describe('sidecars are gated on a real filesystem', () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-hosted-sc-')); });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
-    __resetJobRegistry();
-    __resetInteractSessionForTest();
   });
 
   it('writes an <image>.json sidecar on disk (unchanged)', async () => {
@@ -203,7 +200,6 @@ describe('sidecars are gated on a real filesystem', () => {
 });
 
 describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
-  afterEach(() => { __resetJobRegistry(); __resetInteractSessionForTest(); });
 
   const hosted = () => createR2Sink(bucket(), {});
 

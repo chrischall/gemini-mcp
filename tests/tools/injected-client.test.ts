@@ -11,7 +11,7 @@ import { registerVideoTools } from '../../src/tools/video.js';
 import { registerMusicTools } from '../../src/tools/music.js';
 import { registerJobTools } from '../../src/tools/jobs.js';
 import { client as singleton, type GeminiClient } from '../../src/client.js';
-import { __resetJobRegistry } from '../../src/jobs.js';
+import { SessionState } from '../../src/session.js';
 
 /**
  * Transport neutrality: the registrars must take their GeminiClient as an
@@ -31,7 +31,6 @@ describe('registrars accept an injected client', () => {
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
     vi.restoreAllMocks();
-    __resetJobRegistry();
   });
 
   it('registerModelTools uses the injected client, not the singleton', async () => {
@@ -39,6 +38,7 @@ describe('registrars accept an injected client', () => {
     const injected = {
       listModels: vi.fn().mockResolvedValue([{ name: 'models/injected-image', displayName: 'Injected' }]),
       defaultModel: vi.fn().mockReturnValue('injected-default'),
+      session: new SessionState(),
     } as unknown as GeminiClient;
 
     const h = await createTestHarness((s) => registerModelTools(s, injected));
@@ -54,6 +54,7 @@ describe('registrars accept an injected client', () => {
     const singletonSpy = vi.spyOn(singleton, 'generate');
     const injected = {
       generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }),
+      session: new SessionState(),
     } as unknown as GeminiClient;
 
     const h = await createTestHarness((s) => registerGenerateTools(s, injected));
@@ -68,6 +69,7 @@ describe('registrars accept an injected client', () => {
     const singletonSpy = vi.spyOn(singleton, 'generate');
     const injected = {
       generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }),
+      session: new SessionState(),
     } as unknown as GeminiClient;
 
     const h = await createTestHarness((s) => registerSetTools(s, injected));
@@ -82,6 +84,7 @@ describe('registrars accept an injected client', () => {
     const singletonSpy = vi.spyOn(singleton, 'interact');
     const injected = {
       interact: vi.fn().mockResolvedValue({ id: 'interactions/injected', images: [{ base64: PNG, mimeType: 'image/png' }] }),
+      session: new SessionState(),
     } as unknown as GeminiClient;
 
     const h = await createTestHarness((s) => registerInteractTools(s, injected));
@@ -96,6 +99,7 @@ describe('registrars accept an injected client', () => {
     const singletonSpy = vi.spyOn(singleton, 'generateVideo');
     const injected = {
       generateVideo: vi.fn().mockResolvedValue({ id: 'vid1', videos: [{ base64: MP4, mimeType: 'video/mp4' }] }),
+      session: new SessionState(),
     } as unknown as GeminiClient;
 
     const h = await createTestHarness((s) => registerVideoTools(s, injected));
@@ -110,6 +114,7 @@ describe('registrars accept an injected client', () => {
     const singletonSpy = vi.spyOn(singleton, 'generateMusic');
     const injected = {
       generateMusic: vi.fn().mockResolvedValue({ id: 'mus1', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] }),
+      session: new SessionState(),
     } as unknown as GeminiClient;
 
     const h = await createTestHarness((s) => registerMusicTools(s, injected));
@@ -120,8 +125,8 @@ describe('registrars accept an injected client', () => {
     expect(singletonSpy).not.toHaveBeenCalled();
   });
 
-  it('registerJobTools accepts a client argument (it needs none of its methods)', async () => {
-    const injected = {} as unknown as GeminiClient;
+  it('registerJobTools takes its job registry from the client, not a module global', async () => {
+    const injected = { session: new SessionState() } as unknown as GeminiClient;
     const h = await createTestHarness((s) => registerJobTools(s, injected));
     const names = (await h.listTools()).map((t) => t.name);
     await h.close();
