@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.3](https://github.com/chrischall/gemini-mcp/compare/v1.0.2...v1.0.3) (2026-07-19)
+
+
+### Bug Fixes
+
+* **client:** wait out interactions-store lag for 120s, not 6s ([#86](https://github.com/chrischall/gemini-mcp/issues/86)) ([ccfe5bc](https://github.com/chrischall/gemini-mcp/commit/ccfe5bc80a0a5adfccafa1e9cae5df1470c44f88))
+* **interact:** recover expired chains from sidecars instead of failing ([#83](https://github.com/chrischall/gemini-mcp/issues/83)) ([77fde2d](https://github.com/chrischall/gemini-mcp/commit/77fde2d43ddddc2a146773dc350d45c04b00ee11))
+* **interact:** stop blaming the chain for every 404 on a chained request ([#85](https://github.com/chrischall/gemini-mcp/issues/85)) ([656e0c1](https://github.com/chrischall/gemini-mcp/commit/656e0c115b620339eb3a258aa1dce219ca4e679a))
+* **tests:** exclude agent worktrees from vitest collection ([#88](https://github.com/chrischall/gemini-mcp/issues/88)) ([abb6b17](https://github.com/chrischall/gemini-mcp/commit/abb6b17b6323d7b54aee550a835ffdd96d6a3bb4))
+
+
+### Refactor
+
+* **tools:** inject the GeminiClient into the tool registrars ([#89](https://github.com/chrischall/gemini-mcp/issues/89)) ([3bf6411](https://github.com/chrischall/gemini-mcp/commit/3bf6411da38b460e845963a26bb7dd508a694387))
+
 ## [1.0.2](https://github.com/chrischall/gemini-mcp/compare/v1.0.1...v1.0.2) (2026-07-19)
 
 
