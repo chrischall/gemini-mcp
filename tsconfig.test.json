@@ -1,0 +1,23 @@
+{
+  // Typecheck-only config covering the TEST sources too.
+  //
+  // `tsconfig.json` deliberately scopes `include` to `src` because it drives the
+  // BUILD (emitting anything from tests/ would break the published artifact). The
+  // side effect is that `tsc --noEmit` never looked at tests, so a change to an
+  // exported signature could leave every call site in tests/ wrong and still show
+  // a fully green run: vitest doesn't typecheck, and the tests only fail if they
+  // happen to assert on the broken part. That is exactly how PR #86 shipped four
+  // stale `ChainedRequest404Error` call sites past a passing suite.
+  //
+  // Wired into `npm test` (see package.json) so it gates the same runs CI does.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // `rootDir` stays "src" in the build config on purpose — with rootDir "."
+    // tsc emits dist/src/index.js while package.json `bin` points at
+    // dist/index.js. Nothing is emitted here, so widening it is safe and is the
+    // only way to pull tests/ into the same program.
+    "rootDir": "."
+  },
+  "include": ["src", "tests"]
+}

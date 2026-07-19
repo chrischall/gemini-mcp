@@ -70,7 +70,9 @@ describe('emit onWritten', () => {
   it('reports the written absolute paths via onWritten in disk mode', async () => {
     const named = [{ image: { base64: PNG, mimeType: 'image/png' }, base: 'cb' }];
     const written: string[] = [];
-    const res = await emit(named, { output_dir: dir }, undefined, (paths) => written.push(...paths));
+    // Braces, not a concise body: onWritten returns void|Promise<void>, and
+    // `push`'s number return doesn't satisfy it.
+    const res = await emit(named, { output_dir: dir }, undefined, (paths) => { written.push(...paths); });
     const parsed = JSON.parse((res.content[0] as { type: string; text: string }).text);
     expect(written).toEqual(parsed.images);
     expect(written).toHaveLength(1);
