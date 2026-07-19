@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
+import { McpToolError, ApiError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
-import { client, ChainNotFoundError } from '../client.js';
+import { client, ChainedRequest404Error } from '../client.js';
 import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
 import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
@@ -67,8 +67,9 @@ export function registerInteractTools(server: McpServer): void {
         'If a call times out on the client side, the generation usually still completes: the image plus a ' +
         '`<image>.json` sidecar recording its interaction id land in the output dir, and `continue_last: true` ' +
         'still resumes that interaction — check the output dir before re-issuing (a re-issue is a second billable generation). ' +
-        'If the chain does expire upstream, this tool re-anchors itself on the prior output image and reports ' +
-        '`chain_recovered` — you do not need to re-issue the call by hand. ' +
+        'If a chained call 404s, this tool re-anchors itself on the prior output image and re-issues un-chained: ' +
+        'success is reported as `chain_recovered` (the chain was the problem, and you get your image anyway); ' +
+        'a second 404 is reported as the interaction id NOT being the cause (check the model id / files uri instead). ' +
         'Output is JPEG.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
@@ -195,23 +196,44 @@ export function registerInteractTools(server: McpServer): void {
           videoMimeType: video.videoMimeType,
           timeoutMs: args.timeout_ms,
         };
-        // When the chain is genuinely gone upstream (retries exhausted), recover
-        // the way a human would: re-attach that turn's output image — located by
-        // id via its sidecar, never "the newest image", since re-anchoring on the
-        // wrong picture would silently corrupt the edit — and re-issue un-chained.
-        // The 404'd attempt generated nothing, so this costs one generation, the
-        // same one the caller would have paid for re-anchoring by hand.
+        // A 404 on a chained request proves *something* was missing, not that it
+        // was the interaction (the upstream body is generic — see
+        // ChainedRequest404Error). So the recovery doubles as the experiment that
+        // settles it: re-attach that turn's output image — located by id via its
+        // sidecar, never "the newest image", since re-anchoring on the wrong
+        // picture would silently corrupt the edit — and re-issue WITHOUT the
+        // chain. Succeeds → the chain really was the problem, and the caller gets
+        // their image. 404s again → the id was never the cause, and saying so
+        // beats sending them to chase an interaction that was fine all along.
+        // Neither 404 generates anything, so a success costs the one generation
+        // the manual re-anchor would have cost.
         let chainRecovered: { expired_interaction_id: string; reanchored_on: string[] } | undefined;
         const r = await withProgressHeartbeat(extra, 'Generating image (Gemini Interactions API)', async () => {
           try {
             return await client.interact({ ...callOpts, images: inputs.length ? inputs : undefined, previousInteractionId });
           } catch (err) {
-            if (!(err instanceof ChainNotFoundError)) throw err;
+            if (!(err instanceof ChainedRequest404Error)) throw err;
             const reanchorOn = await findInteractionImages(resolveOutputDir(args.output_dir), err.previousInteractionId);
             if (!reanchorOn.length) throw err;
             const carried = await Promise.all(reanchorOn.map((p) => readImageAsInline(p)));
-            chainRecovered = { expired_interaction_id: err.previousInteractionId, reanchored_on: reanchorOn };
-            return await client.interact({ ...callOpts, images: [...carried, ...inputs], previousInteractionId: undefined });
+            try {
+              const probe = await client.interact({ ...callOpts, images: [...carried, ...inputs], previousInteractionId: undefined });
+              chainRecovered = { expired_interaction_id: err.previousInteractionId, reanchored_on: reanchorOn };
+              return probe;
+            } catch (probeErr) {
+              if (!(probeErr instanceof ApiError && probeErr.status === 404)) throw probeErr;
+              throw new McpToolError(
+                // Remediation goes in the MESSAGE, not just `hint`: MCP error
+                // serialization surfaces the message and drops the hint, so a
+                // hint-only fix is invisible exactly when it's needed.
+                `The interaction id is not the cause of this 404: the same request re-issued WITHOUT previous_interaction_id ("${err.previousInteractionId}") also returned 404. Upstream said: ${probeErr.message}. ` +
+                  `Check that the model id ("${model}") resolves — see gemini_list_models — and that any files/… uri you referenced hasn't expired (~48h TTL). Re-chaining or re-anchoring will not help.`,
+                {
+                  hint: `Check the model id ("${model}") resolves — see gemini_list_models — and that any files/… uri you referenced hasn't expired (~48h TTL). Re-chaining or re-anchoring will not help.`,
+                  cause: probeErr,
+                },
+              );
+            }
           }
         });
         lastInteractionId = r.id;

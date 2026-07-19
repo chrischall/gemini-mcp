@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GeminiClient, ChainNotFoundError } from '../src/client.js';
+import { GeminiClient, ChainedRequest404Error } from '../src/client.js';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const listFixture = JSON.parse(readFileSync(join(FIX, 'list-models-response.json'), 'utf8'));
@@ -772,13 +772,33 @@ describe('interact', () => {
       .interact({ input: 'make it blue', previousInteractionId: 'v1_stale' })
       .then(() => { throw new Error('expected rejection'); }, (e: unknown) => e as Error & { hint?: string });
     expect(calls).toBe(3);
-    expect(err.message).toMatch(/previous interaction .* not found/i);
+    expect(err.message).toMatch(/404 for a chained request/i);
+    expect(err.message).toContain('v1_stale');
     expect(err.message).toMatch(/55 days|1 day/);
-    expect(err.hint).toMatch(/start a new chain/i);
+    expect(err.hint).toMatch(/without previous_interaction_id/i);
     expect(err.hint).toMatch(/re-attach/i); // media-agnostic hint (shared by interact/video/music)
   });
 
-  it('throws a ChainNotFoundError carrying the dead id so callers can auto-recover', async () => {
+  it('does not claim the interaction expired — it surfaces the upstream 404 body verbatim', async () => {
+    // The one 404 body observed live is generic ("Requested entity was not
+    // found.") — it never names WHICH entity. An unknown model id and an expired
+    // files/… uri produce the same shape, so asserting "your chain expired"
+    // fabricates a cause and hides the real one.
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fetchImpl = (async () => ({
+      ok: false, status: 404, json: async () => ({}),
+      text: async () => JSON.stringify({ error: { message: 'models/gemini-9-imaginary is not found.', code: 'not_found' } }),
+    })) as unknown as typeof fetch;
+    const c = new GeminiClient({ fetchImpl, sleep: vi.fn().mockResolvedValue(undefined) });
+    const err = await c
+      .interact({ input: 'make it blue', previousInteractionId: 'v1_stale' })
+      .then(() => { throw new Error('expected rejection'); }, (e: unknown) => e as Error & { hint?: string });
+    expect(err.message).toContain('gemini-9-imaginary'); // the real cause survives
+    expect(err.message).not.toMatch(/was not found \(retried/i); // no fabricated verdict
+    expect(err.message).toMatch(/does not necessarily mean|not necessarily/i);
+  });
+
+  it('throws a ChainedRequest404Error carrying the id and upstream text so callers can probe', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const fetchImpl = (async () => ({
       ok: false, status: 404, json: async () => ({}),
@@ -790,8 +810,9 @@ describe('interact', () => {
       .then(() => { throw new Error('expected rejection'); }, (e: unknown) => e);
     // Discriminable by type (not message-matching) — tools/interact.ts keys its
     // sidecar re-anchor off this, and the id names which sidecar to re-attach.
-    expect(err).toBeInstanceOf(ChainNotFoundError);
-    expect((err as ChainNotFoundError).previousInteractionId).toBe('v1_stale');
+    expect(err).toBeInstanceOf(ChainedRequest404Error);
+    expect((err as ChainedRequest404Error).previousInteractionId).toBe('v1_stale');
+    expect((err as ChainedRequest404Error).upstreamMessage).toMatch(/Requested entity was not found/);
   });
 
   it('passes a 404 through untouched (no retries) when no previous_interaction_id was sent', async () => {

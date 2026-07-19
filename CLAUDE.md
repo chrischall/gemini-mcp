@@ -153,19 +153,33 @@ explicit `previous_interaction_id` wins), and in disk mode writes an
 `<image>.json` sidecar carrying the result meta so the interaction id survives
 a host-side timeout (see Quirks).
 
-**Chain recovery is automatic (both directions).** Sidecars are an on-disk index
-of the chain (`sidecar.ts`), and `gemini_interact` recovers from them rather than
-telling the caller to redo the turn: `continue_last` with no in-memory id falls
-back to the newest sidecar (`continued_from_sidecar: true`) — a server restart
-doesn't end a chain that's alive upstream; and a `ChainNotFoundError` (the
-exhausted-retries 404, now its own class in `client.ts` so it's discriminable by
-type, carrying `previousInteractionId`) is caught in the tool, which looks up
-*that id's* sidecar, re-attaches the image it produced, and re-issues un-chained
-(`chain_recovered: { expired_interaction_id, reanchored_on }`). Match by id only
-— never "the newest image"; re-anchoring on the wrong picture silently corrupts
-the edit, so no matching sidecar means rethrow, not guess. The 404'd attempt
-generates nothing, so recovery costs one generation, not two. Video/music still
-surface the error for manual recovery (they don't write sidecars). On a *chained* interact call, `images`
+**A chained 404 is not a diagnosis.** The only 404 body observed live is generic
+(`"Requested entity was not found."`) and never names which entity — an unknown
+model id and an expired `files/…` uri (~48h TTL) return the same thing. The old
+code relabelled *any* 404 on a request that merely carried a
+`previous_interaction_id` as "previous interaction not found", burying the
+upstream text in `cause` (which MCP serialization drops). That fabricated a cause
+and hid the real one. `ChainedRequest404Error` (client.ts) is named for what is
+actually known — a chained request returned 404 — and carries `upstreamMessage`
+in its *message*, not just a `hint`. **Don't reintroduce a confident verdict
+here, and don't put remediation only in `hint`** — the host shows the message and
+drops the hint.
+
+**Recovery doubles as the probe that settles it.** Sidecars are an on-disk index
+of the chain (`sidecar.ts`), so `gemini_interact` catches the
+`ChainedRequest404Error`, looks up *that id's* sidecar, re-attaches the image it
+produced, and re-issues **un-chained**. Succeeds → the chain was the cause, and
+the caller still gets their image (`chain_recovered: { expired_interaction_id,
+reanchored_on }`). 404s again → the id was never the cause, and the error says so
+and points at the model id / `files/…` uri. Match by id only — never "the newest
+image"; re-anchoring on the wrong picture silently corrupts the edit, so no
+matching sidecar means rethrow, not guess. Neither 404 generates anything, so a
+successful recovery costs one generation, not two.
+
+Separately, `continue_last` with no in-memory id falls back to the newest sidecar
+(`continued_from_sidecar: true`) — a server restart doesn't end a chain that's
+alive upstream. Video/music still surface the error for manual recovery (they
+don't write sidecars, so there's nothing to re-anchor on or probe with). On a *chained* interact call, `images`
 entries that resolve to files this server itself generated are dropped and
 echoed as `dropped_previous_output` — the interaction state already contains
 the prior output, and re-attaching it anchors the model against the edit.
