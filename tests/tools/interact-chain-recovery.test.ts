@@ -58,7 +58,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
   it('retries un-chained with the dead turn\'s image re-attached', async () => {
     const image = seedPriorTurn('v11', 'id-v11');
     const spy = vi.spyOn(client, 'interact')
-      .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', 'Gemini Interactions error 404: Requested entity was not found.', { hint: 'x' }))
+      .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', 'Gemini Interactions error 404: Requested entity was not found.', { attempts: 7, waitedMs: 120_000 }, { hint: 'x' }))
       .mockResolvedValueOnce(ok('id-v12'));
     const h = await createTestHarness(registerInteractTools);
 
@@ -85,7 +85,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     const reference = join(dir, 'style.jpg');
     writeFileSync(reference, Buffer.from(JPEG_BASE64, 'base64'));
     const spy = vi.spyOn(client, 'interact')
-      .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', 'Gemini Interactions error 404: Requested entity was not found.', { hint: 'x' }))
+      .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', 'Gemini Interactions error 404: Requested entity was not found.', { attempts: 7, waitedMs: 120_000 }, { hint: 'x' }))
       .mockResolvedValueOnce(ok('id-v12'));
     const h = await createTestHarness(registerInteractTools);
 
@@ -104,7 +104,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     // silently corrupt the edit, so fail with the actionable error instead.
     seedPriorTurn('unrelated', 'id-other');
     const spy = vi.spyOn(client, 'interact')
-      .mockRejectedValue(new ChainedRequest404Error('id-gone', 'Gemini Interactions error 404: Requested entity was not found.', { hint: 'probe' }));
+      .mockRejectedValue(new ChainedRequest404Error('id-gone', 'Gemini Interactions error 404: Requested entity was not found.', { attempts: 7, waitedMs: 120_000 }, { hint: 'probe' }));
     const h = await createTestHarness(registerInteractTools);
 
     const res = await h.callTool('gemini_interact', {
@@ -125,7 +125,7 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     seedPriorTurn('v11', 'id-v11');
     const upstream = 'Gemini Interactions error 404: models/gemini-9-imaginary is not found.';
     const spy = vi.spyOn(client, 'interact')
-      .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', upstream, { hint: 'x' }))
+      .mockRejectedValueOnce(new ChainedRequest404Error('id-v11', upstream, { attempts: 7, waitedMs: 120_000 }, { hint: 'x' }))
       .mockRejectedValueOnce(new ApiError(404, upstream));
     const h = await createTestHarness(registerInteractTools);
 

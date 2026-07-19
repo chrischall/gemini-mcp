@@ -255,8 +255,13 @@ gone and Google's docs recommend it over `generateContent` for image work.
   succeed; verified against a real failing id from a live session — same key
   fingerprint, id created moments before the failure). An immediate 3-turn
   rapid-chain repro went 3/3 OK, so the lag is intermittent/load-dependent.
-  The client retries a chained 404 with backoff (2s, 4s) before surfacing an
-  actionable error. A 404'd call generated nothing, so the retry is free.
+  The client retries a chained 404 with exponential backoff (2s, 4s, 8s, 16s,
+  then 30s steps) until a **120s** budget is spent (`$GEMINI_CHAIN_RETRY_MS`)
+  before surfacing an actionable error. A 404'd call generated nothing, so the
+  retry is free. **The budget must stay minutes-scale**: it was 2 fixed retries
+  (~6s) against the minutes-long lag measured right here, so every rapid
+  iteration surfaced as an "expired chain" while the id was merely not yet
+  visible. Don't shrink it back to something that feels responsive.
 - **Retention** (per the Interactions API docs): interactions are stored 55
   days on the paid tier, 1 day on the free tier (`store=true` default), and are
   scoped to the creating API key's project. `store=false` disables

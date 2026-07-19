@@ -20,7 +20,9 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMo
 const tick = () => new Promise((r) => setImmediate(r));
 // The registry is a module-level singleton, so a job started on one harness is
 // visible to gemini_get_result on another. Poll until it leaves 'running'.
-async function pollResult(h: { callTool: (n: string, a: unknown) => Promise<unknown> }, jobId: string) {
+// `args` must be Record<string, unknown> (not `unknown`) to accept a real
+// TestHarness — parameter types are checked contravariantly.
+async function pollResult(h: { callTool: (n: string, a?: Record<string, unknown>) => Promise<unknown> }, jobId: string) {
   for (let i = 0; i < 50; i++) {
     const m = parseToolResult<{ status?: string; images?: string[] }>(await h.callTool('gemini_get_result', { job_id: jobId }) as never);
     if (m.status !== 'running') return m;
