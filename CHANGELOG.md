@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/chrischall/gemini-mcp/compare/v1.0.1...v1.0.2) (2026-07-19)
+
+
+### Documentation
+
+* replace duplicated fleet policy with a pointer ([#81](https://github.com/chrischall/gemini-mcp/issues/81)) ([67cde08](https://github.com/chrischall/gemini-mcp/commit/67cde084a68f7be4466457c2b93a08768362fdd1))
+
 ## [1.0.1](https://github.com/chrischall/gemini-mcp/compare/v1.0.0...v1.0.1) (2026-07-13)
 
 
