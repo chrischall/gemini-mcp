@@ -41,12 +41,27 @@ const FILE_POLL_INTERVAL_MS = 2_000;
 const FILE_POLL_MAX_ATTEMPTS = 150;
 
 // The interactions store is eventually consistent: a freshly returned id can
-// 404 for a short window right after its turn completes (observed live
-// 2026-07-06 — an id that 404'd on an immediate chain resolved fine minutes
-// later). A chained 404 generated nothing (no cost), so retry before giving up:
-// attempts wait 2s then 4s (~6s total).
-const CHAIN_404_RETRIES = 2;
-const CHAIN_404_RETRY_MS = 2_000;
+// 404 while the SAME id + key resolves fine *minutes* later (observed live
+// 2026-07-06, verified against a real failing id created moments before the
+// failure — docs/GEMINI-API.md). The lag is intermittent and load-dependent, so
+// a heavy turn (4K / Pro / thinking:high) is the likeliest to hit it — which is
+// exactly the turn a caller most wants to chain from.
+//
+// This budget used to be two fixed retries (~6s total) against a lag the repo's
+// own notes measured in minutes, so every rapid iteration surfaced as an expired
+// chain. Match the budget to the observed lag instead: exponential backoff
+// (capped per-sleep) until the budget is spent. A 404'd chained call generates
+// nothing and is not billed, so waiting costs only time — and under `async: true`
+// nothing is even blocking on it.
+const CHAIN_404_RETRY_BUDGET_MS = 120_000;
+const CHAIN_404_RETRY_BASE_MS = 2_000;
+const CHAIN_404_RETRY_MAX_SLEEP_MS = 30_000;
+
+/** Retry budget for a chained 404: `$GEMINI_CHAIN_RETRY_MS` → 120s. */
+export function resolveChainRetryBudgetMs(): number {
+  const env = Number(readEnvVar('GEMINI_CHAIN_RETRY_MS'));
+  return Number.isFinite(env) && env >= 0 ? env : CHAIN_404_RETRY_BUDGET_MS;
+}
 
 /**
  * A request carrying `previous_interaction_id` returned HTTP 404, after the
@@ -69,10 +84,12 @@ export class ChainedRequest404Error extends McpToolError {
     readonly previousInteractionId: string,
     /** The upstream error text, verbatim (already redacted + truncated). */
     readonly upstreamMessage: string,
+    /** How hard we waited out the store lag before giving up. */
+    readonly retries: { attempts: number; waitedMs: number },
     opts: { hint: string; cause?: unknown },
   ) {
     super(
-      `Gemini returned HTTP 404 for a chained request (previous_interaction_id: "${previousInteractionId}"), retried ${CHAIN_404_RETRIES}× for store lag. Upstream said: ${upstreamMessage}. ` +
+      `Gemini returned HTTP 404 for a chained request (previous_interaction_id: "${previousInteractionId}"), retried ${retries.attempts}× over ~${Math.round(retries.waitedMs / 1000)}s for store lag. Upstream said: ${upstreamMessage}. ` +
         'This does not necessarily mean the interaction expired — an unknown model id or an expired files/… uri returns the same generic 404. ' +
         '(For reference: interactions are retained 55 days on the paid tier, 1 day on the free tier, and are scoped to the API key that created them.)',
       opts,
@@ -534,6 +551,8 @@ export class GeminiClient {
     opts: { timeoutMs?: number; imageSize?: string; previousInteractionId?: string },
   ): Promise<{ id: string; steps?: Step[] }> {
     const { interactionsApi } = this.apisFor(resolveTimeoutMs(opts.timeoutMs, opts.imageSize));
+    const budgetMs = resolveChainRetryBudgetMs();
+    let waitedMs = 0;
     for (let attempt = 0; ; attempt++) {
       try {
         return await interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', { body });
@@ -547,11 +566,17 @@ export class GeminiClient {
         // error carries the upstream text and says what it doesn't know — the
         // caller (tools/interact.ts) probes to find out which it was.
         if (!(opts.previousInteractionId && err instanceof ApiError && err.status === 404)) throw err;
-        if (attempt < CHAIN_404_RETRIES) {
-          await this.sleep(CHAIN_404_RETRY_MS * (attempt + 1));
+        // Exponential backoff until the budget is spent. Sized against the
+        // observed lag (minutes), not against how long a human likes to wait —
+        // the alternative is telling the caller their chain is dead while the
+        // API is seconds from serving it.
+        const delay = Math.min(CHAIN_404_RETRY_BASE_MS * 2 ** attempt, CHAIN_404_RETRY_MAX_SLEEP_MS);
+        if (waitedMs + delay <= budgetMs) {
+          waitedMs += delay;
+          await this.sleep(delay);
           continue;
         }
-        throw new ChainedRequest404Error(opts.previousInteractionId, err.message, {
+        throw new ChainedRequest404Error(opts.previousInteractionId, err.message, { attempts: attempt, waitedMs }, {
           hint: 'Re-issue the request WITHOUT previous_interaction_id (re-attaching the prior output image if you were editing). If that also 404s, the interaction id is not the cause — check the model id and any files/… uri (they expire ~48h). gemini_interact does this probe automatically.',
           cause: err,
         });

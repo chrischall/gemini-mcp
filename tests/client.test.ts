@@ -771,12 +771,59 @@ describe('interact', () => {
     const err = await c
       .interact({ input: 'make it blue', previousInteractionId: 'v1_stale' })
       .then(() => { throw new Error('expected rejection'); }, (e: unknown) => e as Error & { hint?: string });
-    expect(calls).toBe(3);
+    // 8 calls: backoff 2,4,8,16,30,30,30 exhausts the default 120s budget.
+    // (Was 3 — a 6s budget against a lag measured in minutes.)
+    expect(calls).toBe(8);
     expect(err.message).toMatch(/404 for a chained request/i);
     expect(err.message).toContain('v1_stale');
     expect(err.message).toMatch(/55 days|1 day/);
     expect(err.hint).toMatch(/without previous_interaction_id/i);
     expect(err.hint).toMatch(/re-attach/i); // media-agnostic hint (shared by interact/video/music)
+  });
+
+  it('keeps retrying a chained 404 for minutes, not seconds (store lag is minutes-scale)', async () => {
+    // docs/GEMINI-API.md: a freshly created id 404s intermittently while the
+    // same id + key "resolves fine minutes later". A 6s budget (the old 2×
+    // fixed retry) gave up long before the store caught up, so every rapid
+    // iteration surfaced as an expired chain. The 404 generates nothing, so
+    // waiting is free.
+    process.env.GEMINI_API_KEY = 'test-key';
+    delete process.env.GEMINI_CHAIN_RETRY_MS;
+    const fixture = makeInteractFixture();
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      if (calls <= 6) {
+        return { ok: false, status: 404, json: async () => ({}), text: async () => JSON.stringify({ error: { message: 'Requested entity was not found.' } }) };
+      }
+      return { ok: true, status: 200, json: async () => fixture, text: async () => JSON.stringify(fixture) };
+    }) as unknown as typeof fetch;
+    const slept: number[] = [];
+    const c = new GeminiClient({ fetchImpl, sleep: async (ms) => { slept.push(ms); } });
+
+    const out = await c.interact({ input: 'make it blue', previousInteractionId: 'v1_fresh' });
+
+    expect(out.images).toHaveLength(1); // recovered instead of failing at attempt 3
+    expect(calls).toBe(7);
+    expect(slept.reduce((a, b) => a + b, 0)).toBeGreaterThan(60_000); // minutes-scale, not 6s
+  });
+
+  it('gives up once the retry budget is spent, and says how long it waited', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    process.env.GEMINI_CHAIN_RETRY_MS = '10000';
+    const fetchImpl = (async () => ({
+      ok: false, status: 404, json: async () => ({}),
+      text: async () => JSON.stringify({ error: { message: 'Requested entity was not found.' } }),
+    })) as unknown as typeof fetch;
+    const slept: number[] = [];
+    const c = new GeminiClient({ fetchImpl, sleep: async (ms) => { slept.push(ms); } });
+
+    const err = await c
+      .interact({ input: 'make it blue', previousInteractionId: 'v1_stale' })
+      .then(() => { throw new Error('expected rejection'); }, (e: unknown) => e as Error);
+    expect(slept.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(10_000);
+    expect(err.message).toMatch(/retried .* over ~\d+s/i);
+    delete process.env.GEMINI_CHAIN_RETRY_MS;
   });
 
   it('does not claim the interaction expired — it surfaces the upstream 404 body verbatim', async () => {

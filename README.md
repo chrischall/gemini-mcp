@@ -18,6 +18,7 @@ Developed and maintained by AI (Claude Code).
 | `GEMINI_INPUT_DIR` | No | Directory to resolve bare input-image filenames against (so `images: ["foo.jpg"]` works) |
 | `GEMINI_TIMEOUT_MS` | No | Upstream request timeout in ms (default: `60000`, or `120000` for `image_size: "4K"`); each generation tool also takes a per-call `timeout_ms` |
 | `GEMINI_HEARTBEAT_MS` | No | Progress-notification cadence in ms while a generation runs (default: `10000`; `0` disables) — keeps MCP hosts that reset their timeout on progress from timing out long generations |
+| `GEMINI_CHAIN_RETRY_MS` | No | How long to wait out interactions-store lag when a chained call 404s (default: `120000`; `0` disables retrying) |
 
 ### Long generations and client timeouts
 
@@ -37,8 +38,15 @@ only 404 body observed live is generic — `"Requested entity was not found."` �
 establish: the upstream text is surfaced verbatim, and `gemini_interact` runs an experiment to
 find out which it was.
 
-After the store-lag retries are exhausted, the tool looks up that id's sidecar, re-attaches the
-image it produced, and re-issues the request **without** the chain:
+Most often the id isn't missing at all — it just isn't *visible* yet. The interactions store is
+eventually consistent, and a freshly created id can 404 while the same id resolves fine minutes
+later; heavy turns (4K, Pro, `thinking_level: high`) are the likeliest to hit it, which is
+exactly the turn you most want to chain from. So a chained 404 is retried with exponential
+backoff for up to **120s** (`GEMINI_CHAIN_RETRY_MS`) before anything is declared broken. The
+404 generates nothing and isn't billed, so the wait costs only time.
+
+After that budget is spent, the tool looks up that id's sidecar, re-attaches the image it
+produced, and re-issues the request **without** the chain:
 
 - **The re-issue succeeds** → the chain really was the problem, and you get your image anyway,
   reported as `chain_recovered: { expired_interaction_id, reanchored_on }`. The 404'd attempt
