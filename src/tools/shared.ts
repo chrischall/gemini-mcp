@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { textResult, McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { client, type GeneratedImage, type GeneratedMedia } from '../client.js';
+import type { GeminiClient, GeneratedImage, GeneratedMedia } from '../client.js';
 import { writeMedia, resolveOutputDir, resolveVideoPath, videoMimeType } from '../images.js';
 
 /** Supported output aspect ratios (Gemini image API). */
@@ -106,7 +106,7 @@ export interface VideoInput {
  * The uploaded file (uri + expiry) is echoed via `videoFileMeta` so a caller
  * can pass the uri straight back as `video_url` instead of re-uploading.
  */
-export async function resolveVideoInput(args: { video_url?: string; video_path?: string }): Promise<VideoInput> {
+export async function resolveVideoInput(args: { video_url?: string; video_path?: string }, client: GeminiClient): Promise<VideoInput> {
   if (args.video_url && args.video_path) {
     throw new McpToolError('Provide `video_url` OR `video_path`, not both.');
   }

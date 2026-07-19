@@ -24,7 +24,7 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMo
 describe('gemini_interact continue_last', () => {
   it('errors actionably when continue_last:true and no interaction has run yet', async () => {
     const spy = vi.spyOn(client, 'interact');
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res = await h.callTool('gemini_interact', { input: 'add a hat', continue_last: true, output_dir: dir });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/no previous interaction/i);
@@ -37,7 +37,7 @@ describe('gemini_interact continue_last', () => {
       id: 'first-run-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'a red circle', output_dir: dir });
 
     spy.mockResolvedValue({ id: 'second-run-id', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
@@ -51,7 +51,7 @@ describe('gemini_interact continue_last', () => {
       id: 'third-run-id',
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', {
       input: 'add stars',
       continue_last: true,

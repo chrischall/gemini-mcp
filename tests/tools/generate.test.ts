@@ -19,7 +19,7 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMo
 
 describe('tool descriptions steer iterative refinement to gemini_interact', () => {
   it('gemini_image_generate points at gemini_interact for iterative work', async () => {
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const { tools } = await h.client.listTools();
     const desc = tools.find((t) => t.name === 'gemini_image_generate')?.description ?? '';
     expect(desc).toContain('gemini_interact');
@@ -27,7 +27,7 @@ describe('tool descriptions steer iterative refinement to gemini_interact', () =
   });
 
   it('gemini_image_edit points at gemini_interact for successive edits, itself for one-offs/composition', async () => {
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const { tools } = await h.client.listTools();
     const desc = tools.find((t) => t.name === 'gemini_image_edit')?.description ?? '';
     expect(desc).toMatch(/series of successive edits/i);
@@ -40,7 +40,7 @@ describe('tool descriptions steer iterative refinement to gemini_interact', () =
 describe('refinement hints in results', () => {
   it('gemini_image_generate result includes a hint steering follow-up edits to gemini_interact', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'a red leaf', output_dir: dir });
     const data = parseToolResult<{ hint?: string }>(res);
     expect(data.hint).toContain('gemini_interact');
@@ -50,7 +50,7 @@ describe('refinement hints in results', () => {
 
   it('gemini_image_edit result includes a hint steering follow-up edits to gemini_interact', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_edit', { prompt: 'brighter', images_base64: [PNG], output_dir: dir });
     const data = parseToolResult<{ hint?: string }>(res);
     expect(data.hint).toContain('gemini_interact');
@@ -62,7 +62,7 @@ describe('refinement hints in results', () => {
 describe('gemini_image_generate', () => {
   it('writes a file and returns its path', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'a red leaf', output_dir: dir });
     const data = parseToolResult<{ images: string[] }>(res);
     expect(data.images).toHaveLength(1);
@@ -73,7 +73,7 @@ describe('gemini_image_generate', () => {
 
   it('count makes N calls each with a DISTINCT seed (not N duplicates)', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'leaf', count: 3, seed: 100, output_dir: dir });
     expect(parseToolResult<{ images: string[] }>(res).images).toHaveLength(3);
     expect(spy).toHaveBeenCalledTimes(3);
@@ -84,7 +84,7 @@ describe('gemini_image_generate', () => {
 
   it('inline returns meta text block then image content blocks, writes nothing', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'leaf', inline: true });
     // With Feature D, meta is always emitted; content[0] = text meta, content[1] = image
     expect(res.content[0].type).toBe('text');
@@ -96,7 +96,7 @@ describe('gemini_image_generate', () => {
 describe('gemini_image_generate metadata', () => {
   it('includes model and seed in result', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'a red leaf', output_dir: dir, seed: 7 });
     const data = parseToolResult<{ images: string[]; seed: number; model: string }>(res);
     expect(data.seed).toBe(7);
@@ -108,7 +108,7 @@ describe('gemini_image_generate metadata', () => {
 describe('gemini_image_generate timeout_risk hint', () => {
   it('surfaces meta.timeout_risk for a 4K (slow) config', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'a red leaf', image_size: '4K', output_dir: dir });
     const data = parseToolResult<{ timeout_risk?: string }>(res);
     expect(data.timeout_risk).toContain('-32001');
@@ -117,7 +117,7 @@ describe('gemini_image_generate timeout_risk hint', () => {
 
   it('omits meta.timeout_risk for the default fast (Flash, 1-image) config', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'a red leaf', output_dir: dir });
     const data = parseToolResult<{ timeout_risk?: string }>(res);
     expect(data.timeout_risk).toBeUndefined();
@@ -126,7 +126,7 @@ describe('gemini_image_generate timeout_risk hint', () => {
 
   it('surfaces meta.timeout_risk on gemini_image_edit for a 4K config, omits it otherwise', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const slow = parseToolResult<{ timeout_risk?: string }>(
       await h.callTool('gemini_image_edit', { prompt: 'brighter', images_base64: [PNG], image_size: '4K', output_dir: dir }),
     );
@@ -149,7 +149,7 @@ describe('gemini_image_generate idempotency', () => {
       calls++;
       return new Promise((res) => { resolveGen = res; });
     });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const args = { prompt: 'a red leaf', output_dir: dir };
     const p1 = h.callTool('gemini_image_generate', args);
     await tick(); // let the first call register + reach the (pending) generate
@@ -169,7 +169,7 @@ describe('gemini_image_generate idempotency', () => {
       calls++;
       return Promise.resolve({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const args = { prompt: 'a red leaf', output_dir: dir, idempotency_key: 'k1' };
     const r1 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_image_generate', args));
     const r2 = parseToolResult<{ images: string[]; reused?: boolean; reused_job_id?: string }>(await h.callTool('gemini_image_generate', args));
@@ -187,7 +187,7 @@ describe('gemini_image_generate idempotency', () => {
       calls++;
       return Promise.resolve({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const args = { prompt: 'a red leaf', output_dir: dir };
     await h.callTool('gemini_image_generate', args);
     await h.callTool('gemini_image_generate', args);
@@ -199,7 +199,7 @@ describe('gemini_image_generate idempotency', () => {
 describe('gemini_image_generate with reference inputs', () => {
   it('passes images_base64 as input images to generate', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_generate', { prompt: 'style transfer', images_base64: [PNG], output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]) }));
     await h.close();
@@ -209,7 +209,7 @@ describe('gemini_image_generate with reference inputs', () => {
 describe('gemini_image_generate filename param', () => {
   it('uses caller-supplied filename as the base name', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', {
       prompt: 'a red leaf',
       filename: 'my-custom.png',
@@ -222,7 +222,7 @@ describe('gemini_image_generate filename param', () => {
 
   it('falls back to slugified prompt when no filename given', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'red leaf', output_dir: dir });
     const data = parseToolResult<{ images: string[] }>(res);
     expect(basename(data.images[0])).toBe('red-leaf.png');
@@ -233,7 +233,7 @@ describe('gemini_image_generate filename param', () => {
 describe('gemini_image_generate text capture', () => {
   it('includes model text in meta when client returns text', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }], text: 'A nice leaf.' });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'leaf', output_dir: dir });
     const data = parseToolResult<{ images: string[]; text?: string }>(res);
     expect(data.text).toBe('A nice leaf.');
@@ -242,7 +242,7 @@ describe('gemini_image_generate text capture', () => {
 
   it('omits text from meta when client returns no text', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'leaf', output_dir: dir });
     const data = parseToolResult<{ images: string[]; text?: string }>(res);
     expect(data.text).toBeUndefined();
@@ -253,7 +253,7 @@ describe('gemini_image_generate text capture', () => {
 describe('gemini_image_generate thinking_level passthrough', () => {
   it('passes thinking_level to client.generate as thinkingLevel', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_generate', { prompt: 'leaf', thinking_level: 'minimal', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ thinkingLevel: 'minimal' }));
     await h.close();
@@ -261,7 +261,7 @@ describe('gemini_image_generate thinking_level passthrough', () => {
 
   it('omits thinkingLevel from generate call when thinking_level not provided', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_generate', { prompt: 'leaf', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.not.objectContaining({ thinkingLevel: expect.anything() }));
     await h.close();
@@ -275,7 +275,7 @@ describe('gemini_image_edit idempotency', () => {
       calls++;
       return Promise.resolve({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const args = { prompt: 'brighter', images_base64: [PNG], output_dir: dir, idempotency_key: 'ek' };
     const r1 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_image_edit', args));
     const r2 = parseToolResult<{ images: string[]; reused?: boolean }>(await h.callTool('gemini_image_edit', args));
@@ -289,7 +289,7 @@ describe('gemini_image_edit idempotency', () => {
 describe('gemini_image_edit images_base64 + optional images', () => {
   it('accepts images_base64 without images', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_edit', { prompt: 'make it blue', images_base64: [PNG], output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]) }));
@@ -297,7 +297,7 @@ describe('gemini_image_edit images_base64 + optional images', () => {
   });
 
   it('throws when neither images nor images_base64 provided', async () => {
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_edit', { prompt: 'make it blue', output_dir: dir });
     expect(res.isError).toBe(true);
     await h.close();
@@ -307,7 +307,7 @@ describe('gemini_image_edit images_base64 + optional images', () => {
 describe('gemini_image_generate google_search + video_url passthrough', () => {
   it('passes google_search:true to client.generate as googleSearch', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_generate', { prompt: 'leaf', google_search: true, output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ googleSearch: true }));
     await h.close();
@@ -315,7 +315,7 @@ describe('gemini_image_generate google_search + video_url passthrough', () => {
 
   it('passes video_url to client.generate as videoUrl', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_generate', { prompt: 'leaf', video_url: 'https://www.youtube.com/watch?v=abc', output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: 'https://www.youtube.com/watch?v=abc' }));
     await h.close();
@@ -326,7 +326,7 @@ describe('gemini_image_generate google_search + video_url passthrough', () => {
       images: [{ base64: PNG, mimeType: 'image/png' }],
       grounding: { queries: ['SF weather'], sources: [{ uri: 'https://weather.com', title: 'Weather' }] },
     });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'leaf', google_search: true, output_dir: dir });
     const data = parseToolResult<{ grounding?: { queries?: string[]; sources?: unknown[] } }>(res);
     expect(data.grounding?.queries).toEqual(['SF weather']);
@@ -336,7 +336,7 @@ describe('gemini_image_generate google_search + video_url passthrough', () => {
 
   it('omits meta.grounding when client returns no grounding', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'leaf', output_dir: dir });
     const data = parseToolResult<{ grounding?: unknown }>(res);
     expect(data.grounding).toBeUndefined();
@@ -347,7 +347,7 @@ describe('gemini_image_generate google_search + video_url passthrough', () => {
 describe('gemini_image_edit google_search passthrough', () => {
   it('passes google_search:true to client.generate as googleSearch', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_edit', { prompt: 'make it blue', images_base64: [PNG], google_search: true, output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ googleSearch: true }));
     await h.close();
@@ -358,7 +358,7 @@ describe('gemini_image_edit google_search passthrough', () => {
       images: [{ base64: PNG, mimeType: 'image/png' }],
       grounding: { queries: ['blue color'], sources: [] },
     });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_edit', { prompt: 'make it blue', images_base64: [PNG], google_search: true, output_dir: dir });
     const data = parseToolResult<{ grounding?: { queries?: string[] } }>(res);
     expect(data.grounding?.queries).toEqual(['blue color']);
@@ -371,7 +371,7 @@ describe('gemini_image_edit', () => {
     const inPath = join(dir, 'src.png');
     writeFileSync(inPath, Buffer.from(PNG, 'base64'));
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_edit', { prompt: 'make it blue', images: [inPath], confirm: true, output_dir: dir });
     expect(parseToolResult<{ images: string[] }>(res).images).toHaveLength(1);
     expect(spy).toHaveBeenCalledWith(
@@ -384,7 +384,7 @@ describe('gemini_image_edit', () => {
     const inPath = join(dir, 'src.png');
     writeFileSync(inPath, Buffer.from(PNG, 'base64'));
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_edit', {
       prompt: 'make it blue',
       images: [inPath],
@@ -401,7 +401,7 @@ describe('gemini_image_edit', () => {
 describe('gemini_image_edit from_clipboard guard', () => {
   it('accepts from_clipboard:true with no images/images_base64 — passes the guard', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_edit', { prompt: 'make it blue', from_clipboard: true, output_dir: dir });
     expect(res.isError).toBeFalsy();
     await h.close();
@@ -409,7 +409,7 @@ describe('gemini_image_edit from_clipboard guard', () => {
 
   it('from_clipboard passes the clipboard image to generate', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_edit', { prompt: 'make it blue', from_clipboard: true, output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/jpeg' })]),
@@ -427,7 +427,7 @@ describe('gemini_image_generate input-dir resolution via GEMINI_INPUT_DIR', () =
     process.env.GEMINI_INPUT_DIR = dir;
 
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'style transfer', images: ['ref.png'], confirm: true, output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
@@ -446,7 +446,7 @@ describe('gemini_image_edit input-dir resolution via GEMINI_INPUT_DIR', () => {
     process.env.GEMINI_INPUT_DIR = dir;
 
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_edit', { prompt: 'make it blue', images: ['edit-src.png'], confirm: true, output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
@@ -465,7 +465,7 @@ describe('gemini_image_generate video_path (Files API upload)', () => {
     writeFileSync(videoPath, Buffer.from('vid'));
     const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
     const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'flag', video_path: videoPath, confirm: true, output_dir: dir });
     expect(up).toHaveBeenCalledWith(videoPath, 'video/mp4');
     expect(gen).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: FILE_URI, videoMimeType: 'video/mp4' }));
@@ -480,7 +480,7 @@ describe('gemini_image_generate video_path (Files API upload)', () => {
     writeFileSync(videoPath, Buffer.from('vid'));
     const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
     const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_generate', { prompt: 'flag', video_path: videoPath, count: 3, confirm: true, output_dir: dir });
     expect(up).toHaveBeenCalledTimes(1);
     expect(gen).toHaveBeenCalledTimes(3);
@@ -489,7 +489,7 @@ describe('gemini_image_generate video_path (Files API upload)', () => {
 
   it('rejects video_path together with video_url', async () => {
     const up = vi.spyOn(client, 'uploadVideo');
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', {
       prompt: 'flag',
       video_path: '/tmp/clip.mp4',
@@ -504,7 +504,7 @@ describe('gemini_image_generate video_path (Files API upload)', () => {
 
   it('errors before uploading when the video file does not exist', async () => {
     const up = vi.spyOn(client, 'uploadVideo');
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     const res = await h.callTool('gemini_image_generate', { prompt: 'flag', video_path: '/nonexistent/clip.mp4' });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/Video not found/);
@@ -518,7 +518,7 @@ describe('timeout_ms passthrough', () => {
 
   it('gemini_image_generate passes timeout_ms to client.generate as timeoutMs', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [PNG_IMG] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_generate', { prompt: 'circle', timeout_ms: 90_000, output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 90_000 }));
     await h.close();
@@ -526,7 +526,7 @@ describe('timeout_ms passthrough', () => {
 
   it('gemini_image_edit passes timeout_ms to client.generate as timeoutMs', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [PNG_IMG] });
-    const h = await createTestHarness(registerGenerateTools);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
     await h.callTool('gemini_image_edit', { prompt: 'crop it', images_base64: [PNG], timeout_ms: 45_000, output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 45_000 }));
     await h.close();

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, ApiError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
-import { client, ChainedRequest404Error } from '../client.js';
+import { ChainedRequest404Error, type GeminiClient } from '../client.js';
 import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
 import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
@@ -54,7 +54,7 @@ function splitReattachedOutputs(images: string[]): { kept: string[]; dropped: st
   return { kept, dropped };
 }
 
-export function registerInteractTools(server: McpServer): void {
+export function registerInteractTools(server: McpServer, client: GeminiClient): void {
   server.registerTool(
     'gemini_interact',
     {
@@ -183,7 +183,7 @@ export function registerInteractTools(server: McpServer): void {
       });
       return dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
-        const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args));
+        const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args, client));
         const callOpts = {
           input: args.input,
           model: args.model,

@@ -2,13 +2,13 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
-import { client, type GeneratedImage } from '../client.js';
+import type { GeminiClient, GeneratedImage } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, type NamedImage } from './shared.js';
 import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
-export function registerSetTools(server: McpServer): void {
+export function registerSetTools(server: McpServer, client: GeminiClient): void {
   server.registerTool(
     'gemini_image_set',
     {

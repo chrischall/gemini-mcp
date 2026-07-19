@@ -26,7 +26,7 @@ function mockInteract(id: string) {
 describe('gemini_interact chained re-attach guard', () => {
   it('drops a chained input image that this server generated and notes it in meta', async () => {
     const spy = mockInteract('guard-turn-1');
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res1 = await h.callTool('gemini_interact', { input: 'a poster', output_dir: dir });
     const out1 = parseToolResult<{ images: string[] }>(res1).images[0];
 
@@ -45,7 +45,7 @@ describe('gemini_interact chained re-attach guard', () => {
 
   it('keeps genuinely new reference images while dropping the re-attached output', async () => {
     const spy = mockInteract('guard-mixed-1');
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res1 = await h.callTool('gemini_interact', { input: 'a poster', output_dir: dir });
     const out1 = parseToolResult<{ images: string[] }>(res1).images[0];
 
@@ -70,7 +70,7 @@ describe('gemini_interact chained re-attach guard', () => {
 
   it('passes a server-generated output through when NOT chaining (new interaction from an old result is legit)', async () => {
     const spy = mockInteract('guard-fresh-1');
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     const res1 = await h.callTool('gemini_interact', { input: 'a poster', output_dir: dir });
     const out1 = parseToolResult<{ images: string[] }>(res1).images[0];
 
@@ -86,7 +86,7 @@ describe('gemini_interact chained re-attach guard', () => {
 
   it('does not drop unrelated images on a chained call', async () => {
     const spy = mockInteract('guard-unrelated-1');
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'a poster', output_dir: dir });
 
     const fresh = join(dir, 'reference.png');
@@ -110,7 +110,7 @@ describe('gemini_interact chained re-attach guard', () => {
 
   it('still errors on a chained call whose image path does not exist', async () => {
     const spy = mockInteract('guard-missing-1');
-    const h = await createTestHarness(registerInteractTools);
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
     await h.callTool('gemini_interact', { input: 'a poster', output_dir: dir });
 
     spy.mockClear();
