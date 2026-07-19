@@ -1,9 +1,13 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { dispatch, fingerprintRequest, getJobResult, __resetJobRegistry } from '../src/jobs.js';
+import { JobRegistry, fingerprintRequest } from '../src/jobs.js';
 
-afterEach(() => { __resetJobRegistry(); vi.useRealTimers(); vi.restoreAllMocks(); });
+// A fresh registry per test — which is also the production shape: one registry
+// per session, never a module-level singleton (see src/session.ts).
+let registry: JobRegistry;
+beforeEach(() => { registry = new JobRegistry(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 function textResultOf(obj: Record<string, unknown>): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(obj) }] };
@@ -38,8 +42,8 @@ describe('dispatch — in-flight fingerprint dedup', () => {
     let calls = 0;
     const d = deferred<CallToolResult>();
     const work = () => { calls++; return d.promise; };
-    const p1 = dispatch({ toolName: 't', fingerprint: fp }, work);
-    const p2 = dispatch({ toolName: 't', fingerprint: fp }, work);
+    const p1 = registry.dispatch({ toolName: 't', fingerprint: fp }, work);
+    const p2 = registry.dispatch({ toolName: 't', fingerprint: fp }, work);
     d.resolve(textResultOf({ images: ['a.png'], model: 'm' }));
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(calls).toBe(1);
@@ -53,8 +57,8 @@ describe('dispatch — in-flight fingerprint dedup', () => {
   it('does not dedup concurrent requests with different fingerprints', async () => {
     let calls = 0;
     const d1 = deferred<CallToolResult>(), d2 = deferred<CallToolResult>();
-    const p1 = dispatch({ toolName: 't', fingerprint: 'a' }, () => { calls++; return d1.promise; });
-    const p2 = dispatch({ toolName: 't', fingerprint: 'b' }, () => { calls++; return d2.promise; });
+    const p1 = registry.dispatch({ toolName: 't', fingerprint: 'a' }, () => { calls++; return d1.promise; });
+    const p2 = registry.dispatch({ toolName: 't', fingerprint: 'b' }, () => { calls++; return d2.promise; });
     d1.resolve(textResultOf({})); d2.resolve(textResultOf({}));
     await Promise.all([p1, p2]);
     expect(calls).toBe(2);
@@ -64,8 +68,8 @@ describe('dispatch — in-flight fingerprint dedup', () => {
     const fp = fingerprintRequest('t', { prompt: 'x' });
     let calls = 0;
     const work = () => { calls++; return Promise.resolve(textResultOf({ images: ['a.png'] })); };
-    await dispatch({ toolName: 't', fingerprint: fp }, work);
-    await dispatch({ toolName: 't', fingerprint: fp }, work);
+    await registry.dispatch({ toolName: 't', fingerprint: fp }, work);
+    await registry.dispatch({ toolName: 't', fingerprint: fp }, work);
     expect(calls).toBe(2);
   });
 });
@@ -74,8 +78,8 @@ describe('dispatch — idempotency_key', () => {
   it('reuses a recently-completed result for the same key (even if fingerprint differs)', async () => {
     let calls = 0;
     const work = () => { calls++; return Promise.resolve(textResultOf({ images: ['a.png'], model: 'm' })); };
-    await dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
-    const r2 = await dispatch({ toolName: 't', fingerprint: 'fp2', idempotencyKey: 'k' }, work);
+    await registry.dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
+    const r2 = await registry.dispatch({ toolName: 't', fingerprint: 'fp2', idempotencyKey: 'k' }, work);
     expect(calls).toBe(1);
     const m = metaOf(r2);
     expect(m.reused).toBe(true);
@@ -85,8 +89,8 @@ describe('dispatch — idempotency_key', () => {
   it('does not reuse a failed job by key — the retry runs again', async () => {
     let calls = 0;
     const work = () => { calls++; return Promise.reject(new McpToolError('boom')); };
-    await expect(dispatch({ toolName: 't', fingerprint: 'fp', idempotencyKey: 'k' }, work)).rejects.toThrow('boom');
-    await expect(dispatch({ toolName: 't', fingerprint: 'fp', idempotencyKey: 'k' }, work)).rejects.toThrow('boom');
+    await expect(registry.dispatch({ toolName: 't', fingerprint: 'fp', idempotencyKey: 'k' }, work)).rejects.toThrow('boom');
+    await expect(registry.dispatch({ toolName: 't', fingerprint: 'fp', idempotencyKey: 'k' }, work)).rejects.toThrow('boom');
     expect(calls).toBe(2);
   });
 
@@ -94,9 +98,9 @@ describe('dispatch — idempotency_key', () => {
     vi.useFakeTimers();
     let calls = 0;
     const work = () => { calls++; return Promise.resolve(textResultOf({ images: ['a.png'] })); };
-    await dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
+    await registry.dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
     await vi.advanceTimersByTimeAsync(11 * 60 * 1000); // past the 10-min TTL
-    await dispatch({ toolName: 't', fingerprint: 'fp2', idempotencyKey: 'k' }, work);
+    await registry.dispatch({ toolName: 't', fingerprint: 'fp2', idempotencyKey: 'k' }, work);
     expect(calls).toBe(2);
   });
 });
@@ -106,7 +110,7 @@ describe('dispatch — async job handle', () => {
 
   it('returns a job_id immediately without awaiting work', async () => {
     const d = deferred<CallToolResult>();
-    const r = await dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => d.promise);
+    const r = await registry.dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => d.promise);
     const m = metaOf(r);
     expect(typeof m.job_id).toBe('string');
     expect(m.status).toBe('running');
@@ -115,32 +119,32 @@ describe('dispatch — async job handle', () => {
 
   it('getJobResult reports running, then returns the result once done', async () => {
     const d = deferred<CallToolResult>();
-    const start = await dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => d.promise);
+    const start = await registry.dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => d.promise);
     const jobId = metaOf(start).job_id as string;
-    expect(metaOf(getJobResult(jobId)).status).toBe('running');
+    expect(metaOf(registry.getResult(jobId)).status).toBe('running');
     d.resolve(textResultOf({ images: ['a.png'], model: 'm' }));
     await settle();
-    expect(metaOf(getJobResult(jobId)).images).toEqual(['a.png']);
+    expect(metaOf(registry.getResult(jobId)).images).toEqual(['a.png']);
   });
 
   it('getJobResult throws with the recorded message for a failed job', async () => {
     const d = deferred<CallToolResult>();
-    const start = await dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => d.promise);
+    const start = await registry.dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => d.promise);
     const jobId = metaOf(start).job_id as string;
     d.reject(new McpToolError('kaboom'));
     await settle();
-    expect(() => getJobResult(jobId)).toThrow('kaboom');
+    expect(() => registry.getResult(jobId)).toThrow('kaboom');
   });
 
   it('getJobResult throws for an unknown/expired job id', () => {
-    expect(() => getJobResult('nope')).toThrow();
+    expect(() => registry.getResult('nope')).toThrow();
   });
 
   it('an async call attaches to a matching running job by key (same job_id)', async () => {
     const d = deferred<CallToolResult>();
     let calls = 0;
-    const first = await dispatch({ toolName: 't', fingerprint: 'fp', idempotencyKey: 'k', async: true }, () => { calls++; return d.promise; });
-    const second = await dispatch({ toolName: 't', fingerprint: 'fp', idempotencyKey: 'k', async: true }, () => { calls++; return d.promise; });
+    const first = await registry.dispatch({ toolName: 't', fingerprint: 'fp', idempotencyKey: 'k', async: true }, () => { calls++; return d.promise; });
+    const second = await registry.dispatch({ toolName: 't', fingerprint: 'fp', idempotencyKey: 'k', async: true }, () => { calls++; return d.promise; });
     expect(calls).toBe(1);
     expect(metaOf(second).job_id).toBe(metaOf(first).job_id);
     d.resolve(textResultOf({ images: ['a.png'] }));
@@ -149,8 +153,8 @@ describe('dispatch — async job handle', () => {
   it('an async call attaches to a matching in-flight job by fingerprint (no key, same job_id)', async () => {
     const d = deferred<CallToolResult>();
     let calls = 0;
-    const first = await dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => { calls++; return d.promise; });
-    const second = await dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => { calls++; return d.promise; });
+    const first = await registry.dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => { calls++; return d.promise; });
+    const second = await registry.dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => { calls++; return d.promise; });
     expect(calls).toBe(1); // fingerprint dedup fired even without an idempotency_key
     expect(metaOf(second).job_id).toBe(metaOf(first).job_id);
     d.resolve(textResultOf({ images: ['a.png'] }));

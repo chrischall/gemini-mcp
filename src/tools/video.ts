@@ -4,19 +4,21 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
-import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, type NamedMedia } from './shared.js';
-import { dispatch, fingerprintRequest } from '../jobs.js';
+import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedMedia } from './shared.js';
+import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 /** omni's own aspect-ratio enum — NOT the image tools' ASPECT_RATIOS. */
 const VIDEO_ASPECT_RATIOS = ['16:9', '9:16'] as const;
 const VIDEO_TASKS = ['text_to_video', 'image_to_video', 'reference_to_video', 'edit'] as const;
 
-// Most-recent video interaction id (this process), for continue_last. Separate
-// from the image interact memory — a "last video" and "last image" are distinct.
-let lastVideoInteractionId: string | undefined;
-/** Test-only: clear the module-level session memory. */
-export function __resetVideoMemory(): void { lastVideoInteractionId = undefined; }
+// The most-recent video interaction id (for continue_last) lives on
+// `client.session`, NOT at module scope — one Cloudflare isolate serves many
+// authenticated connector sessions, so a module-level id would let one user's
+// continue_last resume another user's interaction under their own key. Video is
+// not registered on the Worker today, but the hazard is identical, so it is
+// scoped the same way. It stays separate from the image interact memory: a
+// "last video" and a "last image" are distinct chains. See src/session.ts.
 
 export function registerVideoTools(server: McpServer, client: GeminiClient): void {
   server.registerTool(
@@ -51,14 +53,15 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
       },
     },
     async (args, extra) => {
+      assertLocalInputsAvailable(client.mediaSink, args);
       let previousInteractionId = args.previous_interaction_id;
       if (!previousInteractionId && args.continue_last) {
-        if (!lastVideoInteractionId) {
+        if (!client.session.lastVideoInteractionId) {
           throw new McpToolError('No previous video interaction to continue in this session.', {
             hint: 'Generate a video first, or pass an explicit previous_interaction_id.',
           });
         }
-        previousInteractionId = lastVideoInteractionId;
+        previousInteractionId = client.session.lastVideoInteractionId;
       }
       // Confirm-gate local file inputs (a prompt-injected `images` path could
       // exfiltrate a local file); base64 / clipboard pass through ungated.
@@ -70,7 +73,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         previous_interaction_id: previousInteractionId,
       });
-      return dispatch({ toolName: 'gemini_video_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_video_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
         const r = await withProgressHeartbeat(extra, `Generating video (${model})`, () =>
           client.generateVideo({
@@ -82,7 +85,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
             previousInteractionId,
             timeoutMs: args.timeout_ms,
           }));
-        lastVideoInteractionId = r.id;
+        client.session.lastVideoInteractionId = r.id;
 
         const meta: Record<string, unknown> = { model, interaction_id: r.id };
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
@@ -94,7 +97,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
           media,
           base: r.videos.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
         }));
-        return emitMedia(named, 'video', { output_dir: args.output_dir }, meta);
+        return emitMedia(named, 'video', { output_dir: args.output_dir, sink: client.mediaSink }, meta);
       });
     },
   );

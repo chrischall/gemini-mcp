@@ -48,8 +48,11 @@ mcpb bundles omit `dotenv`; the host provides env). `readEnvVar` (from
 
 ```
 src/
-  index.ts        # entry — runMcp({ name, version, banner, tools: [register*Tools…] })
-                  #   from @chrischall/mcp-utils; connects stdio transport
+  index.ts        # stdio entry — loadStdioDotenv(), then runMcp({ name, version,
+                  #   banner, tools: [register*Tools…] }) from @chrischall/mcp-utils
+  dotenv.ts       # loadStdioDotenv() — the `.env` bootstrap. Imported ONLY by
+                  #   index.ts: it uses import.meta.url + async I/O, which crash
+                  #   a Worker isolate at startup (see Quirks)
   version.ts      # VERSION const (// x-release-please-version)
   client.ts       # GeminiClient — module-level singleton `client`; builds two
                   #   createApiClient instances (generateContent + Interactions);
@@ -63,15 +66,27 @@ src/
                   #   aggregation) + output writing (slugify, uniquePath, writeImage,
                   #   resolveOutputDir, resolveImagePath)
   clipboard.ts    # readClipboardImage() — macOS-only osascript+sips clipboard grab
+  storage/media.ts# MediaSink — where generated media goes. createDiskSink()
+                  #   (stdio: resolveOutputDir + writeMedia, unchanged) and
+                  #   createR2Sink() (Worker: R2 put → URL). `persistsFiles`
+                  #   is the capability flag every disk-only feature gates on
+  worker.ts       # Cloudflare Worker entry — createConnector(); NOT in the tsc
+                  #   build (wrangler compiles it). See docs/DEPLOY-CONNECTOR.md
+  gemini-auth.ts  # ConnectorAuth for the hosted connector: one API-key field,
+                  #   verified via listModels(). Type-only connector import
   sidecar.ts      # readSidecars()/findInteractionImages()/latestInteractionId() —
                   #   reads the <image>.json sidecars as an on-disk chain index;
                   #   backs both chain recoveries in tools/interact.ts. Never throws
                   #   (missing dir / malformed JSON are skipped) — recovery is
                   #   best-effort and must not fail a recoverable call
-  jobs.ts         # in-memory per-process job registry: dispatch() dedups
-                  #   in-flight/keyed identical generation calls (idempotency #53)
-                  #   and backs async job handles (#52); fingerprintRequest(),
-                  #   getJobResult(), __resetJobRegistry() (test-only)
+  jobs.ts         # JobRegistry — in-memory job store, ONE PER SESSION (never a
+                  #   module global): dispatch() dedups in-flight/keyed identical
+                  #   generation calls (idempotency #53) and backs async job
+                  #   handles (#52); getResult(); plus fingerprintRequest() (pure)
+  session.ts      # SessionState — ALL per-user memory: the JobRegistry,
+                  #   lastInteractionId (+ music/video), writtenOutputs. Hangs
+                  #   off GeminiClient as `client.session`. src/ holds no
+                  #   module-level mutable state (see Quirks)
   tools/
     models.ts     # gemini_list_models                       (registerModelTools)
     generate.ts   # gemini_image_generate, gemini_image_edit (registerGenerateTools)
@@ -209,7 +224,13 @@ attaches to it (a host-timeout retry race, never a deliberate variation); and
 the recorded result for `JOB_TTL_MS` (10 min). Either way the reused result is
 annotated `reused: true` + `reused_job_id`, and no second upstream (billable)
 call is made. Failed jobs are not reused. Registry is bounded (TTL + `JOB_MAX`);
-`__resetJobRegistry()` clears it between tests.
+`client.session.reset()` clears it between tests.
+
+**The registry is per SESSION, not per process** — it lives at
+`client.session.jobs` (`src/session.ts`). On the hosted connector one Cloudflare
+isolate serves many authenticated sessions, so a module-level registry let user
+B replay user A's result via a colliding `idempotency_key` ("1", "test") and
+attach to A's in-flight billable job via `fingerprintRequest`. See Quirks.
 
 **Async job handle** (`jobs.ts`, issue #52). The same registry backs an async
 escape hatch for hosts whose tools/call timeout can't be tamed (Claude Desktop).
@@ -220,8 +241,37 @@ work continues in the background. The caller polls **`gemini_get_result`**
 recorded result payload (image paths / inline + meta); `failed` → the recorded
 error; unknown/expired → an actionable error pointing at the output dir /
 sidecar. `async` composes with idempotency (an `async` call that dedups returns
-the matching job's id). `dispatch()` (in `jobs.ts`) is the one seam that owns
-sync-vs-async and all dedup.
+the matching job's id). `JobRegistry.dispatch()` (in `jobs.ts`) is the one seam
+that owns sync-vs-async and all dedup. A `job_id` from another session is simply
+absent from this session's registry, so polling it takes the unknown-id path.
+
+**Hosted connector (Cloudflare Worker).** `src/worker.ts` serves the same tools
+over streamable HTTP to claude.ai via `createConnector` (`@chrischall/mcp-connector`)
+behind `@cloudflare/workers-oauth-provider`. Each user supplies their own Gemini
+API key on the login page (`src/gemini-auth.ts`, verified with `listModels()`,
+stored in `OAUTH_KV`), and `buildClient` makes one `GeminiClient` **per session** —
+never a shared singleton. A Worker has no filesystem, which drives everything else:
+
+- **Media goes through a `MediaSink`** (`src/storage/media.ts`), threaded into
+  `emit`/`emitMedia` via `client.mediaSink`. Disk sink (stdio, the default when
+  no sink is passed) is byte-identical to the old inline `writeMedia` path; R2
+  sink puts objects and returns URLs — or honest `r2://bucket/key` refs when
+  `MEDIA_PUBLIC_BASE_URL` is unset, because a private bucket has no public URL
+  and inventing one hands back a 404.
+- **`sink.persistsFiles` gates every disk-only claim.** No sidecar is written on
+  R2, so nothing in the result may mention one — `timeoutRiskHint` swaps its
+  "look in the output dir" advice for `async: true`, and `emitMedia` adds
+  `storage`/`storage_note` saying the values are URLs, not paths. **Don't
+  reintroduce an ungated "wrote &lt;path&gt;" / sidecar field.**
+- **`gemini_video_generate` is deliberately NOT registered** on the Worker: MCP
+  has no inline video content block, so video output is disk-only. Audio does
+  have one, so music is served.
+- **Disk-only *inputs* fail fast**, via `assertLocalInputsAvailable` at the top
+  of each handler (before any billable call): `images`/`master_images`,
+  `from_clipboard`, `video_path` → an `McpToolError` naming `images_base64` /
+  `video_url` **in the message**, not just the hint (MCP drops hints).
+  `child_process` stays off the Worker path — the clipboard module is still only
+  dynamically imported.
 
 **Image inputs** (`gatherImageInputs`) come from `images` (file paths),
 `images_base64` (raw base64 or `data:` URIs, MIME sniffed from bytes), and
@@ -342,6 +392,36 @@ caller to display them. `search_types` is Interactions-only; don't add it to
   the GET poll returns it **unwrapped** (verified; see `docs/GEMINI-API.md`).
   The session URL is self-authorizing (no api-key header on finalize). The
   PROCESSING→ACTIVE poll goes through the shared client.
+- **Nothing wrangler bundles may touch module scope.** `src/worker.ts` pulls in
+  `client.ts` and everything under it, so every module-scope line there runs
+  during Cloudflare isolate startup — where global-scope I/O is forbidden and
+  **wrangler's bundle leaves `import.meta.url` undefined**. A module-scope
+  `fileURLToPath(import.meta.url)` in client.ts took the whole connector down
+  with `The Workers runtime failed to start` while every test stayed green: the
+  workers-pool suite loads modules through Vite, which *does* define
+  `import.meta.url`, so it cannot see this class of bug. `tests/connector-boot.test.ts`
+  boots the real `wrangler dev` bundle and is the only guard that can. Keep the
+  stdio-only `.env` bootstrap in `src/dotenv.ts` (imported solely by
+  `src/index.ts`), and keep `client.ts` side-effect-free.
+- **No module-level mutable state in `src/` — it leaks across tenants.**
+  Cloudflare shares ONE Worker isolate across many Durable Object instances, so
+  a module-level `Map`/`let` is shared by every authenticated claude.ai session
+  in that isolate. The per-session `GeminiClient` isolates the API key and
+  nothing else. When the job registry and `lastInteractionId` lived at module
+  scope, a colliding `idempotency_key` handed user B user A's recorded result
+  verbatim (A's media refs, A's interaction id), an identical prompt attached B
+  to A's in-flight *billable* job (`fingerprintRequest` excludes the seed, the
+  output path AND the key), and `continue_last: true` resumed A's interaction
+  under B's key. All such memory now lives in `SessionState` (`src/session.ts`)
+  reached as `client.session`. Anything to remember across calls goes there —
+  never a module global. Guarded by `tests/session-isolation.test.ts`.
+- **The API key resolves at REQUEST time, not in the constructor.**
+  `requireKey()` reads `$GEMINI_API_KEY` per request (an explicitly-injected key
+  — the connector's per-session key — wins). That keeps the config error
+  deferred to the first tool call *and* makes module-evaluation order
+  irrelevant: `index.ts` loads `.env` after importing the `client` singleton,
+  and latching the key in the constructor would silently read "unset". Don't
+  "optimize" it back into the constructor.
 - **`imagen-*` excluded.** `filterImageModels` keeps Gemini image models but drops
   `imagen-*` — those use a different `:predict` API this server doesn't implement.
 
@@ -418,3 +498,7 @@ write-verification, transport archetypes, testing traps) live in
 - **Don't register tools that can't be tested against a mocked `fetchImpl`** (and a
   mocked clipboard `Runner`). All network/shell access must be injectable.
 - **Don't bump versions speculatively.** release-please owns that.
+- **Don't add module-scope state, `import.meta.url`, top-level `await` or I/O to
+  anything `src/worker.ts` imports.** The first crashes the isolate on deploy
+  (invisible to the workers-pool suite); the second leaks state between
+  authenticated connector sessions. See Quirks.

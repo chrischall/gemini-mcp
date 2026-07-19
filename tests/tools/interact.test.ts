@@ -5,7 +5,6 @@ import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerInteractTools } from '../../src/tools/interact.js';
 import { client } from '../../src/client.js';
-import { __resetJobRegistry } from '../../src/jobs.js';
 
 vi.mock('../../src/clipboard.js', () => ({
   readClipboardImage: vi.fn().mockResolvedValue({ base64: 'Y2xpcGJvYXJk', mimeType: 'image/jpeg' }),
@@ -17,7 +16,7 @@ const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAs
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-interact-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); __resetJobRegistry(); });
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); client.session.reset(); });
 
 describe('gemini_interact description', () => {
   it('states it is the preferred tool for iterative refinement and how to chain', async () => {

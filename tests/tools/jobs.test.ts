@@ -6,7 +6,6 @@ import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerGenerateTools } from '../../src/tools/generate.js';
 import { registerJobTools } from '../../src/tools/jobs.js';
 import { client } from '../../src/client.js';
-import { __resetJobRegistry } from '../../src/jobs.js';
 
 vi.mock('../../src/clipboard.js', () => ({
   readClipboardImage: vi.fn().mockResolvedValue({ base64: 'Y2xpcGJvYXJk', mimeType: 'image/jpeg' }),
@@ -15,7 +14,7 @@ vi.mock('../../src/clipboard.js', () => ({
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-jobs-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); __resetJobRegistry(); });
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); client.session.reset(); });
 
 const tick = () => new Promise((r) => setImmediate(r));
 // The registry is a module-level singleton, so a job started on one harness is

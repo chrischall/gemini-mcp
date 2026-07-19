@@ -4,8 +4,8 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import type { GeminiClient, GeneratedImage } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, type NamedImage } from './shared.js';
-import { dispatch, fingerprintRequest } from '../jobs.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, type NamedImage } from './shared.js';
+import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 export function registerSetTools(server: McpServer, client: GeminiClient): void {
@@ -28,6 +28,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
       },
     },
     async (args, extra) => {
+      assertLocalInputsAvailable(client.mediaSink, args);
       // `scenes` is min(1) at the schema, so a non-undefined value is non-empty.
       if ((args.scenes && args.count) || (!args.scenes && !args.count)) {
         throw new McpToolError('Provide exactly one of `scenes` or `count`.');
@@ -43,7 +44,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         thinking_level: args.thinking_level, google_search: args.google_search,
         master_images: args.master_images, master_images_base64: args.master_images_base64, from_clipboard: args.from_clipboard,
       });
-      return dispatch({ toolName: 'gemini_image_set', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_image_set', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const seed = pickSeed(args.seed);
         const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level, googleSearch: args.google_search, timeoutMs: args.timeout_ms };
         const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
@@ -89,9 +90,9 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         if (masterResult.grounding) meta.grounding = masterResult.grounding;
         // A set is master + N scenes in one tools/call — the most timeout-prone
         // tool. Effective image count drives the risk hint.
-        const risk = timeoutRiskHint({ model, imageSize: args.image_size, count: named.length });
+        const risk = timeoutRiskHint({ model, imageSize: args.image_size, count: named.length, persistsFiles: client.mediaSink?.persistsFiles });
         if (risk) meta.timeout_risk = risk;
-        return emit(named, args, meta);
+        return emit(named, { ...args, sink: client.mediaSink }, meta);
       });
     },
   );

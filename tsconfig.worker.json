@@ -12,7 +12,13 @@
   "compilerOptions": {
     "noEmit": true,
     "rootDir": ".",
-    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"]
+    // `node` is here alongside the Workers types because wrangler.jsonc enables
+    // `nodejs_compat`: the worker genuinely runs `node:path`/`node:fs`-importing
+    // modules (client.ts → images.ts). Without it every shared `src/` module
+    // this entrypoint pulls in fails to typecheck on its node: imports. Order
+    // matters — the Workers types must win for the globals they both declare,
+    // and skipLibCheck (inherited) absorbs the duplicate lib declarations.
+    "types": ["node", "@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"]
   },
   "include": ["worker-env.d.ts", "src/worker.ts", "tests/worker*.test.ts"],
   "exclude": []

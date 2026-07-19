@@ -1,10 +1,15 @@
-import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { loadDotenvSafely, readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
+import { basename } from 'node:path';
+import { readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, DEFAULT_VIDEO_MODEL, DEFAULT_MUSIC_MODEL, type GeminiModel, type RawModel } from './models.js';
+import { createDiskSink, type MediaSink } from './storage/media.js';
+import { SessionState } from './session.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-await loadDotenvSafely({ path: join(__dirname, '..', '.env'), override: false });
+// NOTE: this module must stay SIDE-EFFECT-FREE at module scope — no I/O, no
+// top-level await, no `import.meta.url`. `src/worker.ts` imports it, so every
+// line here runs during Cloudflare isolate startup, where global-scope I/O is
+// forbidden and wrangler's bundle leaves `import.meta.url` undefined. The
+// stdio `.env` bootstrap that used to live here now lives in `src/dotenv.ts`,
+// imported only by `src/index.ts`. Guarded by tests/connector-boot.test.ts.
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'; // v1 lacks gemini-3-pro-image; confirmed via Task 5
 const SERVICE = 'Gemini';
@@ -224,24 +229,54 @@ export interface GenerateOpts {
   timeoutMs?: number;
 }
 
+export interface GeminiClientOptions {
+  fetchImpl?: typeof fetch;
+  sleep?: (ms: number) => Promise<void>;
+  /**
+   * Explicit API key, for runtimes that have no ambient env — notably the
+   * hosted connector, which builds one client PER AUTHENTICATED USER from the
+   * key that user supplied at OAuth time. Omitted (the stdio path) it falls
+   * back to `$GEMINI_API_KEY` exactly as before.
+   */
+  apiKey?: string;
+  /**
+   * Where generated media is persisted. Defaults to the disk sink, so the stdio
+   * server behaves identically to before this seam existed; the Worker passes
+   * an R2-backed sink because it has no filesystem.
+   */
+  mediaSink?: MediaSink;
+}
+
 export class GeminiClient {
-  private readonly apiKey: string | null;
-  private readonly configError: Error | null;
+  /**
+   * A key handed in explicitly (the connector's per-session key). When absent
+   * the key is read from the environment at REQUEST time, not here — see
+   * `requireKey`.
+   */
+  private readonly explicitApiKey: string | undefined;
   private readonly apis = new Map<number, { api: ApiClient; interactionsApi: ApiClient }>();
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  /**
+   * The media destination for every tool this client is handed to. Public and
+   * readonly: `tools/*` read `client.mediaSink` to decide disk-vs-URL output
+   * AND whether disk-only *inputs* (local paths, clipboard, video upload) are
+   * even available on this runtime.
+   */
+  readonly mediaSink: MediaSink;
 
-  constructor(opts: { fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void> } = {}) {
-    const key = readEnvVar('GEMINI_API_KEY');
-    if (!key) {
-      this.apiKey = null;
-      this.configError = new McpToolError('GEMINI_API_KEY environment variable is required', {
-        hint: 'Create a key at https://aistudio.google.com/apikey and set GEMINI_API_KEY in your MCP host env or .env',
-      });
-    } else {
-      this.apiKey = key;
-      this.configError = null;
-    }
+  /**
+   * This client's session memory — job registry, last-interaction id, written
+   * outputs. One client is one session: the hosted connector builds a client
+   * per authenticated user, so hanging the state here is what keeps it from
+   * leaking between tenants sharing an isolate (see src/session.ts). The stdio
+   * server is single-user, so its one singleton client is one session.
+   */
+  readonly session = new SessionState();
+
+  constructor(opts: GeminiClientOptions = {}) {
+    this.mediaSink = opts.mediaSink ?? createDiskSink();
+    this.explicitApiKey = opts.apiKey?.trim() || undefined;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
@@ -278,9 +313,31 @@ export class GeminiClient {
     return entry;
   }
 
+  /**
+   * The API key for this request: an explicitly-injected key (the connector's
+   * per-session key) else `$GEMINI_API_KEY`.
+   *
+   * Resolved HERE, at request time, not in the constructor — same as every
+   * other env var this client reads. Two reasons:
+   *
+   * 1. It keeps the actionable config error deferred to the first tool call, so
+   *    the server still boots and answers a host's install-time `tools/list`
+   *    probe without a key. (That was already true; this preserves it.)
+   * 2. It makes module-evaluation order irrelevant. `src/index.ts` loads `.env`
+   *    before serving, and reading the key in the constructor meant the
+   *    `client` singleton — constructed when `client.js` is first evaluated —
+   *    could latch "unset" before dotenv ran, depending on import ordering.
+   *    That is an invisible, silent failure (the key just stops working); not
+   *    depending on the order removes the hazard instead of documenting it.
+   */
   private requireKey(): string {
-    if (this.configError) throw this.configError;
-    return this.apiKey!;
+    const key = this.explicitApiKey || readEnvVar('GEMINI_API_KEY');
+    if (!key) {
+      throw new McpToolError('GEMINI_API_KEY environment variable is required', {
+        hint: 'Create a key at https://aistudio.google.com/apikey and set GEMINI_API_KEY in your MCP host env or .env',
+      });
+    }
+    return key;
   }
 
   /** The default model after env override (no per-call arg). */

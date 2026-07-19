@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness } from '@chrischall/mcp-utils/test';
-import { registerInteractTools, __resetInteractSessionForTest } from '../../src/tools/interact.js';
+import { registerInteractTools } from '../../src/tools/interact.js';
 import { client } from '../../src/client.js';
 
 const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AJQAB/9k=';
@@ -14,7 +14,7 @@ beforeEach(() => {
   // Explicitly reset the module-level session memory so these tests don't rely
   // on `lastInteractionId` being unset at module load — they stay correct even
   // if another test (or a shuffled order) populated it first.
-  __resetInteractSessionForTest();
+  client.session.reset();
 });
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 

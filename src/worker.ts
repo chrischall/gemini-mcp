@@ -1,42 +1,73 @@
-import { DurableObject } from 'cloudflare:workers';
+import { createConnector } from '@chrischall/mcp-connector';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { VERSION } from './version.js';
+import { GeminiClient } from './client.js';
+import { geminiAuth, type GeminiProps } from './gemini-auth.js';
+import { createR2Sink } from './storage/media.js';
+import { registerModelTools } from './tools/models.js';
+import { registerGenerateTools } from './tools/generate.js';
+import { registerSetTools } from './tools/set.js';
+import { registerInteractTools } from './tools/interact.js';
+import { registerMusicTools } from './tools/music.js';
+import { registerJobTools } from './tools/jobs.js';
 
 /**
- * Placeholder connector entrypoint.
+ * The hosted connector: gemini-mcp over streamable HTTP for claude.ai, behind
+ * @cloudflare/workers-oauth-provider. The stdio entry point is `src/index.ts`;
+ * this file is compiled only by wrangler (see tsconfig.json's exclude) and
+ * typechecked only by tsconfig.worker.json.
  *
- * `wrangler.jsonc` names this file as `main` and declares the `GeminiMcpAgent`
- * Durable Object in migration `v1`, so BOTH `wrangler deploy` and the workerd
- * test pool fail to build without it — the scaffold is not loadable otherwise.
- *
- * The real connector (an `agents` McpAgent behind
- * @cloudflare/workers-oauth-provider, serving the gemini tools over HTTP with
- * media written to R2) replaces this. Until then this exports the DO class the
- * migration expects and answers a health probe, nothing more.
+ * Operator runbook: docs/DEPLOY-CONNECTOR.md.
  */
-/** Declared once in worker-env.d.ts, which merges into `Cloudflare.Env` so the
- *  workerd test pool's `env` is typed from the same source. */
+
+/** Declared once in worker-env.d.ts, which merges into `Cloudflare.Env`. */
 export type Env = Cloudflare.Env;
 
 /**
- * Named to match `migrations[0].new_sqlite_classes` — a shipped migration tag
- * must never be rewritten, so this class name is fixed even though the
- * implementation is still a stub.
+ * The registrars the hosted connector serves.
+ *
+ * **`registerVideoTools` is deliberately absent.** MCP defines no inline video
+ * content block, so `emitMedia` (tools/shared.ts) always writes video output to
+ * a filesystem — and a Worker has none. Registering `gemini_video_generate`
+ * here would advertise a tool that cannot return its result. Video stays a
+ * stdio-only capability.
+ *
+ * Exported so tests can assert the roster without booting an MCP session.
  */
-export class GeminiMcpAgent extends DurableObject<Env> {
-  async fetch(_request: Request): Promise<Response> {
-    return new Response('gemini-connector: not implemented', { status: 501 });
-  }
-}
+export const CONNECTOR_TOOLS: Array<(server: McpServer, client: GeminiClient) => void> = [
+  registerModelTools,
+  registerGenerateTools,
+  registerSetTools,
+  registerInteractTools,
+  registerMusicTools,
+  registerJobTools,
+];
 
-export default {
-  async fetch(request: Request, _env: Env): Promise<Response> {
-    const { pathname } = new URL(request.url);
+const { Agent, handler } = createConnector<GeminiProps, GeminiClient>({
+  name: 'gemini-mcp',
+  version: VERSION,
+  auth: geminiAuth,
+  // One client per authenticated session, keyed on that user's own API key —
+  // never a module-level singleton, which would leak one user's key to every
+  // other session sharing the isolate. The R2 sink replaces the filesystem the
+  // stdio server writes to; `MEDIA_PUBLIC_BASE_URL` is what turns the stored
+  // objects into fetchable URLs (unset → the sink returns honest `r2://` refs
+  // and says they are not public, rather than inventing a link that 404s).
+  buildClient: (props, env: Env) =>
+    new GeminiClient({
+      apiKey: props.apiKey,
+      mediaSink: createR2Sink(env.MEDIA_BUCKET, {
+        publicBaseUrl: env.MEDIA_PUBLIC_BASE_URL,
+        bucketName: 'gemini-connector-media',
+      }),
+    }),
+  tools: CONNECTOR_TOOLS as Array<(server: unknown, client: GeminiClient) => void>,
+});
 
-    // Used by docs/DEPLOY-CONNECTOR.md step 6 to verify a deploy over the
-    // *.workers.dev URL while the custom domain's TLS cert provisions.
-    if (pathname === '/' || pathname === '/health') {
-      return Response.json({ ok: true, service: 'gemini-connector' });
-    }
+/**
+ * Named to match `migrations[0].new_sqlite_classes` in wrangler.jsonc. A
+ * shipped migration tag must never be rewritten, so this export name is fixed.
+ */
+export { Agent as GeminiMcpAgent };
 
-    return new Response('Not found', { status: 404 });
-  },
-} satisfies ExportedHandler<Env>;
+export default handler;
