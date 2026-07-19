@@ -302,6 +302,18 @@ caller to display them. `search_types` is Interactions-only; don't add it to
 - **TDD.** Write a failing test before implementation. `fetch` is mocked by
   injecting `fetchImpl` into `GeminiClient`; clipboard via an injectable `Runner`.
   No real API calls and no real shell-outs in tests.
+- **`npm test` is the whole CI gate.** `.github/workflows/ci.yml` delegates to the
+  shared reusable workflow with `test-command: npm test`, so anything not
+  reachable from that script does not run in CI *at all*. It therefore chains:
+  node typecheck (`tsconfig.test.json`, which covers `tests/` — `tsconfig.json`
+  scopes `include` to `src` for the build, so tests are otherwise unchecked) →
+  `vitest run` (node pool) → `worker:test` (which itself chains `worker:typecheck`,
+  the only thing that typechecks `src/worker.ts` / `src/gemini-auth.ts`, and runs
+  the workers pool under workerd). **Add new gates here, not to the workflow
+  file** — a PR that edits `.github/workflows/*` can't be auto-reviewed (the
+  Claude App validates the workflow against the default branch, so the review
+  emits no verdict and the PR never arms), which turns a one-line CI change into
+  a manual merge. `tests/ci-gates.test.ts` guards the chain.
 - **Errors.** Throw `McpToolError` (from `@chrischall/mcp-utils`) with an
   actionable `hint` (e.g. missing key → aistudio link; no image returned → "try
   rephrasing, safety filter"). HTTP error *bodies* are redacted and truncated for
