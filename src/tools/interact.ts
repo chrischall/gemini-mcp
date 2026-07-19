@@ -5,7 +5,7 @@ import { resolveModel } from '../models.js';
 import { ChainedRequest404Error, type GeminiClient } from '../client.js';
 import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedImage } from './shared.js';
 import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -55,6 +55,22 @@ function splitReattachedOutputs(images: string[]): { kept: string[]; dropped: st
 }
 
 export function registerInteractTools(server: McpServer, client: GeminiClient): void {
+  // The sidecar/re-anchor half of this description is only true where there is
+  // a filesystem. Describing it anyway on the hosted connector would tell the
+  // model to go looking in an output dir that does not exist — so the
+  // description is built from the sink's capability, not hardcoded.
+  const onDiskRuntime = client.mediaSink?.persistsFiles ?? true;
+  const recoveryDescription = onDiskRuntime
+    ? 'If a call times out on the client side, the generation usually still completes: the image plus a ' +
+      '`<image>.json` sidecar recording its interaction id land in the output dir, and `continue_last: true` ' +
+      'still resumes that interaction — check the output dir before re-issuing (a re-issue is a second billable generation). ' +
+      'If a chained call 404s, this tool re-anchors itself on the prior output image and re-issues un-chained: ' +
+      'success is reported as `chain_recovered` (the chain was the problem, and you get your image anyway); ' +
+      'a second 404 is reported as the interaction id NOT being the cause (check the model id / files uri instead). '
+    : 'This connector has no filesystem: there is no output dir and no `<image>.json` sidecar, so a lost response ' +
+      'cannot be recovered from disk and a 404 on a chained call cannot be re-anchored automatically. Capture the ' +
+      'returned `interaction_id` from every result, and use `async: true` + gemini_get_result for long generations. ';
+
   server.registerTool(
     'gemini_interact',
     {
@@ -64,12 +80,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         'To refine, capture the returned interaction `id` and pass it as `previous_interaction_id` ' +
         'on the next call — do NOT start a new interaction or re-upload the image for each tweak. ' +
         '`continue_last: true` chains from this session\'s most recent interaction without threading the id. ' +
-        'If a call times out on the client side, the generation usually still completes: the image plus a ' +
-        '`<image>.json` sidecar recording its interaction id land in the output dir, and `continue_last: true` ' +
-        'still resumes that interaction — check the output dir before re-issuing (a re-issue is a second billable generation). ' +
-        'If a chained call 404s, this tool re-anchors itself on the prior output image and re-issues un-chained: ' +
-        'success is reported as `chain_recovered` (the chain was the problem, and you get your image anyway); ' +
-        'a second 404 is reported as the interaction id NOT being the cause (check the model id / files uri instead). ' +
+        recoveryDescription +
         'Output is JPEG.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
@@ -143,6 +154,11 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
       },
     },
     async (args, extra) => {
+      assertLocalInputsAvailable(client.mediaSink, args);
+      // Every sidecar-backed recovery below reads the output dir off disk. A
+      // sink with no filesystem has none, so those paths are skipped entirely
+      // rather than left to silently read an empty directory.
+      const onDisk = client.mediaSink?.persistsFiles ?? true;
       let previousInteractionId = args.previous_interaction_id;
       // `continue_last` resumes the in-memory id first, then falls back to the
       // newest sidecar in the output dir. The in-memory id dies with the server
@@ -152,13 +168,15 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
       let continuedFromSidecar = false;
       if (!previousInteractionId && args.continue_last) {
         previousInteractionId = lastInteractionId;
-        if (!previousInteractionId) {
+        if (!previousInteractionId && onDisk) {
           previousInteractionId = await latestInteractionId(resolveOutputDir(args.output_dir));
           continuedFromSidecar = previousInteractionId !== undefined;
         }
         if (!previousInteractionId) {
           throw new McpToolError('No previous interaction to continue in this session.', {
-            hint: 'Call gemini_interact once without continue_last first, or pass an explicit previous_interaction_id.',
+            hint: onDisk
+              ? 'Call gemini_interact once without continue_last first, or pass an explicit previous_interaction_id.'
+              : 'Call gemini_interact once without continue_last first, or pass an explicit previous_interaction_id. (This hosted connector has no filesystem, so there are no <image>.json sidecars to recover an id from across restarts.)',
           });
         }
       }
@@ -213,6 +231,9 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
             return await client.interact({ ...callOpts, images: inputs.length ? inputs : undefined, previousInteractionId });
           } catch (err) {
             if (!(err instanceof ChainedRequest404Error)) throw err;
+            // Re-anchoring needs the prior output image, which only the sidecar
+            // index can locate — and that index lives on disk.
+            if (!onDisk) throw err;
             const reanchorOn = await findInteractionImages(resolveOutputDir(args.output_dir), err.previousInteractionId);
             if (!reanchorOn.length) throw err;
             const carried = await Promise.all(reanchorOn.map((p) => readImageAsInline(p)));
@@ -251,7 +272,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         if (r.text) meta.text = r.text;
         if (r.grounding) meta.grounding = r.grounding;
         if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
-        const risk = timeoutRiskHint({ model, imageSize: args.image_size });
+        const risk = timeoutRiskHint({ model, imageSize: args.image_size, persistsFiles: onDisk });
         if (risk) meta.timeout_risk = risk;
 
         const slug = args.filename ? baseName(args.filename) : slugify(args.input);
@@ -260,8 +281,10 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           base: r.images.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
         }));
 
-        // writeImage returns already-resolved absolute paths.
-        return emit(named, args, meta, async (paths) => {
+        // writeImage returns already-resolved absolute paths. `emit` only
+        // invokes this callback for a filesystem-backed sink, so there is no
+        // branch here claiming a sidecar the hosted connector cannot write.
+        return emit(named, { ...args, sink: client.mediaSink }, meta, async (paths) => {
           for (const p of paths) writtenOutputs.add(p);
           // Sidecar per image so the interaction id survives a lost MCP response
           // (host timeout). Best-effort: the image is already on disk and the id

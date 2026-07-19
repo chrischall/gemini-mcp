@@ -63,6 +63,14 @@ src/
                   #   aggregation) + output writing (slugify, uniquePath, writeImage,
                   #   resolveOutputDir, resolveImagePath)
   clipboard.ts    # readClipboardImage() — macOS-only osascript+sips clipboard grab
+  storage/media.ts# MediaSink — where generated media goes. createDiskSink()
+                  #   (stdio: resolveOutputDir + writeMedia, unchanged) and
+                  #   createR2Sink() (Worker: R2 put → URL). `persistsFiles`
+                  #   is the capability flag every disk-only feature gates on
+  worker.ts       # Cloudflare Worker entry — createConnector(); NOT in the tsc
+                  #   build (wrangler compiles it). See docs/DEPLOY-CONNECTOR.md
+  gemini-auth.ts  # ConnectorAuth for the hosted connector: one API-key field,
+                  #   verified via listModels(). Type-only connector import
   sidecar.ts      # readSidecars()/findInteractionImages()/latestInteractionId() —
                   #   reads the <image>.json sidecars as an on-disk chain index;
                   #   backs both chain recoveries in tools/interact.ts. Never throws
@@ -222,6 +230,34 @@ error; unknown/expired → an actionable error pointing at the output dir /
 sidecar. `async` composes with idempotency (an `async` call that dedups returns
 the matching job's id). `dispatch()` (in `jobs.ts`) is the one seam that owns
 sync-vs-async and all dedup.
+
+**Hosted connector (Cloudflare Worker).** `src/worker.ts` serves the same tools
+over streamable HTTP to claude.ai via `createConnector` (`@chrischall/mcp-connector`)
+behind `@cloudflare/workers-oauth-provider`. Each user supplies their own Gemini
+API key on the login page (`src/gemini-auth.ts`, verified with `listModels()`,
+stored in `OAUTH_KV`), and `buildClient` makes one `GeminiClient` **per session** —
+never a shared singleton. A Worker has no filesystem, which drives everything else:
+
+- **Media goes through a `MediaSink`** (`src/storage/media.ts`), threaded into
+  `emit`/`emitMedia` via `client.mediaSink`. Disk sink (stdio, the default when
+  no sink is passed) is byte-identical to the old inline `writeMedia` path; R2
+  sink puts objects and returns URLs — or honest `r2://bucket/key` refs when
+  `MEDIA_PUBLIC_BASE_URL` is unset, because a private bucket has no public URL
+  and inventing one hands back a 404.
+- **`sink.persistsFiles` gates every disk-only claim.** No sidecar is written on
+  R2, so nothing in the result may mention one — `timeoutRiskHint` swaps its
+  "look in the output dir" advice for `async: true`, and `emitMedia` adds
+  `storage`/`storage_note` saying the values are URLs, not paths. **Don't
+  reintroduce an ungated "wrote &lt;path&gt;" / sidecar field.**
+- **`gemini_video_generate` is deliberately NOT registered** on the Worker: MCP
+  has no inline video content block, so video output is disk-only. Audio does
+  have one, so music is served.
+- **Disk-only *inputs* fail fast**, via `assertLocalInputsAvailable` at the top
+  of each handler (before any billable call): `images`/`master_images`,
+  `from_clipboard`, `video_path` → an `McpToolError` naming `images_base64` /
+  `video_url` **in the message**, not just the hint (MCP drops hints).
+  `child_process` stays off the Worker path — the clipboard module is still only
+  dynamically imported.
 
 **Image inputs** (`gatherImageInputs`) come from `images` (file paths),
 `images_base64` (raw base64 or `data:` URIs, MIME sniffed from bytes), and

@@ -4,7 +4,7 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import type { GeminiClient, GroundingResult } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedImage } from './shared.js';
 import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -38,6 +38,10 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
       },
     },
     async (args, extra) => {
+      // Local-path / clipboard / disk-upload inputs simply do not exist on the
+      // hosted connector. Fail here — before the confirm gate previews files and
+      // before any billable call — with the base64/URL alternative.
+      assertLocalInputsAvailable(client.mediaSink, args);
       // Confirm-gate local file inputs: a prompt-injected `images`/`video_path`
       // could exfiltrate a local file. Pure text-to-image calls (no local input)
       // are unaffected. Dry-run makes NO API call.
@@ -93,9 +97,9 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         if (capturedGrounding) meta.grounding = capturedGrounding;
         if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
         meta.hint = REFINE_HINT;
-        const risk = timeoutRiskHint({ model, imageSize: args.image_size, count });
+        const risk = timeoutRiskHint({ model, imageSize: args.image_size, count, persistsFiles: client.mediaSink?.persistsFiles });
         if (risk) meta.timeout_risk = risk;
-        return emit(named, args, meta);
+        return emit(named, { ...args, sink: client.mediaSink }, meta);
       });
     },
   );
@@ -119,6 +123,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
       },
     },
     async (args, extra) => {
+      assertLocalInputsAvailable(client.mediaSink, args);
       const hasPaths = (args.images?.length ?? 0) > 0;
       const hasBase64 = (args.images_base64?.length ?? 0) > 0;
       if (!hasPaths && !hasBase64 && !args.from_clipboard) {
@@ -155,9 +160,9 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         if (text) meta.text = text;
         if (result.grounding) meta.grounding = result.grounding;
         meta.hint = REFINE_HINT;
-        const risk = timeoutRiskHint({ model, imageSize: args.image_size });
+        const risk = timeoutRiskHint({ model, imageSize: args.image_size, persistsFiles: client.mediaSink?.persistsFiles });
         if (risk) meta.timeout_risk = risk;
-        return emit([{ image: img, base: slug }], args, meta);
+        return emit([{ image: img, base: slug }], { ...args, sink: client.mediaSink }, meta);
       });
     },
   );

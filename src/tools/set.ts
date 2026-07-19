@@ -4,7 +4,7 @@ import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import type { GeminiClient, GeneratedImage } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, type NamedImage } from './shared.js';
 import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -28,6 +28,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
       },
     },
     async (args, extra) => {
+      assertLocalInputsAvailable(client.mediaSink, args);
       // `scenes` is min(1) at the schema, so a non-undefined value is non-empty.
       if ((args.scenes && args.count) || (!args.scenes && !args.count)) {
         throw new McpToolError('Provide exactly one of `scenes` or `count`.');
@@ -89,9 +90,9 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         if (masterResult.grounding) meta.grounding = masterResult.grounding;
         // A set is master + N scenes in one tools/call — the most timeout-prone
         // tool. Effective image count drives the risk hint.
-        const risk = timeoutRiskHint({ model, imageSize: args.image_size, count: named.length });
+        const risk = timeoutRiskHint({ model, imageSize: args.image_size, count: named.length, persistsFiles: client.mediaSink?.persistsFiles });
         if (risk) meta.timeout_risk = risk;
-        return emit(named, args, meta);
+        return emit(named, { ...args, sink: client.mediaSink }, meta);
       });
     },
   );

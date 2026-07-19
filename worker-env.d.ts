@@ -12,5 +12,11 @@ declare namespace Cloudflare {
     OAUTH_KV: KVNamespace;
     MEDIA_BUCKET: R2Bucket;
     GEMINI_API_KEY?: string;
+    /**
+     * Public base URL of MEDIA_BUCKET (R2 public dev URL or custom domain), no
+     * trailing slash. Unset → generated media is still stored, but the result
+     * reports honest `r2://bucket/key` refs instead of URLs that would 404.
+     */
+    MEDIA_PUBLIC_BASE_URL?: string;
   }
 }

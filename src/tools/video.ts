@@ -4,7 +4,7 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
-import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, type NamedMedia } from './shared.js';
+import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedMedia } from './shared.js';
 import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -51,6 +51,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
       },
     },
     async (args, extra) => {
+      assertLocalInputsAvailable(client.mediaSink, args);
       let previousInteractionId = args.previous_interaction_id;
       if (!previousInteractionId && args.continue_last) {
         if (!lastVideoInteractionId) {
@@ -94,7 +95,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
           media,
           base: r.videos.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
         }));
-        return emitMedia(named, 'video', { output_dir: args.output_dir }, meta);
+        return emitMedia(named, 'video', { output_dir: args.output_dir, sink: client.mediaSink }, meta);
       });
     },
   );

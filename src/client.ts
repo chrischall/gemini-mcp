@@ -2,6 +2,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadDotenvSafely, readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, DEFAULT_VIDEO_MODEL, DEFAULT_MUSIC_MODEL, type GeminiModel, type RawModel } from './models.js';
+import { createDiskSink, type MediaSink } from './storage/media.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 await loadDotenvSafely({ path: join(__dirname, '..', '.env'), override: false });
@@ -224,15 +225,41 @@ export interface GenerateOpts {
   timeoutMs?: number;
 }
 
+export interface GeminiClientOptions {
+  fetchImpl?: typeof fetch;
+  sleep?: (ms: number) => Promise<void>;
+  /**
+   * Explicit API key, for runtimes that have no ambient env — notably the
+   * hosted connector, which builds one client PER AUTHENTICATED USER from the
+   * key that user supplied at OAuth time. Omitted (the stdio path) it falls
+   * back to `$GEMINI_API_KEY` exactly as before.
+   */
+  apiKey?: string;
+  /**
+   * Where generated media is persisted. Defaults to the disk sink, so the stdio
+   * server behaves identically to before this seam existed; the Worker passes
+   * an R2-backed sink because it has no filesystem.
+   */
+  mediaSink?: MediaSink;
+}
+
 export class GeminiClient {
   private readonly apiKey: string | null;
   private readonly configError: Error | null;
   private readonly apis = new Map<number, { api: ApiClient; interactionsApi: ApiClient }>();
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  /**
+   * The media destination for every tool this client is handed to. Public and
+   * readonly: `tools/*` read `client.mediaSink` to decide disk-vs-URL output
+   * AND whether disk-only *inputs* (local paths, clipboard, video upload) are
+   * even available on this runtime.
+   */
+  readonly mediaSink: MediaSink;
 
-  constructor(opts: { fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void> } = {}) {
-    const key = readEnvVar('GEMINI_API_KEY');
+  constructor(opts: GeminiClientOptions = {}) {
+    this.mediaSink = opts.mediaSink ?? createDiskSink();
+    const key = opts.apiKey?.trim() || readEnvVar('GEMINI_API_KEY');
     if (!key) {
       this.apiKey = null;
       this.configError = new McpToolError('GEMINI_API_KEY environment variable is required', {

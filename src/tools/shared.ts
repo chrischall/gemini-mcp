@@ -2,7 +2,15 @@ import { z } from 'zod';
 import { textResult, McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { GeminiClient, GeneratedImage, GeneratedMedia } from '../client.js';
-import { writeMedia, resolveOutputDir, resolveVideoPath, videoMimeType } from '../images.js';
+import { resolveVideoPath, videoMimeType } from '../images.js';
+import { createDiskSink, type MediaSink } from '../storage/media.js';
+
+/**
+ * Fallback sink for call sites that pass no explicit one (every pre-existing
+ * test, and any caller constructed before the sink seam existed). The stdio
+ * server's behaviour is therefore unchanged by omission, not by convention.
+ */
+const DEFAULT_SINK = createDiskSink();
 
 /** Supported output aspect ratios (Gemini image API). */
 export const ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9', '1:4', '4:1', '1:8', '8:1'] as const;
@@ -220,8 +228,12 @@ export async function withProgressHeartbeat<T>(
  * `meta.timeout_risk` so a caller that *does* get the result is steered off the
  * slow path next time and knows the image still landed on disk when a host bails.
  * `undefined` for fast configs (no field added).
+ *
+ * `persistsFiles: false` (the hosted connector) swaps the disk-recovery half of
+ * the advice for the async job handle — pointing a Worker's caller at "look in
+ * the output dir" would be advice about a filesystem that does not exist.
  */
-export function timeoutRiskHint(opts: { model: string; imageSize?: string; count?: number }): string | undefined {
+export function timeoutRiskHint(opts: { model: string; imageSize?: string; count?: number; persistsFiles?: boolean }): string | undefined {
   // Delimiter-anchored so real Pro ids (gemini-3-pro-image, nano-banana-pro)
   // match but incidental substrings (…-prototype-…, …-flash-proxy) don't.
   const proModel = /(?:^|[-_./])pro(?:[-_./]|$)/i.test(opts.model);
@@ -231,8 +243,17 @@ export function timeoutRiskHint(opts: { model: string; imageSize?: string; count
   const why = [proModel && 'Pro model', fourK && '4K output', multi && `count=${opts.count}`]
     .filter(Boolean)
     .join(' + ');
+  const lead = `Slow config (${why}) can exceed a host's tools/call timeout (e.g. Claude Desktop ~30s, error -32001). `;
+  if (opts.persistsFiles === false) {
+    return (
+      lead +
+      `This connector has no filesystem, so a lost response cannot be recovered from disk — there is no output dir and no ` +
+      `<image>.json sidecar. Use \`async: true\` to get a job_id immediately and poll gemini_get_result, ` +
+      `or use a Flash model / drop image_size to 1K/2K for a faster in-band result.`
+    );
+  }
   return (
-    `Slow config (${why}) can exceed a host's tools/call timeout (e.g. Claude Desktop ~30s, error -32001). ` +
+    lead +
     `If the host gives up mid-generation the image is still written to disk (and gemini_interact leaves an ` +
     `<image>.json sidecar with the interaction id) — no rerun needed, just look in the output dir. ` +
     `For a faster in-band result use a Flash model, drop image_size to 1K/2K, or — in Claude Code — set MCP_TOOL_TIMEOUT.`
@@ -265,7 +286,7 @@ export interface NamedMedia { media: GeneratedMedia; base: string; }
 export async function emitMedia(
   named: NamedMedia[],
   kind: 'image' | 'video' | 'audio',
-  opts: { inline?: boolean; output_dir?: string },
+  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink },
   meta?: Record<string, unknown>,
   onWritten?: (paths: string[]) => void | Promise<void>,
 ): Promise<CallToolResult> {
@@ -277,13 +298,22 @@ export async function emitMedia(
     }
     return { content: blocks };
   }
-  const dir = resolveOutputDir(opts.output_dir);
-  const paths: string[] = [];
-  for (const n of named) paths.push(await writeMedia(dir, n.base, n.media.base64, n.media.mimeType));
-  await onWritten?.(paths);
+  const sink = opts.sink ?? DEFAULT_SINK;
+  const refs = await sink.persist(named.map((n) => ({ base: n.base, base64: n.media.base64, mimeType: n.media.mimeType })), {
+    output_dir: opts.output_dir,
+  });
+  // `onWritten` (sidecars, the written-outputs set) is meaningful only when the
+  // refs are real files. On a sink with no filesystem there is nothing to sit
+  // next to, so it is skipped rather than handed URLs it would misinterpret.
+  if (sink.persistsFiles) await onWritten?.(refs);
   // Note a downgraded inline-video request so the caller isn't left wondering.
   const note = opts.inline && kind === 'video' ? { inline_unsupported: 'video has no MCP inline content type — written to disk instead' } : {};
-  return textResult({ [`${kind}s`]: paths, ...note, ...meta });
+  // Say where the bytes actually went whenever they are NOT local paths — the
+  // key is the same (`images`/`videos`/`audios`), so without this a caller would
+  // reasonably read a URL as a file path.
+  const storageNote = sink.note();
+  const storage = sink.persistsFiles ? {} : { storage: sink.kind, storage_note: storageNote };
+  return textResult({ [`${kind}s`]: refs, ...note, ...storage, ...meta });
 }
 
 /**
@@ -292,9 +322,47 @@ export async function emitMedia(
  */
 export async function emit(
   named: NamedImage[],
-  opts: { inline?: boolean; output_dir?: string },
+  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink },
   meta?: Record<string, unknown>,
   onWritten?: (paths: string[]) => void | Promise<void>,
 ): Promise<CallToolResult> {
   return emitMedia(named.map((n) => ({ media: n.image, base: n.base })), 'image', opts, meta, onWritten);
+}
+
+/**
+ * Inputs that can only come off a local filesystem. On the hosted connector
+ * (a Cloudflare Worker) none of them exist:
+ *
+ *  - `images` / `master_images` — file paths read with `node:fs`.
+ *  - `from_clipboard` — shells out to `osascript`/`sips` via `child_process`.
+ *  - `video_path` — the Files API upload streams the file off disk.
+ *
+ * Called at the top of every generation handler, BEFORE any billable upstream
+ * call, so a caller gets a clear "use images_base64 / video_url instead"
+ * instead of an obscure module-resolution or ENOENT crash. A no-op on the disk
+ * sink, so the stdio behaviour (including its own "Image not found" errors) is
+ * untouched.
+ */
+export function assertLocalInputsAvailable(
+  sink: MediaSink | undefined,
+  args: { images?: string[]; master_images?: string[]; from_clipboard?: boolean; video_path?: string },
+): void {
+  if ((sink ?? DEFAULT_SINK).persistsFiles) return;
+  const unavailable: string[] = [];
+  if (args.images?.length) unavailable.push('`images` (local file paths)');
+  if (args.master_images?.length) unavailable.push('`master_images` (local file paths)');
+  if (args.from_clipboard) unavailable.push('`from_clipboard` (reads the macOS clipboard via child_process)');
+  if (args.video_path) unavailable.push('`video_path` (uploads a file streamed from disk)');
+  if (unavailable.length === 0) return;
+  // Remediation goes in the MESSAGE, not just `hint`: MCP error serialization
+  // surfaces the message and drops the hint, so hint-only advice is invisible
+  // exactly when it is needed.
+  const fix =
+    'Send image bytes as `images_base64` (raw base64 or a data: URI) instead of `images`/`master_images`/`from_clipboard`, ' +
+    'and reference video by `video_url` (a public YouTube URL, or a files/… uri uploaded elsewhere) instead of `video_path`.';
+  throw new McpToolError(
+    `${unavailable.join(', ')} ${unavailable.length > 1 ? 'are' : 'is'} unavailable on the hosted connector: ` +
+      `it runs on a Cloudflare Worker, which has no filesystem and no local clipboard. ${fix}`,
+    { hint: fix },
+  );
 }

@@ -4,7 +4,7 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { slugify, baseName, gatherImageInputs } from '../images.js';
 import { DEFAULT_MUSIC_MODEL } from '../models.js';
-import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, type NamedMedia } from './shared.js';
+import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedMedia } from './shared.js';
 import { dispatch, fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -47,6 +47,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
       },
     },
     async (args, extra) => {
+      assertLocalInputsAvailable(client.mediaSink, args);
       const model = args.model ?? DEFAULT_MUSIC_MODEL;
       if (args.audio_format === 'wav' && !isProModel(model)) {
         throw new McpToolError(`WAV output requires a Pro model; ${model} only produces MP3.`, {
@@ -92,7 +93,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
           media,
           base: r.audios.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
         }));
-        return emitMedia(named, 'audio', { inline: args.inline, output_dir: args.output_dir }, meta);
+        return emitMedia(named, 'audio', { inline: args.inline, output_dir: args.output_dir, sink: client.mediaSink }, meta);
       });
     },
   );
