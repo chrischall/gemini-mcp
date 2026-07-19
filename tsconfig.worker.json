@@ -1,0 +1,19 @@
+{
+  // Typecheck-only config for the WORKER half — the files tsconfig.json and
+  // tsconfig.test.json deliberately exclude because they import
+  // 'cloudflare:workers' / 'cloudflare:test', which resolve against the
+  // Cloudflare type packages rather than @types/node.
+  //
+  // Without this nothing typechecks src/worker.ts at all: wrangler and the
+  // vitest workers pool both transpile without checking types. Wired into
+  // `npm run worker:test` (see package.json), mirroring how `npm test` runs
+  // `npm run typecheck` first.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"]
+  },
+  "include": ["worker-env.d.ts", "src/worker.ts", "tests/worker*.test.ts"],
+  "exclude": []
+}

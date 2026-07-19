@@ -10,5 +10,15 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  // The Cloudflare Worker entrypoint is NOT part of the stdio build: it imports
+  // 'cloudflare:workers' / 'agents' (workerd-only) and emitting dist/worker.js
+  // would ship dead code in the npm package. wrangler compiles it separately
+  // via wrangler.jsonc. tsconfig.test.json inherits this exclude, so `npm test`
+  // does not typecheck worker sources either — tsconfig.worker.json
+  // (`npm run worker:typecheck`) covers them with the workerd type set.
+  //
+  // tests/worker*.test.ts is excluded for the same reason: it imports
+  // 'cloudflare:test', which only resolves against the pool's type package.
+  "exclude": ["src/worker.ts", "src/gemini-auth.ts", "tests/worker*.test.ts"]
 }
