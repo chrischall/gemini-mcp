@@ -4,15 +4,17 @@ Operator runbook for the **remote** MCP connector — the Cloudflare Worker that
 serves gemini-mcp over HTTP to claude.ai, as opposed to the stdio server you run
 locally.
 
-> **Deploy is MANUAL.** There is no CI deploy job and there should not be one:
-> this is a personal, single-account connector, not a fleet artifact. Nothing in
-> `.github/workflows/` touches Cloudflare. Merging to `main` publishes the npm
-> package and the MCP Registry entry; it does **not** update the Worker. If you
-> want the deployed connector to reflect `main`, run `npm run worker:deploy`
-> yourself.
+> **Deploy runs in CI.** The `deploy-connector` job in `release-please.yml`
+> redeploys the Worker at each release tag, using the shared
+> `chrischall/workflows` reusable workflow, so what is live tracks the release
+> rather than drifting behind. To deploy any other ref — `main`, a branch, a SHA
+> — use **Actions → deploy-connector → Run workflow**. `npm run worker:deploy`
+> still works locally and is what you want while iterating, but it is no longer
+> the only path. Note that merging to `main` on its own does *not* update the
+> Worker: the automatic deploy is triggered by a release, not by every merge.
 >
-> For the same reason the connector is **not** listed under `remotes` in
-> `server.json` — a personal deploy is not a registry-advertised endpoint.
+> The connector is still **not** listed under `remotes` in `server.json` — this
+> is a personal, single-account deploy, not a registry-advertised endpoint.
 
 | | |
 | --- | --- |
@@ -139,6 +141,12 @@ Callers who just want the bytes can pass `inline: true` either way.
 ```bash
 npm run worker:deploy      # wrangler deploy
 ```
+
+Releases deploy on their own — the `deploy-connector` job in `release-please.yml`
+runs this against the release tag with the `CLOUDFLARE_API_TOKEN` /
+`CLOUDFLARE_ACCOUNT_ID` repo secrets, and `Actions → deploy-connector → Run
+workflow` does the same for any ref on demand. The local command above is for the
+first deploy and for iterating.
 
 Local iteration:
 
