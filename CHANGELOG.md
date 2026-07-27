@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/chrischall/gemini-mcp/compare/v1.0.3...v1.0.4) (2026-07-27)
+
+
+### Bug Fixes
+
+* **deps:** require @chrischall/mcp-connector &gt;=1.1.1 ([#105](https://github.com/chrischall/gemini-mcp/issues/105)) ([4ea0c1f](https://github.com/chrischall/gemini-mcp/commit/4ea0c1f88a7eece12423bc57b2ad201880d7a921))
+
 ## [1.0.3](https://github.com/chrischall/gemini-mcp/compare/v1.0.2...v1.0.3) (2026-07-19)
 
 
