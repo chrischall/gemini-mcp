@@ -1,4 +1,4 @@
-import { defineConfig, configDefaults } from 'vitest/config';
+import { defineConfig, configDefaults, coverageConfigDefaults } from 'vitest/config';
 
 // The NODE suite. Worker files import 'cloudflare:workers' / 'agents', which
 // only resolve inside workerd — they run under vitest.workers.config.ts
@@ -19,7 +19,11 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      exclude: ['src/worker.ts', 'src/gemini-auth.ts'],
+      // Spread the defaults rather than replacing them: a bare list drops
+      // vitest's own node_modules/dist/test/config excludes, so those files
+      // start counting toward coverage and the percentage stops meaning
+      // what it says. (The test-level `exclude` above already does this.)
+      exclude: [...coverageConfigDefaults.exclude, 'src/worker.ts', 'src/gemini-auth.ts'],
     },
   },
 });
