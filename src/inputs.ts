@@ -213,7 +213,8 @@ async function resolveUrl(url: string, client: GeminiClient, report: ImageInputR
   if (fetched.size <= IMAGE_INLINE_MAX_BYTES) {
     return { base64: bytesToBase64(fetched.bytes), mimeType: fetched.mimeType };
   }
-  const displayName = fileNameFromUrl(url);
+  // 'image' here: this path is `images_url`, which only ever carries images.
+  const displayName = fileNameFromUrl(url, 'image');
   const uploaded = await client.uploadBytes(fetched.bytes, fetched.mimeType, displayName);
   entry.file_uri = uploaded.name;
   return { uri: uploaded.uri, mimeType: uploaded.mimeType };

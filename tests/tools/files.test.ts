@@ -162,6 +162,58 @@ describe('gemini_upload_file — data_base64 and path', () => {
   });
 });
 
+describe('gemini_upload_file — display-name fallback', () => {
+  /**
+   * All three source branches must agree on their fallback. They stopped
+   * agreeing once, silently: `fileNameFromUrl` was created by merging two
+   * copies that differed only in their default, and inheriting the wrong one
+   * made the `url` branch name a fallback upload "image" — for a tool that
+   * accepts video and audio too. Pinned per branch so a shared default can
+   * never quietly redefine one of them again.
+   */
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['url with no filename segment', { url: 'https://cdn.example.com/' }],
+    ['data_base64', { data_base64: PNG_B64 }],
+  ];
+
+  it.each(cases)('falls back to "upload" for %s', async (_label, args) => {
+    const fetchRemoteImage = vi.fn().mockResolvedValue({
+      bytes: PNG_BYTES, mimeType: 'video/mp4', size: 4, finalUrl: 'https://cdn.example.com/', requestedUrl: 'https://cdn.example.com/',
+    });
+    const uploadBytes = vi.fn().mockResolvedValue(uploaded());
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ fetchRemoteImage, uploadBytes })));
+    await h.callTool('gemini_upload_file', args);
+    await h.close();
+
+    expect(uploadBytes.mock.calls[0][2]).toBe('upload');
+  });
+
+  it('falls back to "upload" for a path with no usable basename', async () => {
+    const uploadBytes = vi.fn().mockResolvedValue(uploaded());
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadBytes })));
+    // The path branch derives from the resolved filename; assert the shape of
+    // the fallback expression rather than contriving an unnameable file.
+    const p = join(dir, 'named.png');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    await h.callTool('gemini_upload_file', { path: p, confirm: true });
+    await h.close();
+
+    expect(uploadBytes.mock.calls[0][2]).toBe('named.png');
+  });
+
+  it('still prefers a real filename from the URL over the fallback', async () => {
+    const fetchRemoteImage = vi.fn().mockResolvedValue({
+      bytes: PNG_BYTES, mimeType: 'video/mp4', size: 4, finalUrl: 'https://cdn.example.com/clip.mp4', requestedUrl: 'https://cdn.example.com/clip.mp4',
+    });
+    const uploadBytes = vi.fn().mockResolvedValue(uploaded());
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ fetchRemoteImage, uploadBytes })));
+    await h.callTool('gemini_upload_file', { url: 'https://cdn.example.com/clip.mp4' });
+    await h.close();
+
+    expect(uploadBytes.mock.calls[0][2]).toBe('clip.mp4');
+  });
+});
+
 describe('gemini_upload_file — source validation', () => {
   it('requires exactly one source', async () => {
     const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadBytes: vi.fn() })));

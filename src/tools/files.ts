@@ -154,7 +154,9 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           return client.uploadBytes(
             fetched.bytes,
             args.mime_type ?? fetched.mimeType,
-            args.display_name ?? fileNameFromUrl(args.url),
+            // 'upload', matching the data_base64 and path branches below —
+            // this tool takes video and audio too, so 'image' would be a lie.
+            args.display_name ?? fileNameFromUrl(args.url, 'upload'),
           );
         }
         if (args.data_base64) {

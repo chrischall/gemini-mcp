@@ -212,9 +212,17 @@ function assertPublicHttpsUrl(raw: string, requested: string): URL {
 /**
  * Last path segment of a URL, for the Files API display name. Cosmetic — the
  * API keys on the resource name it returns, not on this — so an unparseable
- * URL degrades to a generic name rather than failing the upload.
+ * URL degrades to `fallback` rather than failing the upload.
+ *
+ * `fallback` is REQUIRED, deliberately. This function was created by merging
+ * two byte-identical copies that differed only in their default (`'image'` in
+ * `inputs.ts`, `'upload'` in `tools/files.ts`), and taking one of those
+ * defaults silently changed the other caller's behaviour — `gemini_upload_file`
+ * started naming a fallback upload "image" even for an mp4, and disagreed with
+ * the other two branches of its own handler. With no default, merging callers
+ * that disagree stops being something you can do by accident.
  */
-export function fileNameFromUrl(url: string, fallback = 'image'): string {
+export function fileNameFromUrl(url: string, fallback: string): string {
   try {
     const name = new URL(url).pathname.split('/').filter(Boolean).pop();
     return name ? decodeURIComponent(name).slice(0, 120) : fallback;
