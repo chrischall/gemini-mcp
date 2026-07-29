@@ -91,14 +91,53 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 ### Image Generation
 | Tool | Description |
 |------|-------------|
-| `gemini_image_generate(prompt, count?, images?, images_base64?, video_url?, video_path?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Generate image(s) from a text prompt (optionally image-conditioned via `images`/`images_base64`, or video-conditioned via `video_url`/`video_path`) |
-| `gemini_image_edit(prompt, images?, images_base64?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Edit or compose input image(s) — by **path** (`images`) or **value** (`images_base64`: data URI or raw base64) — with a text instruction. Requires ≥1 input |
-| `gemini_image_set(master_prompt, scenes? \| count?, reference_mode?, master_images?, master_images_base64?, google_search?, seed?, basename?, model?, thinking_level?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it |
+| `gemini_image_generate(prompt, count?, images_url?, images_file_uris?, images?, images_base64?, video_url?, video_path?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Generate image(s) from a text prompt (optionally image-conditioned — see **Reference images** below — or video-conditioned via `video_url`/`video_path`) |
+| `gemini_image_edit(prompt, images_url?, images_file_uris?, images?, images_base64?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Edit or compose input image(s) with a text instruction. Requires ≥1 input from any of the four reference forms |
+| `gemini_image_set(master_prompt, scenes? \| count?, reference_mode?, master_images_url?, master_images_file_uris?, master_images?, master_images_base64?, google_search?, seed?, basename?, model?, thinking_level?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it. `master_images_url` / `master_images_file_uris` are resolved **once** and passed to the master *and* every scene |
+
+### Reference images — four ways in, one that costs context
+
+| Parameter | Where the bytes travel | Context cost |
+|---|---|---|
+| `images_url` (`master_images_url`) | the **server** downloads the https URL | none |
+| `images_file_uris` (`master_images_file_uris`) | a `files/<id>` reference from `gemini_upload_file` | none |
+| `images` | read off local disk (stdio builds only) | none |
+| `images_base64` | **through the tool-call JSON** | **~14k tokens per JPEG** |
+
+**Reach for `images_base64` last.** It costs ~14k tokens per modest photo, and a truncated file
+read produces base64 that still *looks* valid — so the corruption surfaces as a bad generation,
+not an error.
+
+- `images_url` accepts public `https://` URLs only (private/loopback/link-local hosts refused,
+  every redirect revalidated), must be `Content-Type: image/*`, capped at 15MB. Errors name the
+  failing URL. Over 6MB is auto-uploaded to the Files API instead of inlined.
+- `images_file_uris` accepts `files/<id>` or the full uri. Retained **~48h**; reusable across
+  any number of calls until then.
+- On stdio, an `images` path referenced **more than once in a session** is auto-uploaded to the
+  Files API (keyed on path + mtime + size) so the bytes stop being re-sent.
+
+### Files API
+| Tool | Description |
+|------|-------------|
+| `gemini_upload_file(url? \| data_base64? \| path?, mime_type?, display_name?, confirm?)` | Upload once, get a reusable `files/<id>`. Exactly one source. `url` is fetched by the server (image/video/audio, ≤100MB); `path` is stdio-only and confirm-gated; `data_base64` is the last resort |
+| `gemini_list_files(page_size?)` | List current uploads with MIME types and expiry |
+| `gemini_delete_file(file_uri, confirm)` | Delete an upload before its ~48h expiry |
+
+On the **hosted connector** there is also `POST /upload`, behind the same OAuth token as
+`/mcp` — the zero-base64 path for an agent with a shell:
+
+```bash
+curl -X POST https://<connector>/upload \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @photo.jpg
+# → {"file_uri":"files/abc123", ...}   then: images_file_uris: ["files/abc123"]
+```
 
 ### Multi-turn (Interactions API)
 | Tool | Description |
 |------|-------------|
-| `gemini_interact(input, previous_interaction_id?, continue_last?, images?, images_base64?, video_url?, video_path?, google_search?, search_types?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | **Preferred tool for iterative refinement.** Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` (or set `continue_last: true` to reuse the session's most recent one) to **iteratively refine the same image** conversationally — do NOT start a new interaction or re-upload the image per tweak. Output is **JPEG**. |
+| `gemini_interact(input, previous_interaction_id?, continue_last?, images_url?, images_file_uris?, images?, images_base64?, video_url?, video_path?, google_search?, search_types?, model?, aspect_ratio?, image_size?, thinking_level?, filename?, output_dir?, inline?)` | **Preferred tool for iterative refinement.** Generate/edit via Gemini's **Interactions API**. Returns an `interaction_id`; pass it back as `previous_interaction_id` (or set `continue_last: true` to reuse the session's most recent one) to **iteratively refine the same image** conversationally — do NOT start a new interaction or re-upload the image per tweak. Output is **JPEG**. |
 
 ### Video & Music (preview — funded account)
 | Tool | Description |
@@ -129,6 +168,23 @@ gemini_image_generate(prompt: "a cartoon fox", count: 4, output_dir: "/tmp/foxes
 ```
 gemini_image_edit(prompt: "make the background blue", images: ["/path/to/image.png"])
 → returns path to edited PNG
+```
+
+**Edit an image you only have a URL for (nothing downloads into the conversation):**
+```
+gemini_image_edit(prompt: "make the background blue", images_url: ["https://example.com/photo.jpg"])
+→ the server fetches the URL itself; returns path to edited PNG
+```
+
+**Reuse one photo across many generations (hosted connector, agent with a shell):**
+```
+$ curl -X POST https://<connector>/upload -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: image/jpeg" --data-binary @photo.jpg
+  → {"file_uri": "files/abc123"}
+
+gemini_image_edit(prompt: "make it winter",  images_file_uris: ["files/abc123"])
+gemini_image_edit(prompt: "make it sunrise", images_file_uris: ["files/abc123"])
+→ two edits, one upload, zero image bytes in context. Valid ~48h.
 ```
 
 **Generate a consistent set (master + scenes):**

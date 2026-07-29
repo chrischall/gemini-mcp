@@ -49,6 +49,46 @@ export class SessionState {
    */
   readonly writtenOutputs = new Set<string>();
 
+  /**
+   * Files API uploads this session can reuse, keyed by an opaque identity
+   * string (for a local path: absolute path + mtime + size, so an edited file
+   * is a different key rather than a stale hit).
+   *
+   * Backs the stdio "referenced twice → upload once" optimization: the second
+   * time a session sends the same picture, the bytes are replaced by a
+   * `files/…` reference that costs nothing to repeat. Session-scoped, like
+   * everything else here — a uri is minted by ONE user's API key and is only
+   * readable with that key, so sharing this map across the connector's tenants
+   * would hand out references another user cannot use and this user did not
+   * create.
+   */
+  readonly uploadCache = new Map<string, CachedUpload>();
+
+  /**
+   * How many times each identity has been referenced this session. The
+   * threshold for auto-uploading is "more than once", so the count has to
+   * outlive the call that first saw it.
+   */
+  readonly referenceCounts = new Map<string, number>();
+
+  /** Record a reference and return the running total (1 on first sight). */
+  countReference(key: string): number {
+    const next = (this.referenceCounts.get(key) ?? 0) + 1;
+    this.referenceCounts.set(key, next);
+    return next;
+  }
+
+  /** A cached upload, or `undefined` if absent or past its Files API TTL. */
+  cachedUpload(key: string, now = Date.now()): CachedUpload | undefined {
+    const hit = this.uploadCache.get(key);
+    if (!hit) return undefined;
+    if (hit.expiresAtMs <= now) {
+      this.uploadCache.delete(key);
+      return undefined;
+    }
+    return hit;
+  }
+
   /** Forget everything. Tests use this; nothing in `src/` calls it. */
   reset(): void {
     this.jobs.reset();
@@ -56,5 +96,23 @@ export class SessionState {
     this.lastMusicInteractionId = undefined;
     this.lastVideoInteractionId = undefined;
     this.writtenOutputs.clear();
+    this.uploadCache.clear();
+    this.referenceCounts.clear();
   }
+}
+
+/** One remembered Files API upload. */
+export interface CachedUpload {
+  /** `files/<id>` resource name. */
+  name: string;
+  /** Full uri to reference in a request. */
+  uri: string;
+  mimeType: string;
+  /**
+   * When this stops being usable. Derived from the API's `expirationTime` when
+   * it sends one, else a conservative 47h — the documented TTL is ~48h, and
+   * expiring our copy slightly early costs one re-upload, while expiring it
+   * late costs a failed generation.
+   */
+  expiresAtMs: number;
 }

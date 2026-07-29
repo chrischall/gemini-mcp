@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/@chrischall/gemini-mcp)](https://www.npmjs.com/package/@chrischall/gemini-mcp)
 [![license](https://img.shields.io/npm/l/@chrischall/gemini-mcp)](LICENSE)
 
-MCP server for Google Gemini media generation. Exposes eight tools to Claude over stdio: list available models, generate/edit/compose images, generate a consistent set of images from a master prompt, multi-turn image refinement (Interactions API), **video** generation (omni), **music** generation (Lyria), and an async result poll for long generations. Output is written to disk by default (path returned) or returned inline as base64. Built on the Gemini v1beta API (`generativelanguage.googleapis.com`) using the Nano Banana / Nano Banana Pro (images), omni (video), and Lyria (music) model families.
+MCP server for Google Gemini media generation. Exposes eleven tools to Claude over stdio: list available models, generate/edit/compose images, generate a consistent set of images from a master prompt, multi-turn image refinement (Interactions API), **video** generation (omni), **music** generation (Lyria), an async result poll for long generations, and Files API upload/list/delete for reusable image references. Output is written to disk by default (path returned) or returned inline as base64. Built on the Gemini v1beta API (`generativelanguage.googleapis.com`) using the Nano Banana / Nano Banana Pro (images), omni (video), and Lyria (music) model families.
 
 Developed and maintained by AI (Claude Code).
 
@@ -83,6 +83,77 @@ progress), two guards make re-issuing safe and unnecessary:
 | `gemini_video_generate` | Generate a short video (text→video, image→video, or `edit`) via the Gemini omni model (preview); written to disk as MP4 |
 | `gemini_music_generate` | Generate music from a text prompt via a Lyria model — `lyria-3-clip-preview` (~30s, default) or `lyria-3-pro-preview` (longer, WAV-capable); written to disk as MP3/WAV (preview) |
 | `gemini_get_result` | Fetch an async generation started with `async: true` by its `job_id` (status `running` → `done` result). Lets a long generation outlive a host's `tools/call` timeout |
+| `gemini_upload_file` | Upload an image (or video/audio) to the Gemini Files API once — from a `url`, `data_base64`, or a local `path` — and get a reusable `files/<id>` reference |
+| `gemini_list_files` | List the files currently uploaded under this API key, with MIME types and expiry times |
+| `gemini_delete_file` | Delete an uploaded file before its ~48h expiry (confirm-gated) |
+
+## Sending reference images without burning context
+
+Every image tool (`gemini_image_generate`, `gemini_image_edit`, `gemini_image_set`,
+`gemini_interact`) takes reference images four ways. Only one of them costs model context:
+
+| Parameter | Where the bytes travel | Context cost |
+|---|---|---|
+| `images_url` (`master_images_url`) | the **server** downloads the https URL | none |
+| `images_file_uris` (`master_images_file_uris`) | a `files/<id>` reference, already uploaded | none |
+| `images` | read off local disk (stdio builds only) | none |
+| `images_base64` | **through the tool-call JSON** | **~14k tokens per JPEG** |
+
+`images_base64` is the fallback of last resort. It costs roughly 14k tokens per modest photo,
+and it is silently corrupted whenever the file read that produced it was truncated — the
+payload still looks like base64, so the failure surfaces as a bad generation rather than an
+error. Prefer any of the other three.
+
+### `images_url` — the server fetches it
+
+```jsonc
+{ "prompt": "make it look like winter", "images_url": ["https://example.com/photo.jpg"] }
+```
+
+Fetches are restricted to public `https://` URLs (private, loopback and link-local hosts are
+refused, and every redirect hop is revalidated), must return `Content-Type: image/*`, and are
+capped at **15MB**. A failure names the offending URL. Anything over 6MB is uploaded to the
+Files API and referenced by uri instead of inlined, since `generateContent` caps a whole
+request near 20MB.
+
+### `images_file_uris` — upload once, reference many times
+
+```jsonc
+// 1. upload
+{ "tool": "gemini_upload_file", "url": "https://example.com/photo.jpg" }
+// → { "file_uri": "files/abc123", "mime_type": "image/jpeg", "expires": "..." }
+
+// 2. reference it, as many times as you like
+{ "prompt": "make it winter",  "images_file_uris": ["files/abc123"] }
+{ "prompt": "make it sunrise", "images_file_uris": ["files/abc123"] }
+```
+
+Uploads are retained **~48h**; after that the reference stops resolving (as a generic 404 —
+see the chained-404 section above). `gemini_image_set` fetches or resolves such a reference
+**once** and passes it to the master and every scene call.
+
+On stdio builds, a local `images` path that gets referenced **more than once in a session** is
+uploaded to the Files API automatically (keyed on path + mtime + size), so repeated edits of
+the same photo stop re-sending the bytes. Editing the file invalidates the cached upload.
+
+### `POST /upload` — raw bytes, no base64 at all (hosted connector)
+
+The hosted connector exposes an HTTP upload endpoint behind the **same OAuth token as
+`/mcp`**. This is the intended path for an agent with a shell: disk file → curl → `file_uri` →
+tool call, with the image never entering the conversation.
+
+```bash
+curl -X POST https://connector.gemini.nullnet.app/upload \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @photo.jpg
+# → {"file_uri":"files/abc123","mime_type":"image/jpeg","expires":"...","...":"..."}
+```
+
+Then pass `"images_file_uris": ["files/abc123"]` to any image tool. The body is streamed
+straight to the Files API (nothing is buffered), so `Content-Length` is required — curl sets it
+automatically with `--data-binary @file`. Accepted content types are `image/*`, `video/*` and
+`audio/*`; an optional `?name=` or `X-Filename` header sets the display name.
 
 ## Quick Start
 

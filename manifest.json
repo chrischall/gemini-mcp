@@ -112,6 +112,18 @@
     {
       "name": "gemini_get_result",
       "description": "Fetch an async generation started with async: true, by its job_id"
+    },
+    {
+      "name": "gemini_upload_file",
+      "description": "Upload an image (or video/audio) to the Gemini Files API once — from a url, base64, or local path — and get a reusable files/<id> reference (~48h)"
+    },
+    {
+      "name": "gemini_list_files",
+      "description": "List files currently uploaded to the Gemini Files API under this API key"
+    },
+    {
+      "name": "gemini_delete_file",
+      "description": "Delete an uploaded Gemini file before its ~48h expiry"
     }
   ],
   "compatibility": {

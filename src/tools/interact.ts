@@ -3,9 +3,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, ApiError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { ChainedRequest404Error, type GeminiClient } from '../client.js';
-import { slugify, baseName, gatherImageInputs, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
+import { slugify, baseName, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
+import { resolveImageInputs } from '../inputs.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedImage } from './shared.js';
+import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -80,10 +81,15 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           .array(z.string().min(1))
           .optional()
           .describe(`Paths to reference input images. ${NEW_REFERENCES_ONLY}`),
+        images_url: imagesUrlSchema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
+        images_file_uris: imagesFileUrisSchema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
         images_base64: z
           .array(z.string().min(1))
           .optional()
-          .describe(`Reference images as base64 strings or data URIs. ${NEW_REFERENCES_ONLY}`),
+          .describe(
+            `Reference images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, ` +
+            `which keep image bytes out of the conversation. ${NEW_REFERENCES_ONLY}`,
+          ),
         model: z
           .string()
           .optional()
@@ -180,10 +186,11 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         thinking_level: args.thinking_level, previous_interaction_id: previousInteractionId,
         google_search: args.google_search, search_types: args.search_types,
         images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
+        images_url: args.images_url, images_file_uris: args.images_file_uris,
         video_url: args.video_url, video_path: args.video_path,
       });
       return client.session.jobs.dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
-        const inputs = await gatherImageInputs({ images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
+        const { inputs, report } = await resolveImageInputs({ ...args, images }, client);
         const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args, client));
         const callOpts = {
           input: args.input,
@@ -254,6 +261,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           'do NOT re-attach the returned image as an input; the interaction already contains it.';
         if (r.text) meta.text = r.text;
         if (r.grounding) meta.grounding = r.grounding;
+        if (report) meta.image_inputs = report;
         if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
         const risk = timeoutRiskHint({ model, imageSize: args.image_size, persistsFiles: onDisk });
         if (risk) meta.timeout_risk = risk;

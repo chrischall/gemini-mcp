@@ -6,12 +6,14 @@ Guidance for Claude working in this repo.
 
 v0.6.0: Google **Gemini** image-generation MCP server. Wraps the Generative
 Language REST API (`https://generativelanguage.googleapis.com/v1beta`) and
-exposes 8 tools to Claude over stdio: text→image and image→image generation,
+exposes 11 tools to Claude over stdio: text→image and image→image generation,
 multi-turn conversational editing, consistent image *sets*, **video generation**
 (omni, `gemini_video_generate`), **music generation** (Lyria clips/pro,
-`gemini_music_generate`), and model listing (Nano Banana / Nano Banana Pro
-family). Inputs can come from file paths, raw base64 / data URIs, a public YouTube
-URL (video→image), or the macOS clipboard. Video and music ride the **same
+`gemini_music_generate`), model listing (Nano Banana / Nano Banana Pro
+family), and **Files API** upload/list/delete. Reference images can come from an
+https URL the *server* fetches (`images_url`), a Files API reference
+(`images_file_uris`), local file paths, raw base64 / data URIs, or the macOS
+clipboard; video from a public YouTube URL or a local upload. Video and music ride the **same
 Interactions endpoint** as `gemini_interact` — the tool naming is media-first
 (`gemini_<media>_<action>`). Realtime Lyria (WebSocket) is intentionally
 **not** implemented (see the video/music design spec).
@@ -65,6 +67,16 @@ src/
   images.ts       # input loading (paths/base64/data-URI, MIME sniff, clipboard
                   #   aggregation) + output writing (slugify, uniquePath, writeImage,
                   #   resolveOutputDir, resolveImagePath)
+  inputs.ts       # resolveImageInputs() — THE funnel: paths / base64 / images_url /
+                  #   images_file_uris / clipboard → one ImageInput[]. Owns the
+                  #   fetch-once-per-call dedup, the >6MB → Files API promotion, and
+                  #   the stdio "referenced twice → upload once" cache
+  fetch-image.ts  # fetchRemoteImage() — server-side URL fetch for images_url.
+                  #   https-only, private/loopback/link-local refused, EVERY redirect
+                  #   hop revalidated, streamed byte cap. Pure; no module-scope I/O
+  upload-endpoint.ts # createUploadHandler() — POST /upload on the Worker. Streams the
+                  #   raw request body to the Files API; auth comes from the OAuth
+                  #   provider (ctx.props), never from an ambient key
   clipboard.ts    # readClipboardImage() — macOS-only osascript+sips clipboard grab
   storage/media.ts# MediaSink — where generated media goes. createDiskSink()
                   #   (stdio: resolveOutputDir + writeMedia, unchanged) and
@@ -95,6 +107,7 @@ src/
     video.ts      # gemini_video_generate (omni, Interactions) (registerVideoTools)
     music.ts      # gemini_music_generate (Lyria, Interactions) (registerMusicTools)
     jobs.ts       # gemini_get_result (async poll)            (registerJobTools)
+    files.ts      # gemini_upload_file / _list_files / _delete_file (registerFileTools)
     shared.ts     # ASPECT_RATIOS, IMAGE_SIZES, sharedImageSchema, pickSeed,
                   #   buildMeta, and emit() (inline-vs-write-to-disk result wrapper)
 
@@ -148,6 +161,9 @@ shared util, configured non-Bearer.
 | `gemini_video_generate` | `tools/video.ts` | `POST /v1beta/interactions` (omni, `response_format: video`, preview) | write (binary-out, MP4→disk) |
 | `gemini_music_generate` | `tools/music.ts` | `POST /v1beta/interactions` (Lyria, `response_format: audio`, preview) | write (binary-out, MP3/WAV) |
 | `gemini_get_result` | `tools/jobs.ts` | none (reads the in-memory job registry) | read |
+| `gemini_upload_file` | `tools/files.ts` | `POST /upload/v1beta/files` (resumable) | write |
+| `gemini_list_files` | `tools/files.ts` | `GET /v1beta/files?pageSize=N` | read |
+| `gemini_delete_file` | `tools/files.ts` | `DELETE /v1beta/files/{id}` | write (confirm-gated) |
 
 **Video & music reuse the interact plumbing.** `gemini_video_generate` (omni) and
 `gemini_music_generate` (Lyria) ride the **same `/v1beta/interactions` endpoint**
@@ -268,15 +284,72 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
   have one, so music is served.
 - **Disk-only *inputs* fail fast**, via `assertLocalInputsAvailable` at the top
   of each handler (before any billable call): `images`/`master_images`,
-  `from_clipboard`, `video_path` → an `McpToolError` naming `images_base64` /
-  `video_url` **in the message**, not just the hint (MCP drops hints).
+  `from_clipboard`, `video_path` → an `McpToolError` naming the alternatives
+  **in the message**, not just the hint (MCP drops hints), in preference order:
+  `images_url` → `gemini_upload_file` → `POST /upload` → `images_base64` last.
   `child_process` stays off the Worker path — the clipboard module is still only
   dynamically imported.
+- **`POST /upload` is the zero-base64 path** (`src/upload-endpoint.ts`): raw
+  bytes as the request body, streamed straight to the Files API (hence the
+  required `Content-Length` — the resumable protocol declares the size up front),
+  returning a `files/<id>` the caller passes as `images_file_uris`. It is
+  registered as an OAuth **`apiHandlers` route**, so the provider validates the
+  same bearer token as `/mcp` and hands us `ctx.props.apiKey`. That is why
+  `src/worker.ts` builds its own `OAuthProvider` instead of using
+  `createConnector`'s: the harness exposes no hook for an extra route, and
+  authenticating the endpoint ourselves would mean reimplementing token lookup
+  against the provider's internal KV layout. **Keep the endpoint list in step
+  with the harness**, and collapse it back if `@chrischall/mcp-connector` ever
+  grows an extra-routes option.
 
-**Image inputs** (`gatherImageInputs`) come from `images` (file paths),
-`images_base64` (raw base64 or `data:` URIs, MIME sniffed from bytes), and
-`from_clipboard` (macOS only — see Quirks, issue #13). `gemini_image_edit`
-requires at least one input source.
+**Image inputs all converge in `resolveImageInputs` (`src/inputs.ts`) on one
+`ImageInput` type** (`{ base64?, uri?, mimeType }`, in client.ts), and the client
+turns that into either an inline part (`inline_data` / `{type:'image', data}`) or
+a by-reference part (`file_data` / `{type:'image', uri}`). A new input form is a
+change in `inputs.ts` and nowhere else.
+
+Four forms, and **only one of them costs model context**:
+
+| Param | Bytes travel | Context cost |
+| --- | --- | --- |
+| `images_url` / `master_images_url` | the SERVER fetches the https URL | none |
+| `images_file_uris` / `master_images_file_uris` | a `files/<id>` reference | none |
+| `images` / `master_images` | local disk (stdio only) | none |
+| `images_base64` | **the tool-call JSON** | **~14k tokens per JPEG** |
+
+That table is the whole point of the feature: `images_base64` is not merely
+expensive, it is *silently corrupting* — a truncated file read still produces
+well-formed base64, so the damage surfaces as a bad generation rather than an
+error. **Don't reorder the remediation text to lead with it** (in
+`assertLocalInputsAvailable`, tool descriptions, or `requireImageInput`);
+`tests/tools/hosted-runtime.test.ts` asserts the ordering.
+
+Behaviours worth knowing because they cost an upstream call:
+
+- A URL repeated inside ONE tool call is fetched once (that is what lets
+  `gemini_image_set` hand the same reference to the master and all N scenes).
+- A fetched image over 6MB (`IMAGE_INLINE_MAX_BYTES`) is uploaded to the Files
+  API and referenced by uri — `generateContent` caps a whole request near 20MB,
+  so two large inline references would fail the request itself.
+- On a filesystem runtime, the SECOND time a session references the same local
+  path (keyed on path + **mtime + size**, so an edit invalidates it) it is
+  uploaded once and referenced by uri from then on. The cache lives on
+  `client.session`, never module scope — a uri is minted by one user's key and
+  readable only with that key.
+- A promotion upload that fails falls back to inline. An optimization must never
+  turn a working call into a failing one.
+
+`gemini_image_edit` requires at least one input source (`requireImageInput`).
+
+**`images_url` is an SSRF primitive** (`src/fetch-image.ts`), and on stdio the
+server sits on the user's own machine next to their LAN. So: https only; private,
+loopback and link-local hosts refused (including `169.254.169.254`); redirects
+followed **manually with every hop revalidated** — `redirect: 'follow'` would let
+a public URL bounce onto the metadata service and make the origin check theatre;
+and the 15MB cap enforced **while streaming**, not from `Content-Length`, which a
+hostile server can under-report. It does NOT close DNS rebinding (a public name
+resolving to a private address) — that needs resolve-then-pin, which neither
+Node's nor workerd's fetch exposes.
 
 **Video inputs** (`gemini_image_generate` / `gemini_interact`): `video_url`
 (public YouTube URL, or a previously uploaded `files/…` uri) or `video_path`
@@ -403,7 +476,19 @@ caller to display them. `search_types` is Interactions-only; don't add it to
   neither fits `fetchJson`. The finalize response wraps the File in `{file:…}`;
   the GET poll returns it **unwrapped** (verified; see `docs/GEMINI-API.md`).
   The session URL is self-authorizing (no api-key header on finalize). The
-  PROCESSING→ACTIVE poll goes through the shared client.
+  PROCESSING→ACTIVE poll goes through the shared client. One private
+  `uploadToFilesApi(body, mime, name, length)` now serves all three entry points
+  — `uploadVideo` (a file-backed Blob), `uploadBytes` (in-memory, the only form
+  usable on a Worker) and `uploadStream` (the `/upload` endpoint's request body).
+  Images normally arrive `ACTIVE`; it is video that spends time `PROCESSING`.
+- **A `files/<id>` reference is only usable by the key that created it, and only
+  for ~48h.** Both facts leak into behaviour: the session upload cache is
+  per-session (never module-scope) because sharing it across connector tenants
+  would hand out references the other user cannot read, and an expired uri comes
+  back as the *same generic 404* as an unknown model id (see
+  `ChainedRequest404Error`) — hence `getFile()` resolving a caller-supplied
+  `images_file_uris` entry up front, so "that file is gone" is said plainly
+  before a billable request is built.
 - **Nothing wrangler bundles may touch module scope.** `src/worker.ts` pulls in
   `client.ts` and everything under it, so every module-scope line there runs
   during Cloudflare isolate startup — where global-scope I/O is forbidden and
@@ -502,7 +587,12 @@ write-verification, transport archetypes, testing traps) live in
 - **Don't trust premium endpoint shapes you haven't seen.** Verify
   `gemini-3-pro-image` and Interactions response shapes against a funded account
   before relying on new fields; the beta casing has changed before (hence the
-  snake/camel fallbacks).
+  snake/camel fallbacks). **Currently unverified and flagged as such in
+  `docs/GEMINI-API.md`:** image upload to the Files API, `GET /v1beta/files`,
+  `DELETE /v1beta/files/<id>`, and — the weakest claim of the lot — the
+  Interactions `{ type: 'image', uri, mime_type }` input part, which is inferred
+  from the *verified* `{type:'video', uri}` part rather than observed. If a
+  chained interact call carrying `images_file_uris` 400s/404s, start there.
 - **Don't switch to `Authorization: Bearer`** — Gemini ignores it and requests
   401. (The Interactions `Api-Revision` header is history: required in beta,
   dropped at GA.)

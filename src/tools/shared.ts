@@ -3,6 +3,7 @@ import { textResult, McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { GeminiClient, GeneratedImage, GeneratedMedia } from '../client.js';
 import { resolveVideoPath, videoMimeType } from '../images.js';
+import { IMAGE_URL_MAX_BYTES } from '../fetch-image.js';
 import { createDiskSink, type MediaSink } from '../storage/media.js';
 
 /**
@@ -67,6 +68,37 @@ export const asyncSchema = z
   .describe(
     'Run in the background and return a job_id immediately instead of the image, so a long (Pro/4K) generation cannot hit the host tools/call timeout (-32001). Poll gemini_get_result with the job_id to fetch the result (jobs are per-process and expire ~10 min after completion).',
   );
+
+/**
+ * Reference images the SERVER fetches, so the bytes never pass through the
+ * model's context window. Defined once and reused under both the `images_url`
+ * and `master_images_url` names.
+ */
+export function imagesUrlSchema(label = 'Reference images'): z.ZodOptional<z.ZodArray<z.ZodString>> {
+  return z
+    .array(z.string().url())
+    .optional()
+    .describe(
+      `${label} as public https URLs — the SERVER downloads them, so no image bytes travel through the conversation. ` +
+        'Preferred over images_base64, which costs ~14k tokens per photo and breaks if a file read was truncated. ' +
+        `Max ${Math.round(IMAGE_URL_MAX_BYTES / (1024 * 1024))}MB each; must be a directly-linked image (Content-Type image/*).`,
+    );
+}
+
+/**
+ * Reference images already in the Gemini Files API. The cheapest form there is:
+ * a short string, reusable across calls until the file expires.
+ */
+export function imagesFileUrisSchema(label = 'Reference images'): z.ZodOptional<z.ZodArray<z.ZodString>> {
+  return z
+    .array(z.string().min(1))
+    .optional()
+    .describe(
+      `${label} by Gemini Files API reference ("files/<id>", or the full uri) from gemini_upload_file or POST /upload. ` +
+        'Upload once, then reference it across as many calls as you like — no bytes are re-sent and none enter the conversation. ' +
+        'Files are retained ~48h, after which the reference stops resolving.',
+    );
+}
 
 /**
  * The model/aspect/size/output fields every generation tool shares. Defined once
@@ -338,10 +370,15 @@ export async function emit(
  *  - `video_path` — the Files API upload streams the file off disk.
  *
  * Called at the top of every generation handler, BEFORE any billable upstream
- * call, so a caller gets a clear "use images_base64 / video_url instead"
- * instead of an obscure module-resolution or ENOENT crash. A no-op on the disk
- * sink, so the stdio behaviour (including its own "Image not found" errors) is
- * untouched.
+ * call, so a caller gets a clear alternative instead of an obscure
+ * module-resolution or ENOENT crash. A no-op on the disk sink, so the stdio
+ * behaviour (including its own "Image not found" errors) is untouched.
+ *
+ * The remediation deliberately does NOT lead with `images_base64` any more.
+ * Inlining a photo as a tool argument costs ~14k tokens of the model's context
+ * and silently corrupts whenever the read that produced it was truncated — so
+ * it is named last, after the three routes that move bytes without the model
+ * ever seeing them.
  */
 export function assertLocalInputsAvailable(
   sink: MediaSink | undefined,
@@ -358,8 +395,14 @@ export function assertLocalInputsAvailable(
   // surfaces the message and drops the hint, so hint-only advice is invisible
   // exactly when it is needed.
   const fix =
-    'Send image bytes as `images_base64` (raw base64 or a data: URI) instead of `images`/`master_images`/`from_clipboard`, ' +
-    'and reference video by `video_url` (a public YouTube URL, or a files/… uri uploaded elsewhere) instead of `video_path`.';
+    'Reference images WITHOUT putting bytes in the conversation, in order of preference: ' +
+    '(1) `images_url` — public https URLs the server fetches itself; ' +
+    '(2) `images_file_uris` — upload once with `gemini_upload_file` (it takes a `url` or `data_base64`) and reuse the returned files/… uri; ' +
+    '(3) `POST /upload` on this connector with the raw bytes as the body ' +
+    "(`curl -X POST <connector-url>/upload -H 'Authorization: Bearer <token>' -H 'Content-Type: image/jpeg' --data-binary @photo.jpg`), " +
+    'then pass the returned file_uri. ' +
+    'As a last resort `images_base64` still works, but it costs ~14k tokens per photo and breaks on a truncated read. ' +
+    'Reference video by `video_url` (a public YouTube URL, or a files/… uri uploaded elsewhere) instead of `video_path`.';
   throw new McpToolError(
     `${unavailable.join(', ')} ${unavailable.length > 1 ? 'are' : 'is'} unavailable on the hosted connector: ` +
       `it runs on a Cloudflare Worker, which has no filesystem and no local clipboard. ${fix}`,

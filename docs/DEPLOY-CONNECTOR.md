@@ -26,7 +26,7 @@ locally.
 
 ## What the connector serves
 
-Six of the seven stdio registrars, i.e. every tool except **`gemini_video_generate`**.
+Seven of the eight stdio registrars, i.e. every tool except **`gemini_video_generate`**.
 
 That omission is not an oversight and should not be "fixed": MCP defines no
 inline **video** content block, so `emitMedia` always writes video output to a
@@ -39,9 +39,40 @@ For the same reason, three **inputs** are unavailable and fail with an explicit
 
 | Unavailable | Why | Use instead |
 | --- | --- | --- |
-| `images` / `master_images` | local file paths, read with `node:fs` | `images_base64` |
-| `from_clipboard` | shells out to `osascript`/`sips` | `images_base64` |
-| `video_path` | Files API upload streams the file off disk | `video_url` |
+| `images` / `master_images` | local file paths, read with `node:fs` | `images_url`, `images_file_uris`, or `POST /upload` |
+| `from_clipboard` | shells out to `osascript`/`sips` | `images_url`, `images_file_uris`, or `POST /upload` |
+| `video_path` | Files API upload streams the file off disk | `video_url` (or upload via `POST /upload` and pass the returned uri) |
+
+Note what is deliberately **not** in that "use instead" column: `images_base64`
+still works, but it is the last resort, not the answer. A base64 JPEG is ~14k
+tokens of the model's context per photo, and a truncated file read produces
+base64 that still parses — so the corruption shows up as a bad image rather than
+an error. The three recommended routes move the bytes without the model ever
+seeing them.
+
+### `POST /upload`
+
+The connector serves one non-MCP route, behind the **same OAuth token as
+`/mcp`** (it is registered as an `apiHandlers` route on the OAuth provider, so
+the provider validates the bearer token and supplies the user's own API key):
+
+```bash
+curl -X POST https://connector.gemini.nullnet.app/upload \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @photo.jpg
+# → {"file_uri":"files/abc123","mime_type":"image/jpeg","expires":"…"}
+```
+
+Pass the returned `file_uri` as `images_file_uris` on any image tool. The body is
+streamed to the Files API without buffering, so `Content-Length` is required
+(curl sets it for `--data-binary @file`); `image/*`, `video/*` and `audio/*` are
+accepted; uploads are retained ~48h.
+
+Because that route has to exist, `src/worker.ts` constructs its own
+`OAuthProvider` rather than using `createConnector`'s handler — the harness
+exposes no hook for an extra authenticated route. If you change the harness's
+endpoint list, change it here too.
 
 There is also no `<image>.json` sidecar and no `output_dir`, so the chain
 recoveries that read them are skipped. Capture `interaction_id` from each result

@@ -74,6 +74,45 @@ describe('OAuth surface', () => {
   });
 });
 
+/**
+ * `/upload` is the bytes-never-touch-model-context path: raw body in, a
+ * `files/<id>` reference out. It is registered as an OAuth `apiHandlers` route
+ * precisely so it is guarded by the SAME access token as `/mcp` — these assert
+ * that guard is really the provider's, not something we hand-rolled.
+ */
+describe('POST /upload', () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  it('rejects an unauthenticated upload with 401 and an OAuth challenge', async () => {
+    const res = await SELF.fetch('https://example.com/upload', {
+      method: 'POST',
+      headers: { 'content-type': 'image/png' },
+      body: png,
+    });
+    expect(res.status).toBe(401);
+    // The provider's own challenge — proof the route sits behind OAuth rather
+    // than doing its own token check.
+    expect(res.headers.get('www-authenticate')).toMatch(/Bearer/i);
+  });
+
+  it('rejects a bogus bearer token', async () => {
+    const res = await SELF.fetch('https://example.com/upload', {
+      method: 'POST',
+      headers: { 'content-type': 'image/png', authorization: 'Bearer not-a-real-token' },
+      body: png,
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('is reachable at all (not swallowed by the 404 default handler)', async () => {
+    // A GET is unauthenticated too, so this still 401s — the point is that the
+    // path is routed to the API side of the provider, not to `Not found`.
+    const res = await SELF.fetch('https://example.com/upload');
+    expect(res.status).toBe(401);
+    expect(await res.text()).not.toBe('Not found');
+  });
+});
+
 describe('connector auth', () => {
   it('asks for exactly one masked credential', () => {
     expect(geminiAuth.service).toBe('Gemini');
@@ -112,16 +151,20 @@ describe('tool roster', () => {
     return names.sort();
   }
 
-  it('registers exactly the six serverless-safe registrars', () => {
-    // Six registrars, seven tools — registerGenerateTools contributes two.
+  it('registers exactly the seven serverless-safe registrars', () => {
+    // Seven registrars, ten tools — registerGenerateTools contributes two and
+    // registerFileTools three.
     expect(registeredToolNames()).toEqual([
+      'gemini_delete_file',
       'gemini_get_result',
       'gemini_image_edit',
       'gemini_image_generate',
       'gemini_image_set',
       'gemini_interact',
+      'gemini_list_files',
       'gemini_list_models',
       'gemini_music_generate',
+      'gemini_upload_file',
     ]);
   });
 
@@ -129,7 +172,17 @@ describe('tool roster', () => {
     // Video output is disk-only: MCP has no inline video content block, so
     // emitMedia always writes it to a filesystem the Worker does not have.
     expect(registeredToolNames()).not.toContain('gemini_video_generate');
-    expect(CONNECTOR_TOOLS).toHaveLength(6);
+    expect(CONNECTOR_TOOLS).toHaveLength(7);
+  });
+
+  it('serves the Files API tools — the way to send an image without base64', () => {
+    // Input-side, these are the whole point of the hosted connector: no
+    // filesystem means `images` paths are unavailable, and `images_base64`
+    // costs ~14k tokens per photo.
+    const names = registeredToolNames();
+    expect(names).toContain('gemini_upload_file');
+    expect(names).toContain('gemini_list_files');
+    expect(names).toContain('gemini_delete_file');
   });
 
   it('registers gemini_music_generate (audio HAS an inline MCP block)', () => {

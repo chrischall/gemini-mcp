@@ -3,8 +3,9 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import type { GeminiClient, GeneratedImage } from '../client.js';
-import { slugify, baseName, gatherImageInputs } from '../images.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, type NamedImage } from './shared.js';
+import { slugify, baseName } from '../images.js';
+import { resolveImageInputs } from '../inputs.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -22,7 +23,9 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         reference_mode: z.enum(['master', 'chain']).optional().describe('master: every image references the master (default). chain: each references the previous.'),
         basename: z.string().optional().describe('Base filename prefix for output images (default: slugified master_prompt)'),
         master_images: z.array(z.string().min(1)).optional().describe('Reference image paths passed to the master generation call'),
-        master_images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs for master generation'),
+        master_images_url: imagesUrlSchema('Reference images passed to the master AND to every scene call (fetched once)'),
+        master_images_file_uris: imagesFileUrisSchema('Reference images passed to the master AND to every scene call'),
+        master_images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs for master generation. Last resort: prefer master_images_url or master_images_file_uris, which keep image bytes out of the conversation'),
         confirm: schemaConfirm,
         ...sharedImageSchema,
       },
@@ -43,14 +46,37 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         reference_mode: args.reference_mode, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
         thinking_level: args.thinking_level, google_search: args.google_search,
         master_images: args.master_images, master_images_base64: args.master_images_base64, from_clipboard: args.from_clipboard,
+        master_images_url: args.master_images_url, master_images_file_uris: args.master_images_file_uris,
       });
       return client.session.jobs.dispatch({ toolName: 'gemini_image_set', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
         const seed = pickSeed(args.seed);
         const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level, googleSearch: args.google_search, timeoutMs: args.timeout_ms };
         const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
 
-        // 1. master (optionally seeded from reference images)
-        const masterRefInputs = await gatherImageInputs({ images: args.master_images, images_base64: args.master_images_base64, from_clipboard: args.from_clipboard });
+        // 1. master (optionally seeded from reference images).
+        //
+        // Two resolutions, because the two groups have different lifetimes:
+        //
+        //  - `carried` — URL and Files API references. Fetched/uploaded ONCE for
+        //    the whole set (a URL repeated across master + N scenes is one
+        //    download, and a `files/…` reference costs nothing to repeat), and
+        //    passed to EVERY scene call, where they do the most good: they are
+        //    what keeps the subject consistent scene to scene.
+        //  - `masterOnly` — path / base64 / clipboard references. Master-only,
+        //    exactly as before these parameters existed, so pre-existing calls
+        //    still build byte-identical requests.
+        const carried = await resolveImageInputs(
+          { images_url: args.master_images_url, images_file_uris: args.master_images_file_uris },
+          client,
+        );
+        const masterOnly = await resolveImageInputs(
+          { images: args.master_images, images_base64: args.master_images_base64, from_clipboard: args.from_clipboard },
+          client,
+        );
+        const masterRefInputs = [...masterOnly.inputs, ...carried.inputs];
+        const report = carried.report || masterOnly.report
+          ? { ...masterOnly.report, ...carried.report }
+          : undefined;
         const named: NamedImage[] = [];
         const masterResult = await withProgressHeartbeat(extra, `Generating image set (${model})`, async () => {
           const result = await client.generate({
@@ -71,13 +97,13 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
           if (mode === 'chain') {
             let ref: GeneratedImage = master;
             for (let i = 0; i < scenePrompts.length; i++) {
-              const { images: [img] } = await client.generate({ prompt: scenePrompts[i], images: [ref], seed: seed + i + 1, ...cfg });
+              const { images: [img] } = await client.generate({ prompt: scenePrompts[i], images: [ref, ...carried.inputs], seed: seed + i + 1, ...cfg });
               named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` });
               ref = img;
             }
           } else {
             const scenes = await Promise.all(
-              scenePrompts.map((p, i) => client.generate({ prompt: p, images: [master], seed: seed + i + 1, ...cfg }).then((r) => r.images[0])),
+              scenePrompts.map((p, i) => client.generate({ prompt: p, images: [master, ...carried.inputs], seed: seed + i + 1, ...cfg }).then((r) => r.images[0])),
             );
             scenes.forEach((img, i) => named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` }));
           }
@@ -88,6 +114,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         const meta = buildMeta(model, seed, args);
         if (masterText) meta.text = masterText;
         if (masterResult.grounding) meta.grounding = masterResult.grounding;
+        if (report) meta.image_inputs = report;
         // A set is master + N scenes in one tools/call — the most timeout-prone
         // tool. Effective image count drives the risk hint.
         const risk = timeoutRiskHint({ model, imageSize: args.image_size, count: named.length, persistsFiles: client.mediaSink?.persistsFiles });
