@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/chrischall/gemini-mcp/compare/v1.2.0...v1.3.0) (2026-07-29)
+
+
+### Features
+
+* **media:** return an openable URL for every hosted generation ([#119](https://github.com/chrischall/gemini-mcp/issues/119)) ([a9e761a](https://github.com/chrischall/gemini-mcp/commit/a9e761a9fff26baf0847ec9487ec9e5954b8eddb))
+
 ## [1.2.0](https://github.com/chrischall/gemini-mcp/compare/v1.1.0...v1.2.0) (2026-07-29)
 
 
