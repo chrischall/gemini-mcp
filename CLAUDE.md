@@ -355,8 +355,12 @@ can under-report.
 `[::ffff:127.0.0.1]` as `[::ffff:7f00:1]`, so a guard that looks for the dotted
 spelling never fires on anything a caller can actually send — that shipped once
 and reached loopback. `ipv6Groups()` expands the address and `isPrivateIpv6()`
-pulls the mapped v4 out of the final 32 *bits* into the same `isPrivateIpv4`
-table. An IPv6 literal that fails to parse is **refused**, not allowed.
+pulls the embedded v4 out of the final 32 *bits* into the same `isPrivateIpv4`
+table, for **every** v4-bearing /96 prefix (`V4_BEARING_PREFIXES`: IPv4-mapped,
+IPv4-compatible, IPv4-translated, NAT64 well-known). Only the mapped one is
+reachable on a normal network; the siblings are listed because a function that
+understands one prefix and not the rest is exactly the shape the original
+bypass had. An IPv6 literal that fails to parse is **refused**, not allowed.
 
 It does NOT close DNS rebinding (a public name resolving to a private address) —
 that needs resolve-then-pin, which neither Node's nor workerd's fetch exposes.

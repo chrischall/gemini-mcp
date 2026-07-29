@@ -181,6 +181,29 @@ describe('fetchRemoteImage — SSRF guards', () => {
     await expect(fetchRemoteImage(url, { fetchImpl: never })).rejects.toThrow(/private, loopback or link-local/);
   });
 
+  // Defense in depth, NOT a repeat of the mapped-v4 finding: neither prefix
+  // routes on a default network (NAT64 needs a translator present, and the
+  // IPv4-translated prefix is deprecated SIIT no modern stack resolves). They
+  // are refused because a function that understands ONE v4-carrying prefix and
+  // not its siblings is the shape a real bypass hides in.
+  it.each([
+    ['https://[64:ff9b::7f00:1]/a.png', 'NAT64 well-known prefix, 127.0.0.1'],
+    ['https://[64:ff9b::a9fe:a9fe]/latest/meta-data/', 'NAT64 well-known prefix, 169.254.169.254'],
+    ['https://[64:ff9b::a00:5]/a.png', 'NAT64 well-known prefix, 10.0.0.5'],
+    ['https://[::ffff:0:7f00:1]/a.png', 'IPv4-translated prefix, 127.0.0.1'],
+    ['https://[::ffff:0:c0a8:1]/a.png', 'IPv4-translated prefix, 192.168.0.1'],
+  ])('refuses %s — %s', async (url) => {
+    await expect(fetchRemoteImage(url, { fetchImpl: never })).rejects.toThrow(/private, loopback or link-local/);
+  });
+
+  it.each([
+    ['https://[64:ff9b::808:808]/a.png', 'NAT64-wrapped 8.8.8.8'],
+    ['https://[::ffff:0:808:808]/a.png', 'IPv4-translated 8.8.8.8'],
+  ])('does NOT over-block %s (%s carries a PUBLIC v4)', async (url) => {
+    const result = await fetchRemoteImage(url, { fetchImpl: stubFetch({ [url]: () => imageResponse() }) });
+    expect(result.size).toBe(PNG_BYTES.byteLength);
+  });
+
   it('still allows a public IPv6 literal', async () => {
     const url = 'https://[2606:4700:4700::1111]/a.png';
     const result = await fetchRemoteImage(url, { fetchImpl: stubFetch({ [url]: () => imageResponse() }) });
