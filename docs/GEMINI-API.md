@@ -314,3 +314,47 @@ Verified response behavior (butterfly prompt, both types):
   3 style refs; Pro 6 objects + 5 characters; 3.1 Flash Lite 14 objects, no
   character consistency. Plain `image` input parts — no role/type field; the
   split is a model capability, not an API field.
+
+## Files API — images, list, delete (⚠️ DOCS-DERIVED, not live-verified)
+
+The video upload above is the only Files API flow captured live (2026-06-12).
+Everything in this section was built from Google's documentation and the shapes
+that flow implies, and is **not yet verified against a real key**. Treat it the
+way the repo treats every unverified shape: the parsers are tolerant, and a
+surprise here should be fixed by verifying, not by guessing again.
+
+**Uploading an image** uses exactly the same three-step resumable protocol as
+video (`start` → `upload, finalize` → optionally poll). The expected difference
+is that an image comes back `ACTIVE` immediately rather than `PROCESSING`, so
+the poll loop simply does not run. Retention is the same ~48h
+(`expirationTime` = `createTime` + 48h).
+
+**Referencing an uploaded image** in a request:
+
+```jsonc
+// generateContent — same part shape as the verified video reference
+{ "file_data": { "file_uri": "https://…/v1beta/files/<id>", "mime_type": "image/jpeg" } }
+
+// interactions — by symmetry with the verified {type:"video", uri, mime_type}
+{ "type": "image", "uri": "https://…/v1beta/files/<id>", "mime_type": "image/jpeg" }
+```
+
+The `generateContent` form is a direct copy of the video part that IS verified,
+so it is the safer of the two. **The interactions `{type:"image", uri}` form is
+the weakest claim on this page** — it is inferred from the video part's shape,
+not observed. If a chained interact call carrying `images_file_uris` 404s or
+400s, this is the first thing to check.
+
+**List** — `GET /v1beta/files?pageSize=<1-100>`:
+
+```jsonc
+{ "files": [ { "name": "files/<id>", "displayName": "…", "mimeType": "image/png",
+               "sizeBytes": "1234", "createTime": "…", "expirationTime": "…",
+               "uri": "https://…/v1beta/files/<id>", "state": "ACTIVE" } ],
+  "nextPageToken": "…" }   // pagination not implemented — one page is plenty at ~48h retention
+```
+
+**Get** — `GET /v1beta/files/<id>` returns the File object **unwrapped** (this
+part IS verified, via the video poll).
+
+**Delete** — `DELETE /v1beta/files/<id>`, empty `{}` on success.

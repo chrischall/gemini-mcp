@@ -9,6 +9,7 @@ import { registerInteractTools } from './tools/interact.js';
 import { registerVideoTools } from './tools/video.js';
 import { registerMusicTools } from './tools/music.js';
 import { registerJobTools } from './tools/jobs.js';
+import { registerFileTools } from './tools/files.js';
 import { client } from './client.js';
 
 // Load `.env` here rather than in client.ts, which the Cloudflare Worker
@@ -32,6 +33,6 @@ await runMcp({
   name: 'gemini-mcp',
   version: VERSION,
   banner: '[gemini-mcp] This project was developed and is maintained by AI (Claude). Use at your own discretion.',
-  tools: [registerModelTools, registerGenerateTools, registerSetTools, registerInteractTools, registerVideoTools, registerMusicTools, registerJobTools],
+  tools: [registerModelTools, registerGenerateTools, registerSetTools, registerInteractTools, registerVideoTools, registerMusicTools, registerJobTools, registerFileTools],
   deps: client,
 });

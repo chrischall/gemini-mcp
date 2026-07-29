@@ -103,6 +103,81 @@ describe('gemini_image_set master_images_base64', () => {
   });
 });
 
+describe('gemini_image_set reference reuse (one fetch/upload for the whole set)', () => {
+  it('fetches a master_images_url ONCE and reuses it on the master and every scene', async () => {
+    const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const fetchRemote = vi.spyOn(client, 'fetchRemoteImage').mockResolvedValue({
+      bytes: Uint8Array.from(atob(PNG), (c) => c.charCodeAt(0)),
+      mimeType: 'image/png',
+      size: 68,
+      finalUrl: 'https://cdn.example.com/rusty.png',
+      requestedUrl: 'https://cdn.example.com/rusty.png',
+    });
+    const h = await createTestHarness((srv) => registerSetTools(srv, client));
+    await h.callTool('gemini_image_set', {
+      master_prompt: 'a cartoon fox named Rusty',
+      scenes: ['waving', 'eating an apple', 'asleep'],
+      master_images_url: ['https://cdn.example.com/rusty.png'],
+      output_dir: dir,
+    });
+    await h.close();
+
+    // One download for master + 3 scenes — not four.
+    expect(fetchRemote).toHaveBeenCalledTimes(1);
+    expect(gen).toHaveBeenCalledTimes(4);
+    // Every scene call carries the same reference alongside the master image,
+    // which is what keeps the subject consistent scene to scene.
+    for (const call of gen.mock.calls.slice(1)) {
+      expect(call[0].images).toHaveLength(2);
+      expect(call[0].images?.[1]).toMatchObject({ mimeType: 'image/png' });
+    }
+  });
+
+  it('reuses a single Files API reference across master + scenes without re-uploading', async () => {
+    const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const getFile = vi.spyOn(client, 'getFile').mockResolvedValue({
+      name: 'files/rusty1',
+      uri: 'https://generativelanguage.googleapis.com/v1beta/files/rusty1',
+      mimeType: 'image/png',
+    });
+    const uploadBytes = vi.spyOn(client, 'uploadBytes');
+    const h = await createTestHarness((srv) => registerSetTools(srv, client));
+    const res = await h.callTool('gemini_image_set', {
+      master_prompt: 'a cartoon fox named Rusty',
+      scenes: ['waving', 'eating an apple'],
+      master_images_file_uris: ['files/rusty1'],
+      output_dir: dir,
+    });
+    await h.close();
+
+    expect(getFile).toHaveBeenCalledTimes(1);
+    expect(uploadBytes).not.toHaveBeenCalled();
+    // Passed BY REFERENCE — no bytes on any of the three requests.
+    for (const call of gen.mock.calls) {
+      const byRef = call[0].images?.filter((i) => i.uri);
+      expect(byRef).toHaveLength(1);
+      expect(byRef?.[0].base64).toBeUndefined();
+    }
+    expect(parseToolResult<{ image_inputs?: { file_uris?: string[] } }>(res).image_inputs?.file_uris).toEqual(['files/rusty1']);
+  });
+
+  it('keeps master_images_base64 master-only (pre-existing behaviour unchanged)', async () => {
+    const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness((srv) => registerSetTools(srv, client));
+    await h.callTool('gemini_image_set', {
+      master_prompt: 'a fox',
+      scenes: ['waving'],
+      master_images_base64: [PNG],
+      output_dir: dir,
+    });
+    await h.close();
+
+    expect(gen.mock.calls[0][0].images).toHaveLength(1);
+    // The scene still sees only the generated master, as before.
+    expect(gen.mock.calls[1][0].images).toHaveLength(1);
+  });
+});
+
 describe('gemini_image_set metadata', () => {
   it('includes model and seed in result', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });

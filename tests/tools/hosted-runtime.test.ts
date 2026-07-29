@@ -213,7 +213,13 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
     expect(res.isError).toBe(true);
     const text = errorText(res);
     expect(text).toMatch(/hosted connector/i);
+    // The remediation must lead with the routes that keep bytes out of model
+    // context, and name base64 only as the fallback it is.
+    expect(text).toMatch(/images_url/);
+    expect(text).toMatch(/gemini_upload_file/);
+    expect(text).toMatch(/POST \/upload/);
     expect(text).toMatch(/images_base64/);
+    expect(text.indexOf('images_url')).toBeLessThan(text.indexOf('images_base64'));
     // Must fail BEFORE any billable upstream call.
     expect(generate).not.toHaveBeenCalled();
   });
@@ -278,6 +284,55 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
 
     expect(res.isError).toBeFalsy();
     expect(generate).toHaveBeenCalled();
+  });
+
+  it('accepts images_url on the hosted connector — the server does the fetching', async () => {
+    const generate = vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const fetchRemoteImage = vi.fn().mockResolvedValue({
+      bytes: Uint8Array.from(atob(PNG), (c) => c.charCodeAt(0)),
+      mimeType: 'image/png',
+      size: 68,
+      finalUrl: 'https://cdn.example.com/a.png',
+      requestedUrl: 'https://cdn.example.com/a.png',
+    });
+    const client = stub(hosted(), { generate, fetchRemoteImage });
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const res = await h.callTool('gemini_image_edit', {
+      prompt: 'make it night',
+      images_url: ['https://cdn.example.com/a.png'],
+      inline: true,
+    });
+    await h.close();
+
+    expect(res.isError).toBeFalsy();
+    expect(fetchRemoteImage).toHaveBeenCalledWith('https://cdn.example.com/a.png');
+    expect(generate.mock.calls[0][0].images).toHaveLength(1);
+  });
+
+  it('accepts images_file_uris on the hosted connector without moving any bytes', async () => {
+    const generate = vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const getFile = vi.fn().mockResolvedValue({ name: 'files/a1', uri: 'https://g/v1beta/files/a1', mimeType: 'image/png' });
+    const client = stub(hosted(), { generate, getFile });
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const res = await h.callTool('gemini_image_edit', { prompt: 'make it night', images_file_uris: ['files/a1'], inline: true });
+    await h.close();
+
+    expect(res.isError).toBeFalsy();
+    expect(generate.mock.calls[0][0].images).toEqual([{ uri: 'https://g/v1beta/files/a1', mimeType: 'image/png' }]);
+  });
+
+  it('gemini_image_edit accepts a URL as its required input (not just paths/base64)', async () => {
+    const generate = vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const client = stub(hosted(), { generate, getFile: vi.fn().mockResolvedValue({ name: 'files/a', uri: 'https://g/files/a', mimeType: 'image/png' }) });
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+
+    const missing = await h.callTool('gemini_image_edit', { prompt: 'x' });
+    expect(missing.isError).toBe(true);
+    expect(errorText(missing)).toMatch(/images_url/);
+
+    const ok = await h.callTool('gemini_image_edit', { prompt: 'x', images_file_uris: ['files/a'], inline: true });
+    expect(ok.isError).toBeFalsy();
+    await h.close();
   });
 
   it('does not gate any of this on the stdio (disk) sink', async () => {
