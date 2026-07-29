@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/chrischall/gemini-mcp/compare/v1.1.0...v1.2.0) (2026-07-29)
+
+
+### Features
+
+* **media:** accept images_url and images_file_uris on video and music too ([#115](https://github.com/chrischall/gemini-mcp/issues/115)) ([3622e2b](https://github.com/chrischall/gemini-mcp/commit/3622e2b866e6dd1ff280a25b56a2d239fd9212e4))
+
+
+### Bug Fixes
+
+* **files:** restore gemini_upload_file's "upload" display-name fallback ([#118](https://github.com/chrischall/gemini-mcp/issues/118)) ([f42d4d6](https://github.com/chrischall/gemini-mcp/commit/f42d4d60540098a6041a52cdfc35d84ac823d0e6)), closes [#116](https://github.com/chrischall/gemini-mcp/issues/116)
+
 ## [1.1.0](https://github.com/chrischall/gemini-mcp/compare/v1.0.4...v1.1.0) (2026-07-29)
 
 
