@@ -64,9 +64,14 @@ src/
                   #   (steps→image/video/audio media)
   models.ts       # DEFAULT_IMAGE_MODEL, resolveModel() (per-call → env → default),
                   #   filterImageModels() (keep *image* models, drop imagen-*)
-  images.ts       # input loading (paths/base64/data-URI, MIME sniff, clipboard
-                  #   aggregation) + output writing (slugify, uniquePath, writeImage,
-                  #   resolveOutputDir, resolveImagePath)
+  images.ts       # disk I/O + decoding primitives: readImageAsInline,
+                  #   decodeImageInput (MIME sniff), writeMedia/writeImage,
+                  #   slugify, uniquePath, resolveOutputDir, resolveImagePath.
+                  #   NOT an input funnel — inputs.ts is (see below)
+  bytes.ts        # base64 <-> Uint8Array + MB formatting. atob/btoa, never
+                  #   Buffer, because the Worker imports it; bytesToBase64
+                  #   CHUNKS (String.fromCharCode(...bytes) blows the argument
+                  #   limit on the first real photo)
   inputs.ts       # resolveImageInputs() — THE funnel: paths / base64 / images_url /
                   #   images_file_uris / clipboard → one ImageInput[]. Owns the
                   #   fetch-once-per-call dedup, the >6MB → Files API promotion, and
@@ -303,10 +308,18 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
   grows an extra-routes option.
 
 **Image inputs all converge in `resolveImageInputs` (`src/inputs.ts`) on one
-`ImageInput` type** (`{ base64?, uri?, mimeType }`, in client.ts), and the client
-turns that into either an inline part (`inline_data` / `{type:'image', data}`) or
-a by-reference part (`file_data` / `{type:'image', uri}`). A new input form is a
-change in `inputs.ts` and nowhere else.
+`ImageInput` type — for EVERY tool that takes a reference image**, images,
+video and music alike. Video and music used to load theirs through a second
+funnel (`gatherImageInputs` in images.ts), which is exactly why they silently
+missed `images_url`/`images_file_uris` when those landed — and `gemini_music_generate`
+IS served by the hosted connector, so its only image route there was the
+~14k-token one. That funnel is deleted; there is one.
+
+`ImageInput` is `{ base64?, uri?, mimeType }` (client.ts), and the client turns
+it into either an inline part (`inline_data` / `{type:'image', data}`) or a
+by-reference part (`file_data` / `{type:'image', uri}`). A new input form is a
+change in `inputs.ts` and nowhere else — **keep that literally true**; the last
+time it wasn't, a whole feature quietly skipped two tools.
 
 Four forms, and **only one of them costs model context**:
 

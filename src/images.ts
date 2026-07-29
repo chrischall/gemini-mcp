@@ -219,34 +219,6 @@ export function decodeImageInput(input: string): { base64: string; mimeType: str
   return { base64: trimmed, mimeType: sniffMimeBytes(buf) };
 }
 
-/** Load images from file paths (via readImageAsInline) and raw base64 strings (via decodeImageInput), paths first. */
-export async function loadImageInputs(
-  paths: string[] = [],
-  base64s: string[] = [],
-): Promise<{ base64: string; mimeType: string }[]> {
-  const fromPaths = await Promise.all(paths.map((p) => readImageAsInline(p)));
-  const fromBase64s = base64s.map((b) => decodeImageInput(b));
-  return [...fromPaths, ...fromBase64s];
-}
-
-/**
- * Aggregate image inputs from all sources: clipboard (macOS only), file paths, and base64 strings.
- * Clipboard image is prepended if `from_clipboard` is true.
- */
-export async function gatherImageInputs(opts: {
-  images?: string[];
-  images_base64?: string[];
-  from_clipboard?: boolean;
-}): Promise<{ base64: string; mimeType: string }[]> {
-  // Only load the clipboard module when actually requested (keeps the child_process
-  // path off the default code path).
-  const clipboardImages = opts.from_clipboard
-    ? [await (await import('./clipboard.js')).readClipboardImage()]
-    : [];
-  const fileImages = await loadImageInputs(opts.images, opts.images_base64);
-  return [...clipboardImages, ...fileImages];
-}
-
 /** Caller-supplied filename → safe base name (no extension). */
 export function baseName(name: string): string {
   // Strip a known media extension (image / video / audio) so writeMedia doesn't

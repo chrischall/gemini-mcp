@@ -2,9 +2,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
-import { slugify, baseName, gatherImageInputs } from '../images.js';
+import { slugify, baseName } from '../images.js';
+import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_MUSIC_MODEL } from '../models.js';
-import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedMedia } from './shared.js';
+import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -34,7 +35,9 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         model: z.enum(MUSIC_MODELS).optional().describe(`Lyria model (default: ${DEFAULT_MUSIC_MODEL}). Pro is longer-form and supports WAV.`),
         audio_format: z.enum(AUDIO_FORMATS).optional().describe('Output format (default mp3). wav is lyria-3-pro-preview-only.'),
         images: z.array(z.string().min(1)).optional().describe('Optional reference image path(s) to condition the music'),
-        images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs'),
+        images_url: imagesUrlSchema('Reference images'),
+        images_file_uris: imagesFileUrisSchema('Reference images'),
+        images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, which keep image bytes out of the conversation'),
         from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS clipboard as a reference'),
         filename: z.string().optional().describe('Base filename for the output audio (extension stripped; default: slugified prompt)'),
         output_dir: z.string().optional().describe('Directory to write audio to (default: $GEMINI_OUTPUT_DIR or cwd)'),
@@ -69,10 +72,11 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
       const fingerprint = fingerprintRequest('gemini_music_generate', {
         model, prompt: args.prompt, audio_format: args.audio_format,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
+        images_url: args.images_url, images_file_uris: args.images_file_uris,
         previous_interaction_id: previousInteractionId,
       });
       return client.session.jobs.dispatch({ toolName: 'gemini_music_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
-        const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
+        const { inputs, report } = await resolveImageInputs(args, client);
         const r = await withProgressHeartbeat(extra, `Generating music (${model})`, () =>
           client.generateMusic({
             input: args.prompt,
@@ -87,6 +91,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         const meta: Record<string, unknown> = { model, interaction_id: r.id };
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
         if (r.text) meta.text = r.text;
+        if (report) meta.image_inputs = report;
         meta.hint = `To continue this track, call gemini_music_generate again with previous_interaction_id: "${r.id}" (or continue_last: true).`;
 
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);

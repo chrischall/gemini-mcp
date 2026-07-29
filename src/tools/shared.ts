@@ -4,6 +4,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { GeminiClient, GeneratedImage, GeneratedMedia } from '../client.js';
 import { resolveVideoPath, videoMimeType } from '../images.js';
 import { IMAGE_URL_MAX_BYTES } from '../fetch-image.js';
+import { wholeMb } from '../bytes.js';
 import { createDiskSink, type MediaSink } from '../storage/media.js';
 
 /**
@@ -81,7 +82,7 @@ export function imagesUrlSchema(label = 'Reference images'): z.ZodOptional<z.Zod
     .describe(
       `${label} as public https URLs — the SERVER downloads them, so no image bytes travel through the conversation. ` +
         'Preferred over images_base64, which costs ~14k tokens per photo and breaks if a file read was truncated. ' +
-        `Max ${Math.round(IMAGE_URL_MAX_BYTES / (1024 * 1024))}MB each; must be a directly-linked image (Content-Type image/*).`,
+        `Max ${wholeMb(IMAGE_URL_MAX_BYTES)}MB each; must be a directly-linked image (Content-Type image/*).`,
     );
 }
 

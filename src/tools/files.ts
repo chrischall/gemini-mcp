@@ -3,6 +3,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, textResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { withProgressHeartbeat } from './shared.js';
+import { base64ToBytes, wholeMb } from '../bytes.js';
+import { fileNameFromUrl } from '../fetch-image.js';
 import { previewUnlessConfirmed, previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 /**
@@ -42,7 +44,6 @@ import { previewUnlessConfirmed, previewLocalInputsUnlessConfirmed, schemaConfir
  */
 const UPLOAD_URL_MAX_BYTES_DISK = 100 * 1024 * 1024;
 const UPLOAD_URL_MAX_BYTES_HOSTED = 25 * 1024 * 1024;
-const mb = (bytes: number): number => Math.round(bytes / (1024 * 1024));
 /** What a `url` upload will accept: the media the Files API is useful for. */
 const UPLOAD_ACCEPT = ['image/', 'video/', 'audio/'];
 
@@ -90,7 +91,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           .url()
           .optional()
           .describe(
-            `Public https URL the SERVER downloads and uploads (image/video/audio, up to ${mb(urlMaxBytes)}MB). ` +
+            `Public https URL the SERVER downloads and uploads (image/video/audio, up to ${wholeMb(urlMaxBytes)}MB). ` +
               'No bytes pass through the conversation.' +
               (onDisk ? '' : ' Larger files: POST the raw bytes to /upload, which streams instead of buffering.'),
           ),
@@ -153,19 +154,19 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           return client.uploadBytes(
             fetched.bytes,
             args.mime_type ?? fetched.mimeType,
-            args.display_name ?? nameFromUrl(args.url),
+            args.display_name ?? fileNameFromUrl(args.url),
           );
         }
         if (args.data_base64) {
           const { decodeImageInput } = await import('../images.js');
           const decoded = decodeImageInput(args.data_base64);
-          const bytes = Uint8Array.from(atob(decoded.base64), (c) => c.charCodeAt(0));
+          const bytes = base64ToBytes(decoded.base64);
           return client.uploadBytes(bytes, args.mime_type ?? decoded.mimeType, args.display_name ?? 'upload');
         }
         const { readImageAsInline, resolveImagePath } = await import('../images.js');
         const resolved = resolveImagePath(args.path!);
         const inline = await readImageAsInline(resolved);
-        const bytes = Uint8Array.from(atob(inline.base64), (c) => c.charCodeAt(0));
+        const bytes = base64ToBytes(inline.base64);
         return client.uploadBytes(
           bytes,
           args.mime_type ?? inline.mimeType,
@@ -232,12 +233,3 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
   );
 }
 
-/** Last path segment of a URL, for the Files API display name. */
-function nameFromUrl(url: string): string {
-  try {
-    const name = new URL(url).pathname.split('/').filter(Boolean).pop();
-    return name ? decodeURIComponent(name).slice(0, 120) : 'upload';
-  } catch {
-    return 'upload';
-  }
-}

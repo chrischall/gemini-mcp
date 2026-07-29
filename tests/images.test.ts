@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, isAbsolute } from 'node:path';
-import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, loadImageInputs, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
+import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-img-')); });
@@ -116,23 +116,6 @@ describe('writeImage extension by mime', () => {
   it('writes .jpg for image/jpeg', async () => {
     const p = await writeImage(dir, 'pic', PNG_B64, 'image/jpeg');
     expect(p.endsWith('.jpg')).toBe(true);
-  });
-});
-
-describe('loadImageInputs', () => {
-  it('loads paths via readImageAsInline and base64 via decodeImageInput, paths first', async () => {
-    const pngPath = join(dir, 'in.png');
-    writeFileSync(pngPath, Buffer.from(PNG_B64, 'base64'));
-    const jpegB64 = Buffer.from([0xff, 0xd8, 0xff]).toString('base64');
-    const result = await loadImageInputs([pngPath], [jpegB64]);
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({ base64: PNG_B64, mimeType: 'image/png' });
-    expect(result[1].mimeType).toBe('image/jpeg');
-  });
-
-  it('handles empty arrays gracefully', async () => {
-    const result = await loadImageInputs([], []);
-    expect(result).toHaveLength(0);
   });
 });
 

@@ -1,4 +1,5 @@
 import { McpToolError } from '@chrischall/mcp-utils';
+import { formatMb } from './bytes.js';
 
 /**
  * Server-side fetching of `images_url` references.
@@ -208,6 +209,20 @@ function assertPublicHttpsUrl(raw: string, requested: string): URL {
   return url;
 }
 
+/**
+ * Last path segment of a URL, for the Files API display name. Cosmetic — the
+ * API keys on the resource name it returns, not on this — so an unparseable
+ * URL degrades to a generic name rather than failing the upload.
+ */
+export function fileNameFromUrl(url: string, fallback = 'image'): string {
+  try {
+    const name = new URL(url).pathname.split('/').filter(Boolean).pop();
+    return name ? decodeURIComponent(name).slice(0, 120) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 /** "<url>" — or "<url> (redirected from <requested>)" when they differ. */
 function describeUrl(current: string, requested: string): string {
   return current === requested ? current : `${current} (redirected from ${requested})`;
@@ -265,9 +280,8 @@ function fetchFailure(err: unknown, current: string, requested: string, timeoutM
 }
 
 function tooBig(url: string, requested: string, size: number, max: number, partial = false): McpToolError {
-  const mb = (n: number) => `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return new McpToolError(
-    `Image at ${describeUrl(url, requested)} is ${partial ? 'over' : ''} ${mb(size)}, above the ${mb(max)} limit for images_url.`,
+    `Image at ${describeUrl(url, requested)} is ${partial ? 'over' : ''} ${formatMb(size)}, above the ${formatMb(max)} limit for images_url.`,
     { hint: 'Resize or re-encode the image, or upload it yourself with gemini_upload_file and pass the returned file_uri.' },
   );
 }

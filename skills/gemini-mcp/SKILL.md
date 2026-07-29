@@ -97,6 +97,9 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 
 ### Reference images — four ways in, one that costs context
 
+These apply to **every** tool that takes a reference image: the four image tools, plus
+`gemini_video_generate` (reference stills) and `gemini_music_generate`.
+
 | Parameter | Where the bytes travel | Context cost |
 |---|---|---|
 | `images_url` (`master_images_url`) | the **server** downloads the https URL | none |
@@ -142,8 +145,8 @@ curl -X POST https://<connector>/upload \
 ### Video & Music (preview — funded account)
 | Tool | Description |
 |------|-------------|
-| `gemini_video_generate(prompt, aspect_ratio?, task?, images?, images_base64?, from_clipboard?, previous_interaction_id?, continue_last?, model?, filename?, output_dir?, timeout_ms?, idempotency_key?, async?)` | Generate a short video via the Gemini omni model: `text_to_video` (default), `image_to_video` / `reference_to_video` (supply reference image[s]), or `edit` (with `previous_interaction_id` / `continue_last`). `aspect_ratio` is `16:9` or `9:16`. Written to disk as **MP4**. Runs long — use `async: true` + `gemini_get_result`, or raise `timeout_ms`. |
-| `gemini_music_generate(prompt, model?, audio_format?, images?, images_base64?, from_clipboard?, previous_interaction_id?, continue_last?, filename?, output_dir?, inline?, timeout_ms?, idempotency_key?, async?)` | Generate music from a prompt (mood/genre/instruments/structure/lyrics) via a Lyria model: `lyria-3-clip-preview` (~30s, default) or `lyria-3-pro-preview` (longer, WAV-capable). `audio_format` `mp3` (default) or `wav` (**Pro-only**). Written to disk as MP3/WAV, or returned inline. |
+| `gemini_video_generate(prompt, aspect_ratio?, task?, images_url?, images_file_uris?, images?, images_base64?, from_clipboard?, previous_interaction_id?, continue_last?, model?, filename?, output_dir?, timeout_ms?, idempotency_key?, async?)` | Generate a short video via the Gemini omni model: `text_to_video` (default), `image_to_video` / `reference_to_video` (supply reference image[s]), or `edit` (with `previous_interaction_id` / `continue_last`). `aspect_ratio` is `16:9` or `9:16`. Written to disk as **MP4**. Runs long — use `async: true` + `gemini_get_result`, or raise `timeout_ms`. |
+| `gemini_music_generate(prompt, model?, audio_format?, images_url?, images_file_uris?, images?, images_base64?, from_clipboard?, previous_interaction_id?, continue_last?, filename?, output_dir?, inline?, timeout_ms?, idempotency_key?, async?)` | Generate music from a prompt (mood/genre/instruments/structure/lyrics) via a Lyria model: `lyria-3-clip-preview` (~30s, default) or `lyria-3-pro-preview` (longer, WAV-capable). `audio_format` `mp3` (default) or `wav` (**Pro-only**). Written to disk as MP3/WAV, or returned inline. |
 
 ### Async / idempotency (any generation tool)
 | Tool | Description |

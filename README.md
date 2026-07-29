@@ -89,8 +89,9 @@ progress), two guards make re-issuing safe and unnecessary:
 
 ## Sending reference images without burning context
 
-Every image tool (`gemini_image_generate`, `gemini_image_edit`, `gemini_image_set`,
-`gemini_interact`) takes reference images four ways. Only one of them costs model context:
+Every tool that takes a reference image — `gemini_image_generate`, `gemini_image_edit`,
+`gemini_image_set`, `gemini_interact`, plus `gemini_video_generate` (reference stills) and
+`gemini_music_generate` — accepts them four ways. Only one of them costs model context:
 
 | Parameter | Where the bytes travel | Context cost |
 |---|---|---|

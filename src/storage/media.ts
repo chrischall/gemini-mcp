@@ -12,6 +12,8 @@
  * behaviour and must stay byte-for-byte equivalent to it.
  */
 
+import { base64ToBytes } from '../bytes.js';
+
 /** One generated item to persist: raw base64 bytes plus the name to store it under. */
 export interface MediaItem {
   /** Base filename / object name, WITHOUT an extension (the MIME picks that). */
@@ -141,7 +143,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       const refs: string[] = [];
       for (const it of items) {
         const key = `${prefix}/${day}/${randomId()}-${safeKeySegment(it.base)}.${mediaExt(it.mimeType)}`;
-        const bytes = decodeBase64(it.base64);
+        const bytes = base64ToBytes(it.base64);
         await bucket.put(key, bytes, { httpMetadata: { contentType: it.mimeType } });
         refs.push(base ? `${base}/${key}` : `r2://${opts.bucketName ?? 'media'}/${key}`);
       }
@@ -155,16 +157,4 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
           'Set MEDIA_PUBLIC_BASE_URL on the Worker to get URLs, or pass inline: true to receive the bytes directly. ' +
           'This hosted connector has no filesystem, so `output_dir` is ignored and no <image>.json sidecar is written — capture interaction_id from this result to chain further turns.',
   };
-}
-
-/**
- * base64 → bytes without `Buffer`. `Buffer` exists in a Worker under
- * `nodejs_compat`, but `atob` is the platform primitive on both runtimes and
- * keeps this module free of any Node dependency.
- */
-function decodeBase64(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
