@@ -346,10 +346,21 @@ server sits on the user's own machine next to their LAN. So: https only; private
 loopback and link-local hosts refused (including `169.254.169.254`); redirects
 followed **manually with every hop revalidated** — `redirect: 'follow'` would let
 a public URL bounce onto the metadata service and make the origin check theatre;
-and the 15MB cap enforced **while streaming**, not from `Content-Length`, which a
-hostile server can under-report. It does NOT close DNS rebinding (a public name
-resolving to a private address) — that needs resolve-then-pin, which neither
-Node's nor workerd's fetch exposes.
+a per-hop `AbortSignal.timeout` covering the body read, so a trickling server
+can't hang a tool call the progress heartbeat is holding open; and the 15MB cap
+enforced **while streaming**, not from `Content-Length`, which a hostile server
+can under-report.
+
+**IPv6 literals are parsed, not pattern-matched.** `new URL` re-serializes
+`[::ffff:127.0.0.1]` as `[::ffff:7f00:1]`, so a guard that looks for the dotted
+spelling never fires on anything a caller can actually send — that shipped once
+and reached loopback. `ipv6Groups()` expands the address and `isPrivateIpv6()`
+pulls the mapped v4 out of the final 32 *bits* into the same `isPrivateIpv4`
+table. An IPv6 literal that fails to parse is **refused**, not allowed.
+
+It does NOT close DNS rebinding (a public name resolving to a private address) —
+that needs resolve-then-pin, which neither Node's nor workerd's fetch exposes.
+That one is an accepted limitation; the mapped-IPv6 case was not.
 
 **Video inputs** (`gemini_image_generate` / `gemini_interact`): `video_url`
 (public YouTube URL, or a previously uploaded `files/…` uri) or `video_path`

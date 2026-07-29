@@ -110,9 +110,11 @@ error. Prefer any of the other three.
 { "prompt": "make it look like winter", "images_url": ["https://example.com/photo.jpg"] }
 ```
 
-Fetches are restricted to public `https://` URLs (private, loopback and link-local hosts are
-refused, and every redirect hop is revalidated), must return `Content-Type: image/*`, and are
-capped at **15MB**. A failure names the offending URL. Anything over 6MB is uploaded to the
+Fetches are restricted to public `https://` URLs — private, loopback and link-local hosts are
+refused (IPv6 literals are parsed, so `[::ffff:7f00:1]` is caught as loopback), every redirect
+hop is revalidated, and each hop is bounded by a timeout. The response must be
+`Content-Type: image/*` and is capped at **15MB**, enforced while streaming rather than trusted
+from `Content-Length`. A failure names the offending URL. Anything over 6MB is uploaded to the
 Files API and referenced by uri instead of inlined, since `generateContent` caps a whole
 request near 20MB.
 

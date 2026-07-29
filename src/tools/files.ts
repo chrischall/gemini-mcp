@@ -30,8 +30,19 @@ import { previewUnlessConfirmed, previewLocalInputsUnlessConfirmed, schemaConfir
  * everywhere a uri is returned.
  */
 
-/** URL uploads are buffered before being sent on, so they get their own cap. */
-const UPLOAD_URL_MAX_BYTES = 100 * 1024 * 1024;
+/**
+ * A `url` upload is buffered whole before being forwarded (fetched bytes, then
+ * a Blob copy of them), so the cap has to be one the runtime can actually hold
+ * — an advertised limit that fails as an OOM is worse than a smaller honest
+ * one. A Cloudflare isolate gets 128MB total, hence the much lower hosted
+ * figure; Node has no comparable ceiling.
+ *
+ * `POST /upload` is unaffected: it streams, and is bounded only by the Files
+ * API's own 2 GB cap.
+ */
+const UPLOAD_URL_MAX_BYTES_DISK = 100 * 1024 * 1024;
+const UPLOAD_URL_MAX_BYTES_HOSTED = 25 * 1024 * 1024;
+const mb = (bytes: number): number => Math.round(bytes / (1024 * 1024));
 /** What a `url` upload will accept: the media the Files API is useful for. */
 const UPLOAD_ACCEPT = ['image/', 'video/', 'audio/'];
 
@@ -57,6 +68,7 @@ function uploadResult(file: { name: string; uri: string; mimeType: string; expir
 
 export function registerFileTools(server: McpServer, client: GeminiClient): void {
   const onDisk = client.mediaSink?.persistsFiles ?? true;
+  const urlMaxBytes = onDisk ? UPLOAD_URL_MAX_BYTES_DISK : UPLOAD_URL_MAX_BYTES_HOSTED;
 
   server.registerTool(
     'gemini_upload_file',
@@ -77,7 +89,11 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           .string()
           .url()
           .optional()
-          .describe('Public https URL the SERVER downloads and uploads (image/video/audio, up to 100MB). No bytes pass through the conversation.'),
+          .describe(
+            `Public https URL the SERVER downloads and uploads (image/video/audio, up to ${mb(urlMaxBytes)}MB). ` +
+              'No bytes pass through the conversation.' +
+              (onDisk ? '' : ' Larger files: POST the raw bytes to /upload, which streams instead of buffering.'),
+          ),
         data_base64: z
           .string()
           .min(1)
@@ -133,7 +149,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
 
       const uploaded = await withProgressHeartbeat(extra, 'Uploading to the Gemini Files API', async () => {
         if (args.url) {
-          const fetched = await client.fetchRemoteImage(args.url, { maxBytes: UPLOAD_URL_MAX_BYTES, accept: UPLOAD_ACCEPT });
+          const fetched = await client.fetchRemoteImage(args.url, { maxBytes: urlMaxBytes, accept: UPLOAD_ACCEPT });
           return client.uploadBytes(
             fetched.bytes,
             args.mime_type ?? fetched.mimeType,

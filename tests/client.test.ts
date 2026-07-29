@@ -1222,3 +1222,35 @@ describe('Files API upload variants', () => {
     expect(cap.calls).toHaveLength(0);
   });
 });
+
+describe('uploadBytes memory behaviour', () => {
+  it('uploads exactly the view\'s bytes, not its whole backing buffer', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    // A 4-byte window onto a 1KB buffer. Blob copies the VIEW, so the declared
+    // length must be 4 — an extra defensive `.slice()` here would just double
+    // peak memory on the Worker's 128MB isolate for no behavioural gain.
+    const backing = new Uint8Array(1024).fill(7);
+    const view = backing.subarray(10, 14);
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fn = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      if (!String(url).includes('upload_id')) {
+        return {
+          ok: true, status: 200,
+          headers: { get: (h: string) => (h.toLowerCase() === 'x-goog-upload-url' ? 'https://up.example/s?upload_id=1' : null) },
+          json: async () => ({}), text: async () => '',
+        };
+      }
+      return {
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ file: { name: 'files/v1', uri: 'https://g/v1beta/files/v1', mimeType: 'image/png', state: 'ACTIVE' } }),
+        text: async () => '',
+      };
+    }) as unknown as typeof fetch;
+
+    await new GeminiClient({ fetchImpl: fn }).uploadBytes(view, 'image/png', 'window.png');
+
+    expect((calls[0].init.headers as Record<string, string>)['X-Goog-Upload-Header-Content-Length']).toBe('4');
+    expect((calls[1].init.body as Blob).size).toBe(4);
+  });
+});

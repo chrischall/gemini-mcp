@@ -39,6 +39,12 @@ export const IMAGE_URL_MAX_BYTES = 15 * 1024 * 1024;
 export const IMAGE_INLINE_MAX_BYTES = 6 * 1024 * 1024;
 /** Redirect hops followed before giving up. */
 const MAX_REDIRECTS = 5;
+/**
+ * Per-hop abort budget. Matches the client's default upstream timeout so a URL
+ * fetch is bounded like every other network call this server makes; callers
+ * override it with the same `timeout_ms` resolution (see `resolveTimeoutMs`).
+ */
+const DEFAULT_FETCH_TIMEOUT_MS = 60_000;
 
 /** A successfully fetched remote image. */
 export interface FetchedImage {
@@ -74,6 +80,70 @@ function isPrivateIpv4([a, b]: number[]): boolean {
 }
 
 /**
+ * Expand an IPv6 literal into its eight 16-bit groups, or `undefined` if it
+ * isn't one. Handles `::` compression and a trailing dotted-quad
+ * (`::ffff:127.0.0.1`) — the latter never comes out of `new URL`, which
+ * re-serializes it as hex, but a redirect `Location` is parsed before
+ * normalization and a human writes it that way.
+ */
+function ipv6Groups(host: string): number[] | undefined {
+  if (!host.includes(':')) return undefined;
+  let text = host;
+  const tail: number[] = [];
+  // A trailing dotted-quad occupies the last two groups.
+  const dotted = /:((?:\d{1,3}\.){3}\d{1,3})$/.exec(text);
+  if (dotted) {
+    const octets = ipv4Octets(dotted[1]);
+    if (!octets) return undefined;
+    tail.push((octets[0] << 8) | octets[1], (octets[2] << 8) | octets[3]);
+    text = text.slice(0, dotted.index);
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return undefined;
+  const parse = (part: string): number[] | undefined => {
+    if (part === '') return [];
+    const out: number[] = [];
+    for (const piece of part.split(':')) {
+      if (!/^[0-9a-f]{1,4}$/.test(piece)) return undefined;
+      out.push(parseInt(piece, 16));
+    }
+    return out;
+  };
+  const head = parse(halves[0]);
+  const rest = halves.length === 2 ? parse(halves[1]) : [];
+  if (!head || !rest) return undefined;
+  const explicit = [...head, ...rest, ...tail];
+  if (halves.length === 2) {
+    if (explicit.length > 7) return undefined;
+    return [...head, ...Array(8 - explicit.length).fill(0), ...rest, ...tail];
+  }
+  return explicit.length === 8 ? explicit : undefined;
+}
+
+/**
+ * True for IPv6 addresses that are not on the public internet.
+ *
+ * The IPv4-mapped case (`::ffff:a.b.c.d`) is the one that matters here and the
+ * one that is easy to get wrong: `new URL` normalizes `[::ffff:127.0.0.1]` to
+ * `[::ffff:7f00:1]`, so a guard that pattern-matches the dotted spelling never
+ * fires on anything a caller can actually send. The mapped IPv4 address is
+ * therefore extracted from the final 32 BITS and run through the same
+ * {@link isPrivateIpv4} table as a bare v4 literal.
+ */
+function isPrivateIpv6(groups: number[]): boolean {
+  if (groups.every((g) => g === 0)) return true; // ::
+  if (groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1) return true; // ::1
+  if ((groups[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+  if ((groups[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+  // ::ffff:0:0/96 (IPv4-mapped) and ::/96 (deprecated IPv4-compatible) both
+  // carry a v4 address in the last two groups.
+  if (groups.slice(0, 5).every((g) => g === 0) && (groups[5] === 0xffff || groups[5] === 0)) {
+    return isPrivateIpv4([groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff]);
+  }
+  return false;
+}
+
+/**
  * Reject a URL that isn't a plain public https endpoint. Hostname-based, so it
  * cannot catch a public name that RESOLVES to a private address (DNS rebinding)
  * — closing that needs resolve-then-pin, which neither Node's nor workerd's
@@ -94,21 +164,21 @@ function assertPublicHttpsUrl(raw: string, requested: string): URL {
       hint: 'Use an https:// URL, or send the bytes with images_base64 / gemini_upload_file.',
     });
   }
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  const v4 = ipv4Octets(host);
-  const blocked =
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.endsWith('.local') ||
-    host === '::1' ||
-    host === '::' ||
-    host.startsWith('fe80:') ||
-    /^f[cd][0-9a-f]{2}:/.test(host) ||
-    (host.startsWith('::ffff:') && (() => {
-      const mapped = ipv4Octets(host.slice('::ffff:'.length));
-      return mapped ? isPrivateIpv4(mapped) : false;
-    })()) ||
-    (v4 ? isPrivateIpv4(v4) : false);
+  // `new URL` always brackets an IPv6 hostname, which is the reliable signal
+  // that this is a literal and not a name.
+  const rawHost = url.hostname.toLowerCase();
+  const isIpv6Literal = rawHost.startsWith('[') && rawHost.endsWith(']');
+  const host = isIpv6Literal ? rawHost.slice(1, -1) : rawHost;
+  const v4 = isIpv6Literal ? undefined : ipv4Octets(host);
+  const v6 = isIpv6Literal ? ipv6Groups(host) : undefined;
+  const blocked = isIpv6Literal
+    // Fail CLOSED on an IPv6 literal we cannot parse: a guard that allows what
+    // it does not understand is the wrong default for this control.
+    ? (v6 === undefined || isPrivateIpv6(v6))
+    : host === 'localhost' ||
+      host.endsWith('.localhost') ||
+      host.endsWith('.local') ||
+      (v4 ? isPrivateIpv4(v4) : false);
   if (blocked) {
     throw new McpToolError(
       `Refusing to fetch ${describeUrl(raw, requested)}: "${url.hostname}" is a private, loopback or link-local address, not a public host.`,
@@ -160,6 +230,20 @@ async function readCapped(res: Response, maxBytes: number, url: string, requeste
   return out;
 }
 
+/** A transport-level failure, told apart from a plain unreachable host. */
+function fetchFailure(err: unknown, current: string, requested: string, timeoutMs: number): McpToolError {
+  const name = (err as { name?: string })?.name;
+  if (name === 'TimeoutError' || name === 'AbortError') {
+    return new McpToolError(`Fetching ${describeUrl(current, requested)} timed out after ${timeoutMs}ms.`, {
+      hint: 'The server accepted the connection but did not finish sending the image. Try a different URL, or raise timeout_ms.',
+    });
+  }
+  return new McpToolError(
+    `Could not fetch ${describeUrl(current, requested)}: ${err instanceof Error ? err.message : String(err)}`,
+    { hint: 'Check the URL is reachable from the server and serves the image without authentication.' },
+  );
+}
+
 function tooBig(url: string, requested: string, size: number, max: number, partial = false): McpToolError {
   const mb = (n: number) => `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return new McpToolError(
@@ -172,6 +256,15 @@ export interface FetchImageOpts {
   /** Injected in tests and by the Worker; defaults to the global `fetch`. */
   fetchImpl?: typeof fetch;
   maxBytes?: number;
+  /**
+   * Abort budget for one hop, covering the response BODY as well as the
+   * headers. Every other upstream call this server makes is bounded by
+   * `resolveTimeoutMs()`; without one here a server that accepts the
+   * connection and then trickles bytes hangs the tool call indefinitely — and
+   * the progress heartbeat around `resolveImageInputs` actively stops the host
+   * from timing it out for us. `0` disables (tests that never resolve).
+   */
+  timeoutMs?: number;
   /**
    * Content-type prefixes to accept. Defaults to images only — that is what
    * `images_url` means, and accepting `text/html` there would silently feed a
@@ -191,10 +284,14 @@ export async function fetchRemoteImage(requestedUrl: string, opts: FetchImageOpt
   const doFetch = opts.fetchImpl ?? fetch;
   const maxBytes = opts.maxBytes ?? IMAGE_URL_MAX_BYTES;
   const accept = opts.accept ?? ['image/'];
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
 
   let current = requestedUrl;
   for (let hop = 0; ; hop++) {
     const url = assertPublicHttpsUrl(current, requestedUrl);
+    // One budget per hop, applied to the body read as well: aborting the signal
+    // errors the response stream, so a trickling server cannot outlast it.
+    const signal = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
     let res: Response;
     try {
       // Manual redirects: every hop goes back through assertPublicHttpsUrl, so
@@ -202,12 +299,10 @@ export async function fetchRemoteImage(requestedUrl: string, opts: FetchImageOpt
       res = await doFetch(url.toString(), {
         redirect: 'manual',
         headers: { accept: accept.map((p) => `${p.replace(/\/$/, '')}/*`).join(', ') },
+        ...(signal ? { signal } : {}),
       });
     } catch (err) {
-      throw new McpToolError(
-        `Could not fetch ${describeUrl(current, requestedUrl)}: ${err instanceof Error ? err.message : String(err)}`,
-        { hint: 'Check the URL is reachable from the server and serves the image without authentication.' },
-      );
+      throw fetchFailure(err, current, requestedUrl, timeoutMs);
     }
 
     if (res.status >= 300 && res.status < 400) {
@@ -238,7 +333,15 @@ export async function fetchRemoteImage(requestedUrl: string, opts: FetchImageOpt
       );
     }
 
-    const bytes = await readCapped(res, maxBytes, current, requestedUrl);
+    let bytes: Uint8Array;
+    try {
+      bytes = await readCapped(res, maxBytes, current, requestedUrl);
+    } catch (err) {
+      // The cap is its own actionable error; anything else here is a transport
+      // failure mid-body, most usefully reported as one (including the timeout).
+      if (err instanceof McpToolError) throw err;
+      throw fetchFailure(err, current, requestedUrl, timeoutMs);
+    }
     if (bytes.byteLength === 0) {
       throw new McpToolError(`${describeUrl(current, requestedUrl)} returned an empty body.`);
     }

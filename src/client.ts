@@ -420,8 +420,11 @@ export class GeminiClient {
    * it uses the SAME injected `fetchImpl` as every upstream call — which is
    * what makes it mockable in tests and correct on the Worker.
    */
-  async fetchRemoteImage(url: string, opts: { maxBytes?: number; accept?: string[] } = {}): Promise<FetchedImage> {
-    return fetchRemoteImage(url, { fetchImpl: this.fetchImpl, ...opts });
+  async fetchRemoteImage(url: string, opts: { maxBytes?: number; accept?: string[]; timeoutMs?: number } = {}): Promise<FetchedImage> {
+    // Same timeout resolution as every other upstream call (per-call
+    // `timeout_ms` → $GEMINI_TIMEOUT_MS → 60s), so a URL fetch cannot be the
+    // one unbounded network operation in the server.
+    return fetchRemoteImage(url, { ...opts, fetchImpl: this.fetchImpl, timeoutMs: resolveTimeoutMs(opts.timeoutMs) });
   }
 
   /** The default model after env override (no per-call arg). */
@@ -472,9 +475,14 @@ export class GeminiClient {
     if (view.byteLength > FILE_MAX_BYTES) {
       throw new McpToolError(`File is ${view.byteLength} bytes, over the Gemini Files API limit of ${FILE_MAX_BYTES} bytes (2 GB).`);
     }
-    // Copy into a fresh ArrayBuffer: a Uint8Array view over a larger/shared
-    // buffer would otherwise upload the whole backing buffer.
-    const body = new Blob([view.slice().buffer as ArrayBuffer], { type: mimeType });
+    // `new Blob([view])` already copies exactly the VIEW's bytes — its byte
+    // offset and length, not the whole backing buffer — so an extra `.slice()`
+    // here bought nothing and doubled peak memory, which matters most on the
+    // Worker's 128MB isolate where the fetched buffer is still live.
+    // The cast is a TS lib artefact: `BlobPart` is declared over
+    // `ArrayBuffer`-backed views, while a `Uint8Array` is generic in its buffer
+    // type. The runtime accepts any view.
+    const body = new Blob([view as unknown as BlobPart], { type: mimeType });
     return this.uploadToFilesApi(body, mimeType, displayName, view.byteLength);
   }
 

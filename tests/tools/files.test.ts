@@ -67,6 +67,34 @@ describe('gemini_upload_file — url', () => {
     expect(uploadBytes).toHaveBeenCalledWith(PNG_BYTES, 'image/png', 'photo.png');
   });
 
+  it('caps a url upload at what the runtime can actually buffer', async () => {
+    // A `url` upload is buffered whole (fetch, then a Blob copy). Advertising
+    // 100MB on a 128MB Cloudflare isolate would fail as an OOM rather than as
+    // a clean error, so the hosted cap is much lower — and the parameter
+    // description says the figure that actually applies.
+    const capture = (methods: Record<string, unknown>, onDisk: boolean) => {
+      const seen: Record<string, string> = {};
+      const server = {
+        registerTool: (name: string, config: { inputSchema?: Record<string, { description?: string }> }) => {
+          seen[name] = config.inputSchema?.url?.description ?? '';
+        },
+      };
+      registerFileTools(server as never, stub(methods, onDisk) as never);
+      return seen.gemini_upload_file;
+    };
+    expect(capture({}, true)).toMatch(/up to 100MB/);
+    expect(capture({}, false)).toMatch(/up to 25MB/);
+    expect(capture({}, false)).toMatch(/POST the raw bytes to \/upload/);
+
+    const fetchRemoteImage = vi.fn().mockResolvedValue({
+      bytes: PNG_BYTES, mimeType: 'image/png', size: 4, finalUrl: 'https://x/y', requestedUrl: 'https://x/y',
+    });
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ fetchRemoteImage, uploadBytes: vi.fn().mockResolvedValue(uploaded()) }, false)));
+    await h.callTool('gemini_upload_file', { url: 'https://x/y' });
+    await h.close();
+    expect(fetchRemoteImage).toHaveBeenCalledWith('https://x/y', expect.objectContaining({ maxBytes: 25 * 1024 * 1024 }));
+  });
+
   it('honours mime_type and display_name overrides', async () => {
     const fetchRemoteImage = vi.fn().mockResolvedValue({
       bytes: PNG_BYTES, mimeType: 'application/octet-stream', size: 4, finalUrl: 'https://x/y', requestedUrl: 'https://x/y',

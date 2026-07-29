@@ -157,9 +157,42 @@ describe('fetchRemoteImage — SSRF guards', () => {
     'https://172.16.4.4/a.png',
     'https://169.254.169.254/latest/meta-data/',
     'https://[::1]/a.png',
+    'https://[fe80::1]/a.png',
+    'https://[fc00::1]/a.png',
+    'https://[fd12:3456::1]/a.png',
     'https://printer.local/a.png',
   ])('refuses the private/loopback/link-local host in %s', async (url) => {
     await expect(fetchRemoteImage(url, { fetchImpl: never })).rejects.toThrow(/private, loopback or link-local/);
+  });
+
+  // The WHATWG URL serializer emits IPv6 as hex groups with NO IPv4-mapped
+  // special case, so `[::ffff:127.0.0.1]` normalizes to `[::ffff:7f00:1]` —
+  // and a caller can type that form directly anyway. A guard that only reads
+  // the dotted spelling therefore never fires on anything real.
+  it.each([
+    ['https://[::ffff:7f00:1]/a.png', '127.0.0.1'],
+    ['https://[::ffff:127.0.0.1]/a.png', '127.0.0.1, dotted spelling'],
+    ['https://[::ffff:a9fe:a9fe]/latest/meta-data/', '169.254.169.254'],
+    ['https://[::ffff:a00:5]/a.png', '10.0.0.5'],
+    ['https://[::ffff:c0a8:1]/a.png', '192.168.0.1'],
+    ['https://[0:0:0:0:0:ffff:7f00:1]/a.png', '127.0.0.1, uncompressed'],
+    ['https://[::7f00:1]/a.png', '127.0.0.1, IPv4-compatible'],
+  ])('refuses %s — an IPv4-mapped IPv6 literal for %s', async (url) => {
+    await expect(fetchRemoteImage(url, { fetchImpl: never })).rejects.toThrow(/private, loopback or link-local/);
+  });
+
+  it('still allows a public IPv6 literal', async () => {
+    const url = 'https://[2606:4700:4700::1111]/a.png';
+    const result = await fetchRemoteImage(url, { fetchImpl: stubFetch({ [url]: () => imageResponse() }) });
+    expect(result.size).toBe(PNG_BYTES.byteLength);
+  });
+
+  it('fails closed on an IPv6 literal it cannot parse', async () => {
+    // Unreachable through `new URL` today, but a guard that silently allows
+    // what it cannot understand is the wrong default for this control.
+    await expect(fetchRemoteImage('https://[::ffff:zz]/a.png', { fetchImpl: never })).rejects.toThrow(
+      /Not a valid URL|private, loopback or link-local/,
+    );
   });
 
   it('revalidates every redirect hop — a public URL cannot bounce onto the metadata service', async () => {
@@ -213,6 +246,47 @@ describe('fetchRemoteImage — upstream failures', () => {
         fetchImpl: stubFetch({ [url]: () => new Response(new Uint8Array(0) as unknown as BodyInit, { status: 200, headers: { 'content-type': 'image/png' } }) }),
       }),
     ).rejects.toThrow(/empty body/);
+  });
+
+  it('bounds a hung request instead of hanging the tool call forever', async () => {
+    // A server that accepts the connection and then never responds. Without an
+    // abort budget this never settles — and the progress heartbeat around
+    // resolveImageInputs actively stops the host from timing it out for us.
+    const url = 'https://example.com/slow.png';
+    const hanging = ((_u: string, init: RequestInit) =>
+      new Promise((_res, reject) => {
+        init.signal?.addEventListener('abort', () =>
+          reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' })),
+        );
+      })) as unknown as typeof fetch;
+
+    await expect(fetchRemoteImage(url, { fetchImpl: hanging, timeoutMs: 20 })).rejects.toThrow(
+      /slow\.png timed out after 20ms/,
+    );
+  });
+
+  it('passes an AbortSignal to fetch so the BODY read is bounded too', async () => {
+    const url = 'https://example.com/trickle.png';
+    let seen: RequestInit | undefined;
+    const capture = (async (_u: string, init: RequestInit) => {
+      seen = init;
+      return imageResponse();
+    }) as unknown as typeof fetch;
+
+    await fetchRemoteImage(url, { fetchImpl: capture, timeoutMs: 5_000 });
+    expect(seen?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reports a mid-body transport failure as one, not as a size violation', async () => {
+    const url = 'https://example.com/cut.png';
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.error(Object.assign(new Error('socket hang up'), { name: 'TypeError' })); },
+    });
+    await expect(
+      fetchRemoteImage(url, {
+        fetchImpl: stubFetch({ [url]: () => new Response(stream, { status: 200, headers: { 'content-type': 'image/png' } }) }),
+      }),
+    ).rejects.toThrow(/Could not fetch .*cut\.png.*socket hang up/s);
   });
 
   it('rejects a redirect with no Location header', async () => {
