@@ -121,23 +121,43 @@ function ipv6Groups(host: string): number[] | undefined {
 }
 
 /**
+ * The /96 prefixes that carry an IPv4 address in their final 32 bits, as the
+ * first six groups. A literal matching any of them is judged on the v4 address
+ * it embeds, not on the prefix.
+ *
+ * `::ffff:0:0/96` is the one that matters operationally — stacks really do
+ * resolve `[::ffff:7f00:1]` to loopback, and `new URL` normalizes
+ * `[::ffff:127.0.0.1]` into exactly that hex spelling, which is how a guard
+ * that pattern-matched the dotted form came to never fire.
+ *
+ * The rest are defense in depth: `::/96` is deprecated IPv4-compatible,
+ * `::ffff:0:0:0/96` is deprecated SIIT (RFC 2765), and `64:ff9b::/96` is the
+ * NAT64 well-known prefix (RFC 6052), which needs a translator on the network
+ * to route at all — and whose §3.1 already forbids embedding non-global v4.
+ * They are listed anyway because a function that understands one v4-carrying
+ * prefix and not its siblings is precisely the shape the original bypass had.
+ */
+const V4_BEARING_PREFIXES: readonly (readonly number[])[] = [
+  [0, 0, 0, 0, 0, 0xffff], // ::ffff:0:0/96   — IPv4-mapped
+  [0, 0, 0, 0, 0, 0], //      ::/96           — IPv4-compatible (deprecated)
+  [0, 0, 0, 0, 0xffff, 0], // ::ffff:0:0:0/96 — IPv4-translated (deprecated SIIT)
+  [0x64, 0xff9b, 0, 0, 0, 0], // 64:ff9b::/96 — NAT64 well-known (RFC 6052)
+];
+
+/**
  * True for IPv6 addresses that are not on the public internet.
  *
- * The IPv4-mapped case (`::ffff:a.b.c.d`) is the one that matters here and the
- * one that is easy to get wrong: `new URL` normalizes `[::ffff:127.0.0.1]` to
- * `[::ffff:7f00:1]`, so a guard that pattern-matches the dotted spelling never
- * fires on anything a caller can actually send. The mapped IPv4 address is
- * therefore extracted from the final 32 BITS and run through the same
- * {@link isPrivateIpv4} table as a bare v4 literal.
+ * Anything carrying an IPv4 address (see {@link V4_BEARING_PREFIXES}) is
+ * decided by running that address through the same {@link isPrivateIpv4} table
+ * as a bare v4 literal — so the two guards can never disagree about whether
+ * 10.0.0.5 is private.
  */
 function isPrivateIpv6(groups: number[]): boolean {
   if (groups.every((g) => g === 0)) return true; // ::
   if (groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1) return true; // ::1
   if ((groups[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
   if ((groups[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
-  // ::ffff:0:0/96 (IPv4-mapped) and ::/96 (deprecated IPv4-compatible) both
-  // carry a v4 address in the last two groups.
-  if (groups.slice(0, 5).every((g) => g === 0) && (groups[5] === 0xffff || groups[5] === 0)) {
+  if (V4_BEARING_PREFIXES.some((prefix) => prefix.every((g, i) => groups[i] === g))) {
     return isPrivateIpv4([groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff]);
   }
   return false;
