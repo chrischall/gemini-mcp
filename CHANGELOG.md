@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/chrischall/gemini-mcp/compare/v1.0.4...v1.1.0) (2026-07-29)
+
+
+### Features
+
+* **images:** reference images by URL or Files API uri instead of base64 ([#111](https://github.com/chrischall/gemini-mcp/issues/111)) ([9f9e76a](https://github.com/chrischall/gemini-mcp/commit/9f9e76a14a460ff2d0adb4f9071caac1c9caf1f0))
+
+
+### Bug Fixes
+
+* **images:** refuse every v4-bearing IPv6 prefix, not just IPv4-mapped ([#114](https://github.com/chrischall/gemini-mcp/issues/114)) ([485197d](https://github.com/chrischall/gemini-mcp/commit/485197d0fcb7dbca68a1381c634b549080d6b9dd)), closes [#112](https://github.com/chrischall/gemini-mcp/issues/112)
+
 ## [1.0.4](https://github.com/chrischall/gemini-mcp/compare/v1.0.3...v1.0.4) (2026-07-27)
 
 
