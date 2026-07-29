@@ -448,14 +448,31 @@ describe('every hosted generation returns an openable URL', () => {
     }
   });
 
-  it('never returns an r2:// ref from any tool, in any configuration', async () => {
-    for (const sink of [signed(bucket()), createR2Sink(bucket(), { publicBaseUrl: 'https://m.example.com' }), createR2Sink(bucket(), {})]) {
+  it('returns an ABSOLUTE https URL from every configured sink — not merely "not r2://"', async () => {
+    // Asserting only the absence of `r2://` let a bare object key pass, which
+    // reads as a relative file path in `images[]`. The contract is a URL.
+    for (const sink of [signed(bucket()), createR2Sink(bucket(), { publicBaseUrl: 'https://m.example.com' })]) {
       const client = stub(sink, { generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }) });
       const h = await createTestHarness((s) => registerGenerateTools(s, client));
-      const body = parseToolResult<{ images: string[] }>(await h.callTool('gemini_image_generate', { prompt: 'a cat' }));
+      const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_image_generate', { prompt: 'a cat' }));
       await h.close();
-      expect(body.images[0]).not.toMatch(/^r2:\/\//);
+      expect((body.images as string[])[0]).toMatch(/^https:\/\//);
+      expect(body.media_url_unavailable).toBeUndefined();
     }
+  });
+
+  it('says so LOUDLY if no URL could be minted, rather than passing a key off as a path', async () => {
+    // Unreachable through the Worker (it always supplies its own origin), so
+    // this is a misconfiguration. It must not look like a filename.
+    const client = stub(createR2Sink(bucket(), {}), {
+      generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }),
+    });
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_image_generate', { prompt: 'a cat' }));
+    await h.close();
+
+    expect(String(body.media_url_unavailable)).toMatch(/no public URL.*not links/is);
+    expect(String(body.media_url_unavailable)).toMatch(/MEDIA_PUBLIC_BASE_URL/);
   });
 
   it('tells the caller the links are openable without an auth header', async () => {

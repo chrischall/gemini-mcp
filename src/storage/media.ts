@@ -45,6 +45,15 @@ export interface PersistedMedia {
   ref: string;
   key?: string;
   expiresAt?: string;
+  /**
+   * Set when the object was stored but NO openable URL could be minted — a
+   * misconfiguration, since the connector always supplies its own signed route.
+   * The ref is then a bare object key, which is why this flag exists: a key
+   * reads like a relative path in `images[]`, and silently handing one back is
+   * the exact failure this whole change was written to end. Callers surface it
+   * loudly instead of letting it pass for a filename.
+   */
+  unavailable?: boolean;
 }
 
 export interface MediaSink {
@@ -129,8 +138,6 @@ export interface R2SinkOptions {
   sign?: (key: string, expiresAtMs: number) => Promise<string>;
   /** How long a signed URL stays valid; also reported as `expires_at`. */
   urlTtlMs?: number;
-  /** Bucket name, retained for diagnostics in the no-URL-available case. */
-  bucketName?: string;
   /** Key prefix (default `gen`). */
   prefix?: string;
   /** Injectable for deterministic tests. */
@@ -206,8 +213,10 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       const signature = await opts.sign(key, expiresAtMs);
       return { ref: buildMediaUrl(signedBase, key, expiresAtMs, signature), key, expiresAt: new Date(expiresAtMs).toISOString() };
     }
-    // Neither configured: say what we have rather than invent a URL that 404s.
-    return { ref: key, key };
+    // Neither configured. Unreachable in the Worker (which always passes its
+    // own origin), so this is a misconfiguration rather than a mode — say so
+    // explicitly rather than returning something that looks like a filename.
+    return { ref: key, key, unavailable: true };
   }
 }
 

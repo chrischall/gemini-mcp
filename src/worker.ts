@@ -8,6 +8,7 @@ import { createR2Sink } from './storage/media.js';
 import { createUploadHandler } from './upload-endpoint.js';
 import { createMediaHandler } from './media-endpoint.js';
 import { cleanupExpiredMedia, retentionMsFromDays, type CleanupBucket } from './media-cleanup.js';
+import { withConnectorOrigin } from './connector-origin.js';
 import { resolveSigningKey, signMediaKey, MEDIA_URL_TTL_MS } from './media-url.js';
 import { registerModelTools } from './tools/models.js';
 import { registerGenerateTools } from './tools/generate.js';
@@ -88,7 +89,6 @@ function buildClient(props: GeminiProps & { connectorOrigin?: string }, env: Env
       sign: async (key, expiresAtMs) =>
         signMediaKey(await resolveSigningKey(env.MEDIA_URL_SECRET, env.OAUTH_KV), key, expiresAtMs),
       urlTtlMs,
-      bucketName: 'gemini-connector-media',
     }),
   });
 }
@@ -125,30 +125,13 @@ const AgentClass = Agent as unknown as {
 // off the wire — exactly the point of the endpoint.
 const uploadHandler = createUploadHandler((apiKey) => new GeminiClient({ apiKey }));
 
-/**
- * Tell the MCP session which hostname it was reached on, by adding it to the
- * props the OAuth provider already decrypted for this request.
- *
- * That origin is what media URLs are built from. Deriving it per request rather
- * than configuring it means a fork, a *.workers.dev preview and the custom
- * domain all mint correct links with nothing to set — and, critically, it is
- * NOT module-level state: `src/` holds none, because one isolate serves many
- * authenticated sessions (see session.ts).
- */
-function withConnectorOrigin(inner: { fetch: ExportedHandlerFetchHandler }): { fetch: ExportedHandlerFetchHandler } {
-  return {
-    fetch: (request: Request, env: unknown, ctx: ExecutionContext) => {
-      const holder = ctx as unknown as { props?: Record<string, unknown> };
-      holder.props = { ...holder.props, connectorOrigin: new URL(request.url).origin };
-      return inner.fetch(request as never, env as never, ctx as never);
-    },
-  };
-}
 
 const handler = new OAuthProvider({
   apiHandlers: {
-    '/mcp': withConnectorOrigin(AgentClass.serve('/mcp')),
-    '/sse': withConnectorOrigin(AgentClass.serveSSE('/sse')),
+    // See src/connector-origin.ts — this is what makes media URLs point at
+    // whatever hostname the caller actually reached, with nothing configured.
+    '/mcp': withConnectorOrigin(AgentClass.serve('/mcp')) as never,
+    '/sse': withConnectorOrigin(AgentClass.serveSSE('/sse')) as never,
     // `ctx.props` is where the OAuth provider puts the decrypted grant props
     // after it has validated the bearer token; the runtime types it as
     // `unknown`, so the narrowing happens at this one boundary.

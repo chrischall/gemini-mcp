@@ -1,4 +1,4 @@
-import { resolveSigningKey, verifyMediaSignature, type SecretStore } from './media-url.js';
+import { loadSigningKey, verifyMediaSignature, type SecretStore } from './media-url.js';
 
 /**
  * `GET /media/<key>?exp=…&sig=…` — streams one generated object out of R2.
@@ -62,8 +62,14 @@ export function createMediaHandler(env: MediaEndpointEnv, basePath = '/media/') 
     if (!key) return problem(404, 'Not found');
 
     const now = env.now?.() ?? Date.now();
-    const signingKey = await resolveSigningKey(env.secret, env.store);
-    const check = await verifyMediaSignature(signingKey, key, url.searchParams.get('exp'), url.searchParams.get('sig'), now);
+    // Read-only: verification must never CREATE a signing secret. A stale KV
+    // read here would otherwise clobber the secret every outstanding link was
+    // signed with (see loadSigningKey). No secret ⇒ nothing was legitimately
+    // signed ⇒ refuse, without touching storage or the bucket.
+    const signingKey = await loadSigningKey(env.secret, env.store);
+    const check = signingKey
+      ? await verifyMediaSignature(signingKey, key, url.searchParams.get('exp'), url.searchParams.get('sig'), now)
+      : ({ ok: false, reason: 'invalid' } as const);
     if (!check.ok) {
       if (check.reason === 'expired') {
         return problem(410, 'This media link has expired. Generated media is retained for a limited time — re-run the generation to get a fresh link.');

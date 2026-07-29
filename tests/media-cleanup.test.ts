@@ -9,10 +9,12 @@ function fakeBucket(objects: Array<{ key: string; ageDays: number }>, pageSize =
   const deleted: string[] = [];
   return {
     deleted,
-    async list({ cursor, limit }) {
+    async list({ prefix, cursor, limit }) {
+      // Honour the prefix, like R2 does — the sweep queries more than one.
+      const matching = all.filter((o) => !prefix || o.key.startsWith(prefix));
       const start = cursor ? Number(cursor) : 0;
-      const end = Math.min(start + Math.min(limit ?? pageSize, pageSize), all.length);
-      return { objects: all.slice(start, end), truncated: end < all.length, cursor: String(end) };
+      const end = Math.min(start + Math.min(limit ?? pageSize, pageSize), matching.length);
+      return { objects: matching.slice(start, end), truncated: end < matching.length, cursor: String(end) };
     },
     async delete(keys) {
       deleted.push(...(Array.isArray(keys) ? keys : [keys]));
@@ -79,9 +81,24 @@ describe('cleanupExpiredMedia', () => {
     expect(bucket.deleted).toHaveLength(result.deleted);
   });
 
-  it('scopes the sweep to the generated-media prefix', async () => {
+  it('sweeps the LEGACY media/ prefix as well as the current gen/ one', async () => {
+    // Objects written before the prefix rename would otherwise never be listed,
+    // leaving the unbounded-growth problem intact for exactly the backlog that
+    // motivated adding retention at all.
+    const bucket = fakeBucket([
+      { key: 'gen/new-old.png', ageDays: 10 },
+      { key: 'media/legacy-old.png', ageDays: 40 },
+      { key: 'media/legacy-fresh.png', ageDays: 1 },
+    ]);
+    await cleanupExpiredMedia(bucket, 7 * DAY, { now: () => NOW });
+
+    expect(bucket.deleted.sort()).toEqual(['gen/new-old.png', 'media/legacy-old.png']);
+  });
+
+  it('queries every configured prefix', async () => {
     const list = vi.fn(async () => ({ objects: [], truncated: false, cursor: undefined }));
     await cleanupExpiredMedia({ list, delete: async () => {} } as unknown as CleanupBucket, 7 * DAY, { now: () => NOW });
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'gen/' }));
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'media/' }));
   });
 });

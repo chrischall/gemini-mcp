@@ -43,19 +43,31 @@ function base64UrlDecode(text: string): Uint8Array {
   return out;
 }
 
+/** Import raw secret material as an HMAC key. */
+async function importKey(material: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey('raw', new TextEncoder().encode(material), { name: 'HMAC', hash: 'SHA-256' }, false, [
+    'sign',
+    'verify',
+  ]);
+}
+
 /**
- * Resolve the HMAC key used to sign media URLs.
+ * The HMAC key for **signing**, creating one if this deployment has never
+ * signed anything.
  *
  * `MEDIA_URL_SECRET` wins when an operator sets one. Otherwise a random 32-byte
  * secret is generated once and persisted in KV — which is what makes the whole
  * feature work with **zero configuration**, the entire point of this change.
  *
+ * Creating is confined to this function, and this function is called only when
+ * minting a URL. {@link loadSigningKey} is what the verify path uses. That
+ * split is load-bearing, not stylistic — see the warning there.
+ *
  * Deliberately NOT cached in a module-level variable: `src/` holds no
- * module-scope mutable state (see session.ts), and a KV read per sign/verify is
- * cheap next to an image generation. There is a narrow first-use race — two
- * isolates generating simultaneously — so the value is re-read after writing
- * and the stored one wins, collapsing the window to URLs minted in that same
- * instant.
+ * module-scope mutable state (see session.ts), and a KV read per sign is cheap
+ * next to an image generation. There is a narrow first-use race — two isolates
+ * generating simultaneously — so the value is re-read after writing and the
+ * stored one wins, collapsing the window to URLs minted in that same instant.
  */
 export async function resolveSigningKey(secret: string | undefined, store: SecretStore): Promise<CryptoKey> {
   let material = secret?.trim();
@@ -68,10 +80,27 @@ export async function resolveSigningKey(secret: string | undefined, store: Secre
       material = (await store.get(SIGNING_SECRET_KV_KEY)) ?? generated;
     }
   }
-  return crypto.subtle.importKey('raw', new TextEncoder().encode(material), { name: 'HMAC', hash: 'SHA-256' }, false, [
-    'sign',
-    'verify',
-  ]);
+  return importKey(material);
+}
+
+/**
+ * The HMAC key for **verifying**. Read-only: returns `undefined` when no secret
+ * is stored, and never creates one.
+ *
+ * This is not a stylistic split. KV is eventually consistent — a `put` on one
+ * isolate is not immediately visible to another — so the verify path can and
+ * will see a miss for a secret that exists. If verification created-on-miss
+ * (as it did originally), that transient miss would mint a NEW secret and
+ * overwrite the one every outstanding link was signed with, permanently 403ing
+ * media that had been signed perfectly correctly. A self-inflicted denial of
+ * service, triggered by ordinary traffic, and irreversible once the old secret
+ * is gone.
+ *
+ * No secret stored ⇒ nothing was ever legitimately signed ⇒ refuse.
+ */
+export async function loadSigningKey(secret: string | undefined, store: SecretStore): Promise<CryptoKey | undefined> {
+  const material = secret?.trim() || (await store.get(SIGNING_SECRET_KV_KEY));
+  return material ? importKey(material) : undefined;
 }
 
 /** The bytes covered by a signature: the object key and the expiry, nothing else. */

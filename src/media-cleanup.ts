@@ -24,7 +24,13 @@ export interface CleanupBucket {
 }
 
 export interface CleanupOptions {
-  prefix?: string;
+  /**
+   * Key prefixes to sweep. Defaults to BOTH the current `gen/` and the legacy
+   * `media/` one: objects written before the rename would otherwise never be
+   * listed, leaving the unbounded-growth problem intact for exactly the backlog
+   * that motivated adding retention.
+   */
+  prefixes?: string[];
   now?: () => number;
   /**
    * Cap on objects examined per run, so one invocation cannot exceed the
@@ -42,6 +48,12 @@ export interface CleanupResult {
 }
 
 const DEFAULT_MAX_OBJECTS = 5_000;
+/**
+ * `gen/` is where media is written now; `media/` is where it was written before
+ * the rename that made URLs read `/media/gen/…` instead of `/media/media/…`.
+ * Both are swept — retention that ignores the existing backlog is not retention.
+ */
+const LEGACY_AND_CURRENT_PREFIXES = ['gen/', 'media/'];
 /** R2 accepts bulk deletes in batches; 1000 is the documented ceiling. */
 const DELETE_BATCH = 1_000;
 
@@ -64,31 +76,36 @@ export async function cleanupExpiredMedia(
   const now = opts.now?.() ?? Date.now();
   const cutoff = now - retentionMs;
   const maxObjects = opts.maxObjects ?? DEFAULT_MAX_OBJECTS;
-  const prefix = opts.prefix ?? 'gen/';
+  const prefixes = opts.prefixes ?? LEGACY_AND_CURRENT_PREFIXES;
 
-  let cursor: string | undefined;
   let scanned = 0;
   let deleted = 0;
+  let truncated = false;
   const doomed: string[] = [];
 
-  for (;;) {
-    const page = await bucket.list({ prefix, cursor, limit: Math.min(1000, maxObjects - scanned) });
-    for (const object of page.objects) {
-      scanned++;
-      if (object.uploaded.getTime() < cutoff) doomed.push(object.key);
-    }
-    while (doomed.length >= DELETE_BATCH) {
+  const flush = async (all: boolean): Promise<void> => {
+    while (doomed.length >= (all ? 1 : DELETE_BATCH)) {
       const batch = doomed.splice(0, DELETE_BATCH);
       await bucket.delete(batch);
       deleted += batch.length;
     }
-    if (!page.truncated || scanned >= maxObjects) {
-      if (doomed.length > 0) {
-        await bucket.delete(doomed);
-        deleted += doomed.length;
+  };
+
+  for (const prefix of prefixes) {
+    let cursor: string | undefined;
+    for (;;) {
+      if (scanned >= maxObjects) { truncated = true; break; }
+      const page = await bucket.list({ prefix, cursor, limit: Math.min(1000, maxObjects - scanned) });
+      for (const object of page.objects) {
+        scanned++;
+        if (object.uploaded.getTime() < cutoff) doomed.push(object.key);
       }
-      return { scanned, deleted, truncated: page.truncated && scanned >= maxObjects };
+      await flush(false);
+      if (!page.truncated) break;
+      if (scanned >= maxObjects) { truncated = true; break; }
+      cursor = page.cursor;
     }
-    cursor = page.cursor;
   }
+  await flush(true);
+  return { scanned, deleted, truncated };
 }

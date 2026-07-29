@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   resolveSigningKey,
+  loadSigningKey,
   signMediaKey,
   verifyMediaSignature,
   buildMediaUrl,
@@ -72,6 +73,54 @@ describe('signing key resolution', () => {
     const store = memoryStore();
     await resolveSigningKey('   ', store);
     expect(store.put).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('only the SIGNING side may create a secret', () => {
+  /**
+   * KV is eventually consistent: a `put` on one isolate is not immediately
+   * visible to another, and a read can miss for a while. If verification also
+   * created-on-miss, that miss would mint a NEW secret and overwrite the one
+   * every outstanding link was signed with — turning a transient read miss
+   * into permanent 403s for media that was signed correctly. A self-inflicted
+   * denial of service, and irreversible.
+   */
+  it('loadSigningKey never writes, and returns undefined when nothing is stored', async () => {
+    const store = memoryStore();
+    await expect(loadSigningKey(undefined, store)).resolves.toBeUndefined();
+    expect(store.put).not.toHaveBeenCalled();
+  });
+
+  it('a verify against a stale/empty KV read does NOT clobber the signing secret', async () => {
+    const store = memoryStore();
+    const signing = await resolveSigningKey(undefined, store);
+    const secret = store.data.get(SIGNING_SECRET_KV_KEY);
+    const exp = Date.now() + 60_000;
+    const sig = await signMediaKey(signing, KEY, exp);
+
+    // Simulate the eventually-consistent miss the verify path can hit. Its own
+    // `put` spy, so the assertion below is about the VERIFY call and not about
+    // the signing call above that legitimately wrote the secret.
+    const stalePut = vi.fn(async (k: string, v: string) => { store.data.set(k, v); });
+    await loadSigningKey(undefined, { get: vi.fn(async () => null), put: stalePut });
+
+    expect(stalePut).not.toHaveBeenCalled();
+    expect(store.data.get(SIGNING_SECRET_KV_KEY)).toBe(secret);
+    // The link signed before the miss still verifies afterwards.
+    const after = await loadSigningKey(undefined, store);
+    await expect(verifyMediaSignature(after!, KEY, String(exp), sig, Date.now())).resolves.toEqual({ ok: true });
+  });
+
+  it('the media route 403s rather than creating a secret when none is stored', async () => {
+    const store = memoryStore();
+    const bucket = memoryBucket({ [KEY]: { body: 'x' } });
+    const res = await createMediaHandler({ bucket, store })(
+      new Request(`https://c.example.com/media/${KEY}?exp=${Date.now() + 1000}&sig=AAAA`),
+    );
+
+    expect(res.status).toBe(403);
+    expect(store.put).not.toHaveBeenCalled();
+    expect(bucket.get).not.toHaveBeenCalled();
   });
 });
 

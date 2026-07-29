@@ -291,7 +291,10 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
   was never actually set) the state every hosted generation landed in: billed,
   then invisible. **Never reintroduce a ref that cannot be opened.** The
   fallback is now the connector's own signed `/media` route, so zero config
-  still yields a link.
+  still yields a link. If a URL genuinely cannot be minted (unreachable via the
+  Worker, which always supplies its own origin), the result carries an explicit
+  `media_url_unavailable` rather than a bare object key that reads like a
+  filename — say it plainly instead of shipping something that looks openable.
 - **`/media` is the one route outside OAuth, on purpose.** A browser opening a
   link, a link-preview fetcher and a `curl` in a sandbox all carry no bearer
   token; requiring one recreates the exact problem the route exists to solve.
@@ -303,7 +306,15 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
   `ctx.props` by the `withConnectorOrigin` wrapper around the `/mcp` and `/sse`
   apiHandlers. That is why a fork, a `*.workers.dev` preview and the custom
   domain all mint correct links with nothing to configure — and why the origin
-  is NOT module-level state (one isolate serves many sessions).
+  is NOT module-level state (one isolate serves many sessions). The wrapper
+  lives in its own module (`src/connector-origin.ts`) **so it can be tested**:
+  `worker.ts` imports `agents` and cannot load under Node, and this is the one
+  link whose silent failure would take every media URL down with it.
+- **Only the SIGNING path may create the media secret.** KV is eventually
+  consistent, so the verify path can miss a secret that exists; if verification
+  created-on-miss it would mint a new one and permanently 403 every link already
+  signed with the old. `resolveSigningKey` creates, `loadSigningKey` is
+  read-only, and `/media` uses the latter. Don't merge them back.
 - **`sink.persistsFiles` gates every disk-only claim.** No sidecar is written on
   R2, so nothing in the result may mention one — `timeoutRiskHint` swaps its
   "look in the output dir" advice for `async: true`, and `emitMedia` adds

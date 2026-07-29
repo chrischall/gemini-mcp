@@ -140,7 +140,7 @@ safe form, and a markdown link is a reasonable enhancement where you know it ren
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MEDIA_TTL_DAYS` | `7` | Objects older than this are deleted by a daily cron |
+| `MEDIA_TTL_DAYS` | `7` | Objects older than this are deleted by a daily cron (both the current `gen/` prefix and the legacy `media/` one) |
 | `MEDIA_URL_SECRET` | generated | HMAC key for `/media` links; rotate to revoke all outstanding URLs |
 | `MEDIA_PUBLIC_BASE_URL` | unset | Serve from R2 directly instead of the Worker route |
 

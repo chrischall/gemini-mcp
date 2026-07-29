@@ -350,6 +350,16 @@ export async function emitMedia(
   // so a caller can reason about retention without parsing a URL. Only emitted
   // where there IS extra detail — the disk sink's absolute paths say it all,
   // and adding a parallel array there would change a stable result shape.
+  // A stored-but-unaddressable object is a configuration failure, not a mode.
+  // Saying so in the result beats handing back a bare key that reads like a
+  // filename — the silent-unopenable-ref problem this change exists to end.
+  const unavailable = persisted.some((p) => p.unavailable)
+    ? {
+        media_url_unavailable:
+          'The media was stored but no public URL could be generated for it, so the values above are bare object keys, not links. ' +
+          'This is a connector misconfiguration: set MEDIA_PUBLIC_BASE_URL, or use inline: true to receive the bytes directly.',
+      }
+    : {};
   const detailed = persisted.filter((p) => p.key !== undefined);
   const media = detailed.length === persisted.length && detailed.length > 0
     ? {
@@ -361,7 +371,7 @@ export async function emitMedia(
       }
     : {};
   const storage = sink.persistsFiles ? {} : { storage: sink.kind, storage_note: storageNote };
-  return textResult({ [`${kind}s`]: refs, ...media, ...note, ...storage, ...meta });
+  return textResult({ [`${kind}s`]: refs, ...media, ...unavailable, ...note, ...storage, ...meta });
 }
 
 /**
