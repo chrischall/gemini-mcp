@@ -113,6 +113,37 @@ describe('POST /upload', () => {
   });
 });
 
+/**
+ * `/media` is the one route deliberately OUTSIDE OAuth: it exists so a person
+ * can open a generated image from a chat client, and neither a browser nor a
+ * link preview carries a bearer token. These run against the real provider to
+ * prove the route is reachable unauthenticated AND that the signature, not the
+ * absence of auth, is what guards it.
+ */
+describe('GET /media (public, signature-guarded)', () => {
+  it('is NOT behind OAuth — an unauthenticated request is not 401', async () => {
+    const res = await SELF.fetch('https://example.com/media/gen/2026-07-29/abc-x.png');
+    expect(res.status).not.toBe(401);
+    // No signature ⇒ refused, but on its own terms.
+    expect(res.status).toBe(403);
+    expect(await res.text()).toMatch(/signature/i);
+  });
+
+  it('refuses a forged signature', async () => {
+    const res = await SELF.fetch(`https://example.com/media/gen/2026-07-29/abc-x.png?exp=${Date.now() + 60_000}&sig=AAAA`);
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a non-GET method rather than falling through to 404', async () => {
+    const res = await SELF.fetch('https://example.com/media/gen/x.png', { method: 'POST' });
+    expect(res.status).toBe(405);
+  });
+
+  it('still 404s a path outside /media/', async () => {
+    expect((await SELF.fetch('https://example.com/mediaX')).status).toBe(404);
+  });
+});
+
 describe('connector auth', () => {
   it('asks for exactly one masked credential', () => {
     expect(geminiAuth.service).toBe('Gemini');

@@ -50,6 +50,35 @@ base64 that still parses — so the corruption shows up as a bad image rather th
 an error. The three recommended routes move the bytes without the model ever
 seeing them.
 
+### `GET /media/<key>` — how generated media reaches the user
+
+The connector serves generated images/audio itself, at a signed, expiring URL, with **no
+configuration**:
+
+```
+https://connector.gemini.nullnet.app/media/gen/2026-07-29/ab12cd34-a-cat.png?exp=…&sig=…
+```
+
+This route is deliberately **outside OAuth** — a browser opening a link and a link-preview
+fetcher carry no bearer token — so the signature is the authorization. It names one object and
+expires (48h, clamped to `MEDIA_TTL_DAYS`).
+
+Optional, if you would rather R2 served the bytes directly:
+
+- **r2.dev**: enable public access on the bucket, then
+  `npx wrangler secret put MEDIA_PUBLIC_BASE_URL` with the `https://pub-….r2.dev` origin.
+  Easiest; rate-limited; fine for personal use.
+- **Custom domain**: attach one to the bucket in the Cloudflare dashboard and set the same
+  variable to it. Best option — no Worker CPU spent on media, and plain non-expiring URLs.
+
+Two more knobs, both optional: `MEDIA_URL_SECRET` (pin the signing key across environments, or
+rotate it to invalidate every outstanding link) and `MEDIA_TTL_DAYS` (retention, default 7 —
+a daily cron sweeps objects older than this).
+
+> Before this existed, an unset `MEDIA_PUBLIC_BASE_URL` — the default, and what was actually
+> deployed — made every result an `r2://bucket/key` ref. Accurate and completely unusable: the
+> image generated, billed, and the user never saw it.
+
 ### `POST /upload`
 
 The connector serves one non-MCP route, behind the **same OAuth token as

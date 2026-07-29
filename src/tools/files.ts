@@ -75,7 +75,10 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
     'gemini_upload_file',
     {
       description:
-        'Upload an image (or video/audio) to the Gemini Files API ONCE and get back a reusable `files/<id>` reference. ' +
+        'Upload a file — an image, reference photo, picture, screenshot, video or audio clip — to the Gemini Files API ' +
+        'ONCE, and get back a reusable `file_uri` (`files/<id>`) to attach to later image, video or music generations. ' +
+        'Keywords: upload, upload file, upload image, upload photo, attach, reference image, reference photo, ' +
+        'file_uri, files api, image reference, reuse across calls. ' +
         'Use this instead of pasting base64 into a tool call: the reference is a short string, so no image bytes ever ' +
         'enter the conversation, and it can be reused across many generations until it expires (~48h). ' +
         'Provide exactly one of `url` (the server downloads it), `data_base64`' +
@@ -184,7 +187,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
     'gemini_list_files',
     {
       description:
-        'List the files currently uploaded to the Gemini Files API under this API key, with their `files/<id>` references, ' +
+        'List files, images and photos currently uploaded to the Gemini Files API under this API key, with their reusable `file_uri` (`files/<id>`) references, ' +
         'MIME types and expiry times. Retention is ~48h, so an entry that has vanished has expired rather than failed.',
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: {
@@ -216,7 +219,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
     'gemini_delete_file',
     {
       description:
-        'Delete an uploaded file from the Gemini Files API before its ~48h expiry. Any tool call still referencing it ' +
+        'Delete an uploaded file, image or photo (by file_uri) from the Gemini Files API before its ~48h expiry. Any tool call still referencing it ' +
         'will then fail with a generic 404, so delete only references you are finished with.',
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: {
