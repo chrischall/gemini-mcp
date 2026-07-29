@@ -25,7 +25,7 @@ const NEW_REFERENCES_ONLY =
 /**
  * On a chained call, split `images` into genuinely new references vs paths
  * this server itself generated (which the interaction already contains).
- * Unresolvable paths are kept so `gatherImageInputs` surfaces its usual error.
+ * Unresolvable paths are kept so `resolveImageInputs` surfaces its usual error.
  */
 function splitReattachedOutputs(images: string[], writtenOutputs: ReadonlySet<string>): { kept: string[]; dropped: string[] } {
   const kept: string[] = [];

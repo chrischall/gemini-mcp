@@ -335,6 +335,26 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
     await h.close();
   });
 
+  it('gives gemini_music_generate a non-base64 image route — it IS served here', async () => {
+    // Music is registered on the connector, so before it shared the one input
+    // funnel its `images` paths were rejected and `images_base64` was the only
+    // way left to pass a reference image — the exact problem images_url exists
+    // to solve, still live on a connector-served tool.
+    const generateMusic = vi.fn().mockResolvedValue({ id: 'm1', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] });
+    const getFile = vi.fn().mockResolvedValue({ name: 'files/a1', uri: 'https://g/v1beta/files/a1', mimeType: 'image/png' });
+    const client = stub(hosted(), { generateMusic, getFile });
+    const h = await createTestHarness((s) => registerMusicTools(s, client));
+    const res = await h.callTool('gemini_music_generate', {
+      prompt: 'something like this picture',
+      images_file_uris: ['files/a1'],
+      inline: true,
+    });
+    await h.close();
+
+    expect(res.isError).toBeFalsy();
+    expect(generateMusic.mock.calls[0][0].images).toEqual([{ uri: 'https://g/v1beta/files/a1', mimeType: 'image/png' }]);
+  });
+
   it('does not gate any of this on the stdio (disk) sink', async () => {
     const client = stub(createDiskSink(), { generate: vi.fn() });
     const h = await createTestHarness((s) => registerGenerateTools(s, client));

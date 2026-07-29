@@ -91,3 +91,49 @@ describe('gemini_video_generate', () => {
     await h.close();
   });
 });
+
+/**
+ * Video and music used to load their reference stills through a SECOND input
+ * funnel (`gatherImageInputs`), which is why they never gained `images_url` /
+ * `images_file_uris` — and why CLAUDE.md's "a new input form is a change in
+ * inputs.ts and nowhere else" was not actually true. One funnel now.
+ */
+describe('gemini_video_generate reference inputs', () => {
+  it('accepts images_url, fetched by the server', async () => {
+    const generateVideo = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v1', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    vi.spyOn(client, 'fetchRemoteImage').mockResolvedValue({
+      bytes: Uint8Array.from(atob(PNG), (c) => c.charCodeAt(0)),
+      mimeType: 'image/png', size: 68,
+      finalUrl: 'https://cdn.example.com/still.png', requestedUrl: 'https://cdn.example.com/still.png',
+    });
+    const h = await createTestHarness((s) => registerVideoTools(s, client));
+    const res = await h.callTool('gemini_video_generate', {
+      prompt: 'pan across it',
+      task: 'image_to_video',
+      images_url: ['https://cdn.example.com/still.png'],
+      output_dir: dir,
+    });
+    await h.close();
+
+    expect(res.isError).toBeFalsy();
+    expect(generateVideo.mock.calls[0][0].images).toEqual([{ base64: PNG, mimeType: 'image/png' }]);
+  });
+
+  it('accepts images_file_uris by reference, moving no bytes', async () => {
+    const generateVideo = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v1', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const getFile = vi.spyOn(client, 'getFile').mockResolvedValue({
+      name: 'files/s1', uri: 'https://g/v1beta/files/s1', mimeType: 'image/png',
+    });
+    const h = await createTestHarness((s) => registerVideoTools(s, client));
+    const res = await h.callTool('gemini_video_generate', {
+      prompt: 'pan across it',
+      images_file_uris: ['files/s1'],
+      output_dir: dir,
+    });
+    await h.close();
+
+    expect(getFile).toHaveBeenCalledTimes(1);
+    expect(generateVideo.mock.calls[0][0].images).toEqual([{ uri: 'https://g/v1beta/files/s1', mimeType: 'image/png' }]);
+    expect(parseToolResult<{ image_inputs?: { file_uris?: string[] } }>(res).image_inputs?.file_uris).toEqual(['files/s1']);
+  });
+});

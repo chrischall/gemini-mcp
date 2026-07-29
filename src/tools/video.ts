@@ -2,9 +2,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
-import { slugify, baseName, gatherImageInputs } from '../images.js';
+import { slugify, baseName } from '../images.js';
+import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
-import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, type NamedMedia } from './shared.js';
+import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -35,7 +36,9 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         aspect_ratio: z.enum(VIDEO_ASPECT_RATIOS).optional().describe('Output aspect ratio (omni: 16:9 or 9:16)'),
         task: z.enum(VIDEO_TASKS).optional().describe('text_to_video (default), image_to_video / reference_to_video (need image input), or edit (needs previous_interaction_id)'),
         images: z.array(z.string().min(1)).optional().describe('Reference image path(s) for image_to_video / reference_to_video'),
-        images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs'),
+        images_url: imagesUrlSchema('Reference stills'),
+        images_file_uris: imagesFileUrisSchema('Reference stills'),
+        images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, which keep image bytes out of the conversation'),
         from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS clipboard as a reference'),
         filename: z.string().optional().describe('Base filename for the output video (extension stripped; default: slugified prompt)'),
         output_dir: z.string().optional().describe('Directory to write the video to (default: $GEMINI_OUTPUT_DIR or cwd)'),
@@ -71,10 +74,11 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
       const fingerprint = fingerprintRequest('gemini_video_generate', {
         model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, task: args.task,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
+        images_url: args.images_url, images_file_uris: args.images_file_uris,
         previous_interaction_id: previousInteractionId,
       });
       return client.session.jobs.dispatch({ toolName: 'gemini_video_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
-        const inputs = await gatherImageInputs({ images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard });
+        const { inputs, report } = await resolveImageInputs(args, client);
         const r = await withProgressHeartbeat(extra, `Generating video (${model})`, () =>
           client.generateVideo({
             input: args.prompt,
@@ -90,6 +94,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         const meta: Record<string, unknown> = { model, interaction_id: r.id };
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
         if (r.text) meta.text = r.text;
+        if (report) meta.image_inputs = report;
         meta.hint = `To edit this video, call gemini_video_generate again with task: "edit" and previous_interaction_id: "${r.id}" (or continue_last: true).`;
 
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);

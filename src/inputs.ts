@@ -1,6 +1,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { GeminiClient, ImageInput } from './client.js';
-import { IMAGE_INLINE_MAX_BYTES } from './fetch-image.js';
+import { IMAGE_INLINE_MAX_BYTES, fileNameFromUrl } from './fetch-image.js';
+import { base64ToBytes, bytesToBase64 } from './bytes.js';
 
 /**
  * The one place the four ways of naming a reference image converge.
@@ -183,7 +184,7 @@ async function resolveLocalPath(
   // Best-effort — an upload failure must not fail a call that inline handles
   // perfectly well.
   try {
-    const bytes = Uint8Array.from(atob(inline.base64), (c) => c.charCodeAt(0));
+    const bytes = base64ToBytes(inline.base64);
     const displayName = resolved.split(/[\\/]/).pop() || 'image';
     const uploaded = await client.uploadBytes(bytes, inline.mimeType, displayName);
     client.session.uploadCache.set(key, {
@@ -210,36 +211,12 @@ async function resolveUrl(url: string, client: GeminiClient, report: ImageInputR
   (report.fetched_urls ??= []).push(entry);
 
   if (fetched.size <= IMAGE_INLINE_MAX_BYTES) {
-    return { base64: encodeBase64(fetched.bytes), mimeType: fetched.mimeType };
+    return { base64: bytesToBase64(fetched.bytes), mimeType: fetched.mimeType };
   }
   const displayName = fileNameFromUrl(url);
   const uploaded = await client.uploadBytes(fetched.bytes, fetched.mimeType, displayName);
   entry.file_uri = uploaded.name;
   return { uri: uploaded.uri, mimeType: uploaded.mimeType };
-}
-
-/** Last path segment of a URL, for the Files API display name. */
-function fileNameFromUrl(url: string): string {
-  try {
-    const name = new URL(url).pathname.split('/').filter(Boolean).pop();
-    return name ? decodeURIComponent(name).slice(0, 120) : 'image';
-  } catch {
-    return 'image';
-  }
-}
-
-/**
- * bytes → base64 without `Buffer`. `btoa` is the primitive both runtimes share
- * (see `storage/media.ts`, which decodes the same way); chunked because
- * `String.fromCharCode(...huge)` blows the argument limit.
- */
-function encodeBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
 }
 
 /**

@@ -134,6 +134,27 @@ describe('images_file_uris', () => {
 });
 
 describe('input ordering', () => {
+  it('returns nothing, and touches nothing, for a call with no image inputs', async () => {
+    const s = stubClient();
+    const { inputs, report } = await resolveImageInputs({}, s.client);
+    expect(inputs).toEqual([]);
+    expect(report).toBeUndefined();
+    expect(s.fetchRemoteImage).not.toHaveBeenCalled();
+    expect(s.getFile).not.toHaveBeenCalled();
+  });
+
+  it('loads paths before base64, each decoded to its sniffed MIME', async () => {
+    const s = stubClient();
+    const pngPath = join(dir, 'in.png');
+    writeFileSync(pngPath, Buffer.from(PNG_B64, 'base64'));
+    const jpegB64 = Buffer.from([0xff, 0xd8, 0xff]).toString('base64');
+
+    const { inputs } = await resolveImageInputs({ images: [pngPath], images_base64: [jpegB64] }, s.client);
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toEqual({ base64: PNG_B64, mimeType: 'image/png' });
+    expect(inputs[1].mimeType).toBe('image/jpeg');
+  });
+
   it('keeps clipboard → paths → base64 → urls → file_uris', async () => {
     const s = stubClient();
     const p = join(dir, 'ref.png');
