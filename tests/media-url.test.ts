@@ -152,8 +152,21 @@ describe('signature verification', () => {
   it('rejects a tampered signature', async () => {
     const k = await key();
     const sig = await signMediaKey(k, KEY, future);
-    const flipped = `${sig.slice(0, -1)}${sig.endsWith('A') ? 'B' : 'A'}`;
+    // Flip the FIRST character, not the last. An HMAC-SHA256 is 32 bytes, which
+    // base64url-encodes to 43 characters — 258 bits of alphabet for 256 bits of
+    // data — so the final character carries only 4 significant bits and two of
+    // its bit positions are discarded on decode. Mutating it is a no-op about
+    // 8% of the time, which is exactly the sort of test that passes locally and
+    // fails in CI (it did). Every bit of the first character is significant.
+    const flipped = `${sig[0] === 'A' ? 'B' : 'A'}${sig.slice(1)}`;
+    expect(flipped).not.toBe(sig);
     expect(await verifyMediaSignature(k, KEY, String(future), flipped, Date.now())).toEqual({ ok: false, reason: 'invalid' });
+  });
+
+  it('rejects a truncated signature', async () => {
+    const k = await key();
+    const sig = await signMediaKey(k, KEY, future);
+    expect(await verifyMediaSignature(k, KEY, String(future), sig.slice(0, 20), Date.now())).toEqual({ ok: false, reason: 'invalid' });
   });
 
   it('rejects a signature from a different secret', async () => {
