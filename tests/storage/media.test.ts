@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { createDiskSink, createR2Sink, type MediaBucket, type MediaItem } from '../../src/storage/media.js';
 
+/** Sinks return PersistedMedia records; most assertions here only want the ref. */
+function toRefs(persisted: Array<{ ref: string }>): string[] {
+  return persisted.map((p) => p.ref);
+}
+
+
 const PNG_B64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64');
 
 function item(base: string, mimeType = 'image/png', base64 = PNG_B64): MediaItem {
@@ -28,7 +34,7 @@ describe('createDiskSink', () => {
   });
 
   it('writes bytes to the per-call output_dir and returns ABSOLUTE paths', async () => {
-    const refs = await createDiskSink().persist([item('hello')], { output_dir: dir });
+    const refs = toRefs(await createDiskSink().persist([item('hello')], { output_dir: dir }));
     expect(refs).toHaveLength(1);
     expect(isAbsolute(refs[0])).toBe(true);
     expect(refs[0]).toBe(join(dir, 'hello.png'));
@@ -36,10 +42,10 @@ describe('createDiskSink', () => {
   });
 
   it('picks the extension from the MIME type', async () => {
-    const refs = await createDiskSink().persist(
+    const refs = toRefs(await createDiskSink().persist(
       [item('clip', 'video/mp4'), item('track', 'audio/mpeg'), item('shot', 'image/jpeg')],
       { output_dir: dir },
-    );
+    ));
     expect(refs.map((r) => r.split('/').pop())).toEqual(['clip.mp4', 'track.mp3', 'shot.jpg']);
   });
 
@@ -53,7 +59,7 @@ describe('createDiskSink', () => {
 
   it('falls back to $GEMINI_OUTPUT_DIR when no per-call dir is given', async () => {
     process.env.GEMINI_OUTPUT_DIR = dir;
-    const refs = await createDiskSink().persist([item('env-dir')], {});
+    const refs = toRefs(await createDiskSink().persist([item('env-dir')], {}));
     expect(refs[0]).toBe(join(dir, 'env-dir.png'));
   });
 });
@@ -77,10 +83,10 @@ describe('createR2Sink', () => {
 
   it('puts the decoded bytes with a MIME-derived extension and content type', async () => {
     const bucket = fakeBucket();
-    const refs = await createR2Sink(bucket, { publicBaseUrl: 'https://media.example.com' }).persist(
+    const refs = toRefs(await createR2Sink(bucket, { publicBaseUrl: 'https://media.example.com' }).persist(
       [item('hello')],
       {},
-    );
+    ));
 
     expect(bucket.puts).toHaveLength(1);
     expect(bucket.puts[0].key).toMatch(/\.png$/);
@@ -99,7 +105,9 @@ describe('createR2Sink', () => {
     const bucket = fakeBucket();
     await createR2Sink(bucket, {}).persist([item('../../etc/passwd')], {});
     expect(bucket.puts[0].key).not.toContain('..');
-    expect(bucket.puts[0].key.startsWith('media/')).toBe(true);
+    // `gen/`, not `media/`: objects are served at /media/<key>, and a `media`
+    // prefix would make every URL read /media/media/….
+    expect(bucket.puts[0].key.startsWith('gen/')).toBe(true);
   });
 
   it('ignores output_dir — there is no filesystem to point it at', async () => {
@@ -110,10 +118,35 @@ describe('createR2Sink', () => {
     expect(bucket.puts[0].key).not.toContain('tmp');
   });
 
-  it('returns an r2:// ref (NOT a fabricated https URL) when no public base URL is configured', async () => {
+  it('returns a SIGNED connector URL when no public base URL is configured — the zero-config path', async () => {
+    // This is the normal case: MEDIA_PUBLIC_BASE_URL was never set in practice,
+    // and the old `r2://bucket/key` ref meant every hosted generation was
+    // invisible to the person who asked for it.
     const bucket = fakeBucket();
-    const refs = await createR2Sink(bucket, { bucketName: 'gemini-connector-media' }).persist([item('x')], {});
-    expect(refs[0].startsWith('r2://gemini-connector-media/')).toBe(true);
+    const persisted = await createR2Sink(bucket, {
+      signedBaseUrl: 'https://connector.example.com/media',
+      sign: async (key, exp) => `sig-${key.length}-${exp}`,
+      urlTtlMs: 3600_000,
+      now: () => new Date('2026-07-29T12:00:00Z'),
+    }).persist([item('x')], {});
+
+    expect(persisted[0].ref).toMatch(/^https:\/\/connector\.example\.com\/media\/gen\//);
+    expect(persisted[0].ref).toContain('exp=');
+    expect(persisted[0].ref).toContain('sig=');
+    expect(persisted[0].key).toBe(bucket.puts[0].key);
+    expect(persisted[0].expiresAt).toBe('2026-07-29T13:00:00.000Z');
+  });
+
+  it('never emits an r2:// ref any more, in any configuration', async () => {
+    const configs = [
+      { publicBaseUrl: 'https://media.example.com' },
+      { signedBaseUrl: 'https://c.example.com/media', sign: async () => 'sig', urlTtlMs: 1000 },
+      { bucketName: 'gemini-connector-media' },
+    ];
+    for (const cfg of configs) {
+      const persisted = await createR2Sink(fakeBucket(), cfg).persist([item('x')], {});
+      expect(persisted[0].ref).not.toMatch(/^r2:\/\//);
+    }
   });
 
   it('describes itself honestly for the result payload', async () => {

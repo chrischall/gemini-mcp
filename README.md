@@ -87,6 +87,66 @@ progress), two guards make re-issuing safe and unnecessary:
 | `gemini_list_files` | List the files currently uploaded under this API key, with MIME types and expiry times |
 | `gemini_delete_file` | Delete an uploaded file before its ~48h expiry (confirm-gated) |
 
+## Seeing your images (hosted connector)
+
+On the hosted connector there is no filesystem, so a generated image has to come back as
+something you can *open*. It does: **every result includes a URL**, with no configuration.
+
+```jsonc
+{
+  "images": ["https://connector.example.com/media/gen/2026-07-29/ab12cd34-a-cat.png?exp=…&sig=…"],
+  "media":  [{ "url": "https://…", "r2_key": "gen/2026-07-29/ab12cd34-a-cat.png",
+               "expires_at": "2026-07-31T12:00:00.000Z" }]
+}
+```
+
+Those links need no auth header — the signature is in the URL — so they work in a browser, in
+`curl`, and in a chat message. They expire (48h by default) and the objects behind them are
+swept on a retention schedule.
+
+**Why this matters:** MCP's inline image content blocks (`inline: true`) are visible to the
+*assistant* but many chat clients never render them to the user, and the assistant cannot
+extract bytes back out of its own context to save them elsewhere. A generation could bill
+successfully and be invisible. A URL is the portable answer; `inline` remains available, but
+it is no longer the only way to receive media.
+
+### Three ways to serve the bytes
+
+| | setup | URL shape |
+|---|---|---|
+| **Worker route** (default) | none — works out of the box | `https://<worker-host>/media/<key>?exp=&sig=` |
+| **r2.dev public bucket** | enable public access on the bucket, set `MEDIA_PUBLIC_BASE_URL` | `https://pub-….r2.dev/<key>` |
+| **Custom domain** (best) | attach a domain to the bucket in Cloudflare, set `MEDIA_PUBLIC_BASE_URL` | `https://media.example.com/<key>` |
+
+The built-in Worker route is the zero-config path: the connector streams the object out of R2
+itself. The other two are worth setting up if you want plain, non-expiring URLs or want media
+traffic served by R2 rather than by the Worker — r2.dev is easiest but rate-limited and fine
+for personal use; a custom domain is the best of the three.
+
+**Auth on `/media` is a signed, expiring URL rather than an unlisted key.** Random keys would
+be simpler, but they never expire and never revoke: anything that ever logged or forwarded the
+link keeps working forever. A signature scopes access to one object with a deadline, and
+rotating `MEDIA_URL_SECRET` invalidates every outstanding link at once. The tradeoff is that
+links are long and cannot be shortened by hand.
+
+### For assistants relaying a result
+
+Show the user the URL. If your sandbox has network egress to the connector host, fetching it
+and attaching the bytes as a file gives the nicest result; otherwise present the link itself.
+Whether a given client renders `![](url)` markdown inline varies by client — a bare URL is the
+safe form, and a markdown link is a reasonable enhancement where you know it renders.
+
+### Retention
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MEDIA_TTL_DAYS` | `7` | Objects older than this are deleted by a daily cron (both the current `gen/` prefix and the legacy `media/` one) |
+| `MEDIA_URL_SECRET` | generated | HMAC key for `/media` links; rotate to revoke all outstanding URLs |
+| `MEDIA_PUBLIC_BASE_URL` | unset | Serve from R2 directly instead of the Worker route |
+
+Signed-URL lifetime is clamped to `MEDIA_TTL_DAYS`, so a link never outlives the object it
+points at.
+
 ## Sending reference images without burning context
 
 Every tool that takes a reference image — `gemini_image_generate`, `gemini_image_edit`,

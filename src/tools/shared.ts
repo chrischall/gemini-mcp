@@ -332,9 +332,10 @@ export async function emitMedia(
     return { content: blocks };
   }
   const sink = opts.sink ?? DEFAULT_SINK;
-  const refs = await sink.persist(named.map((n) => ({ base: n.base, base64: n.media.base64, mimeType: n.media.mimeType })), {
+  const persisted = await sink.persist(named.map((n) => ({ base: n.base, base64: n.media.base64, mimeType: n.media.mimeType })), {
     output_dir: opts.output_dir,
   });
+  const refs = persisted.map((p) => p.ref);
   // `onWritten` (sidecars, the written-outputs set) is meaningful only when the
   // refs are real files. On a sink with no filesystem there is nothing to sit
   // next to, so it is skipped rather than handed URLs it would misinterpret.
@@ -345,8 +346,32 @@ export async function emitMedia(
   // key is the same (`images`/`videos`/`audios`), so without this a caller would
   // reasonably read a URL as a file path.
   const storageNote = sink.note();
+  // Per-item detail (`url` / `r2_key` / `expires_at`) alongside the flat list,
+  // so a caller can reason about retention without parsing a URL. Only emitted
+  // where there IS extra detail — the disk sink's absolute paths say it all,
+  // and adding a parallel array there would change a stable result shape.
+  // A stored-but-unaddressable object is a configuration failure, not a mode.
+  // Saying so in the result beats handing back a bare key that reads like a
+  // filename — the silent-unopenable-ref problem this change exists to end.
+  const unavailable = persisted.some((p) => p.unavailable)
+    ? {
+        media_url_unavailable:
+          'The media was stored but no public URL could be generated for it, so the values above are bare object keys, not links. ' +
+          'This is a connector misconfiguration: set MEDIA_PUBLIC_BASE_URL, or use inline: true to receive the bytes directly.',
+      }
+    : {};
+  const detailed = persisted.filter((p) => p.key !== undefined);
+  const media = detailed.length === persisted.length && detailed.length > 0
+    ? {
+        media: persisted.map((p) => ({
+          url: p.ref,
+          ...(p.key ? { r2_key: p.key } : {}),
+          ...(p.expiresAt ? { expires_at: p.expiresAt } : {}),
+        })),
+      }
+    : {};
   const storage = sink.persistsFiles ? {} : { storage: sink.kind, storage_note: storageNote };
-  return textResult({ [`${kind}s`]: refs, ...note, ...storage, ...meta });
+  return textResult({ [`${kind}s`]: refs, ...media, ...unavailable, ...note, ...storage, ...meta });
 }
 
 /**

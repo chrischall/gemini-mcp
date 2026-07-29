@@ -14,9 +14,28 @@ declare namespace Cloudflare {
     GEMINI_API_KEY?: string;
     /**
      * Public base URL of MEDIA_BUCKET (R2 public dev URL or custom domain), no
-     * trailing slash. Unset → generated media is still stored, but the result
-     * reports honest `r2://bucket/key` refs instead of URLs that would 404.
+     * trailing slash. Set it and media refs are plain unsigned URLs served by
+     * R2 directly.
+     *
+     * Unset is the normal case and no longer degrades: the connector serves the
+     * bytes itself at `/media/<key>` with an expiring signature, so a result
+     * always carries a link a human can open. (It used to return
+     * `r2://bucket/key` — accurate, unfetchable, and the reason hosted
+     * generations were invisible to the person who asked for them.)
      */
     MEDIA_PUBLIC_BASE_URL?: string;
+    /**
+     * HMAC secret for signing `/media` URLs. Optional: when unset, a random
+     * secret is generated once and persisted in OAUTH_KV, which is what keeps
+     * the media route zero-config. Set it to pin the value across environments
+     * (or to invalidate every outstanding link by rotating it).
+     */
+    MEDIA_URL_SECRET?: string;
+    /**
+     * Days to retain generated media before the cleanup cron deletes it
+     * (default 7). Signed URLs are clamped to this, so a link never outlives
+     * the object it points at.
+     */
+    MEDIA_TTL_DAYS?: string;
   }
 }

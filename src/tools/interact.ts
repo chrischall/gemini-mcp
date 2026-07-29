@@ -51,9 +51,11 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
       'If a chained call 404s, this tool re-anchors itself on the prior output image and re-issues un-chained: ' +
       'success is reported as `chain_recovered` (the chain was the problem, and you get your image anyway); ' +
       'a second 404 is reported as the interaction id NOT being the cause (check the model id / files uri instead). '
-    : 'This connector has no filesystem: there is no output dir and no `<image>.json` sidecar, so a lost response ' +
-      'cannot be recovered from disk and a 404 on a chained call cannot be re-anchored automatically. Capture the ' +
-      'returned `interaction_id` from every result, and use `async: true` + gemini_get_result for long generations. ';
+    : 'On this connector each result returns an image URL you can open or share directly (see `media[].url`) — show it ' +
+      'to the user rather than assuming they can see the image. There is no filesystem, so no output dir and no ' +
+      '`<image>.json` sidecar: a lost response cannot be recovered from disk and a 404 on a chained call cannot be ' +
+      're-anchored automatically. Capture the returned `interaction_id` from every result, and use `async: true` + ' +
+      'gemini_get_result for long generations. ';
 
   server.registerTool(
     'gemini_interact',

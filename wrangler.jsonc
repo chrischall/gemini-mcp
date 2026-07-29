@@ -56,6 +56,13 @@
   // provisions — has nothing to curl.
   "workers_dev": true,
 
+  // Retention sweep for generated media (src/media-cleanup.ts). Objects live
+  // MEDIA_TTL_DAYS (default 7) — a signed /media link is clamped to the same
+  // window, so a link never outlives the object behind it.
+  "triggers": {
+    "crons": ["0 4 * * *"]
+  },
+
   "observability": {
     "enabled": true
   }

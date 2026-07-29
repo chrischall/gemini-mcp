@@ -87,6 +87,12 @@ src/
                   #   (stdio: resolveOutputDir + writeMedia, unchanged) and
                   #   createR2Sink() (Worker: R2 put → URL). `persistsFiles`
                   #   is the capability flag every disk-only feature gates on
+  media-url.ts    # HMAC signing/verification for /media links + the zero-config
+                  #   secret (MEDIA_URL_SECRET else generated once into OAUTH_KV)
+  media-endpoint.ts # GET /media/<key> — streams an object out of R2. The ONLY
+                  #   route outside OAuth: a browser opening a link has no
+                  #   bearer token, so the signature is the authorization
+  media-cleanup.ts# the retention sweep the daily cron runs (MEDIA_TTL_DAYS)
   worker.ts       # Cloudflare Worker entry — createConnector(); NOT in the tsc
                   #   build (wrangler compiles it). See docs/DEPLOY-CONNECTOR.md
   gemini-auth.ts  # ConnectorAuth for the hosted connector: one API-key field,
@@ -275,10 +281,40 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
 
 - **Media goes through a `MediaSink`** (`src/storage/media.ts`), threaded into
   `emit`/`emitMedia` via `client.mediaSink`. Disk sink (stdio, the default when
-  no sink is passed) is byte-identical to the old inline `writeMedia` path; R2
-  sink puts objects and returns URLs — or honest `r2://bucket/key` refs when
-  `MEDIA_PUBLIC_BASE_URL` is unset, because a private bucket has no public URL
-  and inventing one hands back a 404.
+  no sink is passed) is byte-identical to the old inline `writeMedia` path; the
+  R2 sink puts objects and returns **a URL, always**.
+- **A result the user cannot open is a failed generation.** MCP inline image
+  blocks are visible to the *model* and are simply not rendered by many chat
+  clients, and the model cannot recover bytes from its own context to save them
+  elsewhere. The connector shipped for a while returning `r2://bucket/key` when
+  `MEDIA_PUBLIC_BASE_URL` was unset — accurate, unfetchable, and (since that var
+  was never actually set) the state every hosted generation landed in: billed,
+  then invisible. **Never reintroduce a ref that cannot be opened.** The
+  fallback is now the connector's own signed `/media` route, so zero config
+  still yields a link. If a URL genuinely cannot be minted (unreachable via the
+  Worker, which always supplies its own origin), the result carries an explicit
+  `media_url_unavailable` rather than a bare object key that reads like a
+  filename — say it plainly instead of shipping something that looks openable.
+- **`/media` is the one route outside OAuth, on purpose.** A browser opening a
+  link, a link-preview fetcher and a `curl` in a sandbox all carry no bearer
+  token; requiring one recreates the exact problem the route exists to solve.
+  The expiring HMAC signature is the authorization — it names one object, and
+  `crypto.subtle.verify` does the comparison so it is constant-time. Signed URLs
+  beat unlisted random keys here because a key never expires and never revokes;
+  rotating `MEDIA_URL_SECRET` invalidates every outstanding link at once.
+- **Media URLs are built from the request's own origin**, injected into
+  `ctx.props` by the `withConnectorOrigin` wrapper around the `/mcp` and `/sse`
+  apiHandlers. That is why a fork, a `*.workers.dev` preview and the custom
+  domain all mint correct links with nothing to configure — and why the origin
+  is NOT module-level state (one isolate serves many sessions). The wrapper
+  lives in its own module (`src/connector-origin.ts`) **so it can be tested**:
+  `worker.ts` imports `agents` and cannot load under Node, and this is the one
+  link whose silent failure would take every media URL down with it.
+- **Only the SIGNING path may create the media secret.** KV is eventually
+  consistent, so the verify path can miss a secret that exists; if verification
+  created-on-miss it would mint a new one and permanently 403 every link already
+  signed with the old. `resolveSigningKey` creates, `loadSigningKey` is
+  read-only, and `/media` uses the latter. Don't merge them back.
 - **`sink.persistsFiles` gates every disk-only claim.** No sidecar is written on
   R2, so nothing in the result may mention one — `timeoutRiskHint` swaps its
   "look in the output dir" advice for `async: true`, and `emitMedia` adds

@@ -368,3 +368,133 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
     expect(text).not.toMatch(/hosted connector/i);
   });
 });
+
+/**
+ * The bug this all exists for: on the hosted connector a generation billed
+ * successfully and the user never saw the image. `inline: true` returned MCP
+ * image blocks the chat client does not render; `inline: false` returned
+ * `r2://bucket/key`, which is not fetchable by anything.
+ *
+ * The contract now is simple enough to state in one line: **every generation
+ * comes back with a URL a human can open**, configured or not.
+ */
+describe('every hosted generation returns an openable URL', () => {
+  const signed = (b: MediaBucket) =>
+    createR2Sink(b, {
+      signedBaseUrl: 'https://connector.example.com/media',
+      sign: async (key, exp) => `sig${key.length}x${exp}`,
+      urlTtlMs: 48 * 60 * 60 * 1000,
+      now: () => new Date('2026-07-29T12:00:00Z'),
+    });
+
+  it('gemini_image_generate: url + r2_key + expires_at, with NO config set', async () => {
+    const b = bucket();
+    const client = stub(signed(b), { generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }) });
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_image_generate', { prompt: 'a cat' }));
+    await h.close();
+
+    const media = body.media as Array<Record<string, string>>;
+    expect(media).toHaveLength(1);
+    expect(media[0].url).toMatch(/^https:\/\/connector\.example\.com\/media\/gen\/.*\?exp=\d+&sig=/);
+    expect(media[0].r2_key).toBe(b.keys[0]);
+    expect(media[0].expires_at).toBe('2026-07-31T12:00:00.000Z');
+    // The flat list stays the primary field, and now holds the same URL.
+    expect((body.images as string[])[0]).toBe(media[0].url);
+  });
+
+  it('honours MEDIA_PUBLIC_BASE_URL when an operator HAS configured a served bucket', async () => {
+    const b = bucket();
+    const client = stub(createR2Sink(b, { publicBaseUrl: 'https://media.example.com' }), {
+      generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }),
+    });
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_image_generate', { prompt: 'a cat' }));
+    await h.close();
+
+    expect((body.images as string[])[0]).toBe(`https://media.example.com/${b.keys[0]}`);
+    expect((body.media as Array<Record<string, string>>)[0].r2_key).toBe(b.keys[0]);
+  });
+
+  it('applies to edit, set, interact and music too — not just generate', async () => {
+    const results: Record<string, string[]> = {};
+
+    const editClient = stub(signed(bucket()), { generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }) });
+    const h1 = await createTestHarness((s) => registerGenerateTools(s, editClient));
+    results.edit = parseToolResult<{ images: string[] }>(await h1.callTool('gemini_image_edit', { prompt: 'x', images_base64: [PNG] })).images;
+    await h1.close();
+
+    const setClient = stub(signed(bucket()), { generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }) });
+    const h2 = await createTestHarness((s) => registerSetTools(s, setClient));
+    results.set = parseToolResult<{ images: string[] }>(await h2.callTool('gemini_image_set', { master_prompt: 'x', count: 1 })).images;
+    await h2.close();
+
+    const interactClient = stub(signed(bucket()), { interact: vi.fn().mockResolvedValue({ id: 'i1', images: [{ base64: PNG, mimeType: 'image/png' }] }) });
+    const h3 = await createTestHarness((s) => registerInteractTools(s, interactClient));
+    results.interact = parseToolResult<{ images: string[] }>(await h3.callTool('gemini_interact', { input: 'x' })).images;
+    await h3.close();
+
+    const musicClient = stub(signed(bucket()), { generateMusic: vi.fn().mockResolvedValue({ id: 'm1', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] }) });
+    const h4 = await createTestHarness((s) => registerMusicTools(s, musicClient));
+    results.music = parseToolResult<{ audios: string[] }>(await h4.callTool('gemini_music_generate', { prompt: 'x' })).audios;
+    await h4.close();
+
+    for (const [tool, refs] of Object.entries(results)) {
+      expect(refs.length, tool).toBeGreaterThan(0);
+      for (const ref of refs) {
+        expect(ref, tool).toMatch(/^https:\/\/connector\.example\.com\/media\//);
+        expect(ref, tool).not.toMatch(/^r2:\/\//);
+      }
+    }
+  });
+
+  it('returns an ABSOLUTE https URL from every configured sink — not merely "not r2://"', async () => {
+    // Asserting only the absence of `r2://` let a bare object key pass, which
+    // reads as a relative file path in `images[]`. The contract is a URL.
+    for (const sink of [signed(bucket()), createR2Sink(bucket(), { publicBaseUrl: 'https://m.example.com' })]) {
+      const client = stub(sink, { generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }) });
+      const h = await createTestHarness((s) => registerGenerateTools(s, client));
+      const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_image_generate', { prompt: 'a cat' }));
+      await h.close();
+      expect((body.images as string[])[0]).toMatch(/^https:\/\//);
+      expect(body.media_url_unavailable).toBeUndefined();
+    }
+  });
+
+  it('says so LOUDLY if no URL could be minted, rather than passing a key off as a path', async () => {
+    // Unreachable through the Worker (it always supplies its own origin), so
+    // this is a misconfiguration. It must not look like a filename.
+    const client = stub(createR2Sink(bucket(), {}), {
+      generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }),
+    });
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_image_generate', { prompt: 'a cat' }));
+    await h.close();
+
+    expect(String(body.media_url_unavailable)).toMatch(/no public URL.*not links/is);
+    expect(String(body.media_url_unavailable)).toMatch(/MEDIA_PUBLIC_BASE_URL/);
+  });
+
+  it('tells the caller the links are openable without an auth header', async () => {
+    const client = stub(signed(bucket()), { generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }) });
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_image_generate', { prompt: 'a cat' }));
+    await h.close();
+
+    expect(String(body.storage_note)).toMatch(/no auth header is needed/i);
+    expect(String(body.storage_note)).toMatch(/expire/i);
+  });
+
+  it('leaves the stdio disk result shape untouched — no media[] array, no storage note', async () => {
+    const client = stub(createDiskSink(), { generate: vi.fn().mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] }) });
+    const dir = mkdtempSync(join(tmpdir(), 'gemini-urls-'));
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_image_generate', { prompt: 'a cat', output_dir: dir }));
+    await h.close();
+    rmSync(dir, { recursive: true, force: true });
+
+    expect(body.images).toEqual([join(dir, 'a-cat.png')]);
+    expect(body.media).toBeUndefined();
+    expect(body.storage).toBeUndefined();
+  });
+});
