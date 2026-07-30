@@ -86,6 +86,7 @@ progress), two guards make re-issuing safe and unnecessary:
 | `gemini_upload_file` | Upload an image (or video/audio) to the Gemini Files API once — from a `url`, `data_base64`, or a local `path` — and get a reusable `files/<id>` reference |
 | `gemini_list_files` | List the files currently uploaded under this API key, with MIME types and expiry times |
 | `gemini_delete_file` | Delete an uploaded file before its ~48h expiry (confirm-gated) |
+| `gemini_sign_media` | *(hosted connector only)* Mint a fresh signed URL for generated media from its `r2_key` — an expired link is not a dead end |
 
 ## Seeing your images (hosted connector)
 
@@ -96,13 +97,22 @@ something you can *open*. It does: **every result includes a URL**, with no conf
 {
   "images": ["https://connector.example.com/media/gen/2026-07-29/ab12cd34-a-cat.png?exp=…&sig=…"],
   "media":  [{ "url": "https://…", "r2_key": "gen/2026-07-29/ab12cd34-a-cat.png",
-               "expires_at": "2026-07-31T12:00:00.000Z" }]
+               "expires_at": "2026-07-31T12:00:00.000Z",
+               "curl_hint": "curl -sS -o a-cat.png \"https://…\"" }]
 }
 ```
 
 Those links need no auth header — the signature is in the URL — so they work in a browser, in
 `curl`, and in a chat message. They expire (48h by default) and the objects behind them are
-swept on a retention schedule.
+swept on a retention schedule. The `r2_key` is the durable handle for that window:
+
+- **`gemini_sign_media`** (hosted connector only) mints a fresh signed URL from an `r2_key`,
+  so an expired link never forces you to re-generate — and re-pay for — the image.
+- **`gemini_upload_file` with `r2_key`** turns media the connector generated into a Files API
+  reference (the connector reads its own bucket — no HTTP round trip, no signature needed), so
+  a generated image can become the reference image for the next generation in one cheap call.
+- Idempotent replays (`idempotency_key`) re-mint the URLs inside the recorded result before
+  returning it, so a reused result never carries a dead link.
 
 **Why this matters:** MCP's inline image content blocks (`inline: true`) are visible to the
 *assistant* but many chat clients never render them to the user, and the assistant cannot

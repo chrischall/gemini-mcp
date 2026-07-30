@@ -178,13 +178,16 @@ describe('tool roster', () => {
   function registeredToolNames(): string[] {
     const names: string[] = [];
     const server = { registerTool: (name: string) => { names.push(name); } };
-    for (const register of CONNECTOR_TOOLS) register(server as never, {} as never);
+    // Connector-shaped client: an object-storage sink, the runtime the real
+    // buildClient supplies. gemini_sign_media only registers against one.
+    const client = { mediaSink: { persistsFiles: false } } as never;
+    for (const register of CONNECTOR_TOOLS) register(server as never, client);
     return names.sort();
   }
 
   it('registers exactly the seven serverless-safe registrars', () => {
-    // Seven registrars, ten tools — registerGenerateTools contributes two and
-    // registerFileTools three.
+    // Seven registrars, eleven tools — registerGenerateTools contributes two
+    // and registerFileTools four.
     expect(registeredToolNames()).toEqual([
       'gemini_delete_file',
       'gemini_get_result',
@@ -195,6 +198,7 @@ describe('tool roster', () => {
       'gemini_list_files',
       'gemini_list_models',
       'gemini_music_generate',
+      'gemini_sign_media',
       'gemini_upload_file',
     ]);
   });

@@ -16,11 +16,21 @@ in this file or the fixtures (a models list and a redacted 1×1 image).
 
 | id | notes |
 |---|---|
-| `gemini-3-pro-image` | Nano Banana Pro. **Default.** Paid tier only. Returns JPEG. |
+| `gemini-3-pro-image` | Nano Banana Pro. Paid tier only. Returns JPEG. Deliberate opt-in — NOT the default (see `src/models.ts`). |
 | `gemini-3-pro-image-preview` | preview alias of the above |
-| `gemini-3.1-flash-image` | fast |
-| `gemini-2.5-flash-image` | fast/cheap |
+| `gemini-3.1-flash-image` | fast. **The server's default** (`DEFAULT_IMAGE_MODEL`). |
+| `gemini-2.5-flash-image` | fast/cheap. ⚠️ Shutdown 2026-10-02 per the deprecations page (replacement: `gemini-3.1-flash-image-preview`). |
 | `nano-banana-pro-preview` | alias of gemini-3-pro-image |
+
+**Model currency check (2026-07-30, changelog/deprecations pages — docs-derived,
+not live-verified):** everything this server defaults to or recommends is alive
+with no announced shutdown (`gemini-3.1-flash-image`, `gemini-3-pro-image`,
+`gemini-omni-flash-preview`, `lyria-3-clip-preview`, `lyria-3-pro-preview`).
+`imagen-4.0-*` shut down 2026-08-17 — already excluded by `filterImageModels`.
+`gemini-3.1-flash-lite-image` (Nano Banana 2 Lite) went GA 2026-06-30 and shows
+up in the filtered list automatically. The Files API gained pre-signed-URL
+sources and a 100MB per-file limit on 2026-07-08 (unverified; our upload caps
+are runtime-memory caps, not API caps, so they are unaffected).
 
 `imagen-4.0-*` also appear in the list but use a **different `:predict` API** — NOT
 generateContent — so `filterImageModels` excludes anything matching `/imagen/i`.

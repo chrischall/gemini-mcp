@@ -123,11 +123,20 @@ describe('async job ids are not readable across sessions', () => {
     const started = parseToolResult<{ job_id: string }>(
       await hA.callTool('gemini_image_generate', { prompt: 'a cat', async: true, output_dir: dir }),
     );
-    // Let A's background work settle before B tries to read it.
-    await new Promise((r) => setTimeout(r, 20));
+    // Poll rather than sleep a fixed interval: a fixed 20ms is enough when this
+    // file runs alone and not always enough under the full suite's load, which
+    // makes the assertion below fail for timing reasons that have nothing to do
+    // with session isolation.
+    let mine: { text?: string; status?: string } = {};
+    for (let attempt = 0; attempt < 100; attempt++) {
+      mine = parseToolResult<{ text?: string; status?: string }>(
+        await hA.callTool('gemini_get_result', { job_id: started.job_id }),
+      );
+      if (mine.status !== 'running') break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
 
     const stolen = await hB.callTool('gemini_get_result', { job_id: started.job_id });
-    const mine = parseToolResult<{ text?: string }>(await hA.callTool('gemini_get_result', { job_id: started.job_id }));
     await hA.close();
     await hB.close();
 

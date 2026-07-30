@@ -74,6 +74,8 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
           client,
         );
         const masterRefInputs = [...masterOnly.inputs, ...carried.inputs];
+        /** Scenes that failed, so one bad scene cannot lose the whole batch. */
+        const failed: Array<{ scene: number; prompt: string; error: string }> = [];
         const report = carried.report || masterOnly.report
           ? { ...masterOnly.report, ...carried.report }
           : undefined;
@@ -94,18 +96,43 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
           const scenePrompts = args.scenes ?? Array.from({ length: args.count ?? 0 }, () => args.master_prompt);
           const mode = args.reference_mode ?? 'master';
 
+          // A set is N+1 billed generations in one tools/call, and any one of
+          // them can fail — a safety filter on a single scene, a transient 5xx.
+          // `Promise.all` rejected the whole batch on the first failure, losing
+          // the master and every scene that HAD succeeded, and surfaced as an
+          // opaque "Error occurred during tool execution" with no indication of
+          // which scene or why. Failures are collected per scene instead.
+          const sceneName = (i: number) => `${slug}-${String(i + 1).padStart(2, '0')}`;
+          const record = (err: unknown, i: number) => {
+            failed.push({
+              scene: i + 1,
+              prompt: scenePrompts[i],
+              error: err instanceof Error ? err.message : String(err),
+            });
+          };
+
           if (mode === 'chain') {
             let ref: GeneratedImage = master;
             for (let i = 0; i < scenePrompts.length; i++) {
-              const { images: [img] } = await client.generate({ prompt: scenePrompts[i], images: [ref, ...carried.inputs], seed: seed + i + 1, ...cfg });
-              named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` });
-              ref = img;
+              try {
+                const { images: [img] } = await client.generate({ prompt: scenePrompts[i], images: [ref, ...carried.inputs], seed: seed + i + 1, ...cfg });
+                named.push({ image: img, base: sceneName(i) });
+                // Chain mode anchors each scene on the previous OUTPUT, so a
+                // failure must not advance the reference — the next scene
+                // continues from the last image that actually exists.
+                ref = img;
+              } catch (err) {
+                record(err, i);
+              }
             }
           } else {
-            const scenes = await Promise.all(
+            const settled = await Promise.allSettled(
               scenePrompts.map((p, i) => client.generate({ prompt: p, images: [master, ...carried.inputs], seed: seed + i + 1, ...cfg }).then((r) => r.images[0])),
             );
-            scenes.forEach((img, i) => named.push({ image: img, base: `${slug}-${String(i + 1).padStart(2, '0')}` }));
+            settled.forEach((outcome, i) => {
+              if (outcome.status === 'fulfilled') named.push({ image: outcome.value, base: sceneName(i) });
+              else record(outcome.reason, i);
+            });
           }
           return result;
         });
@@ -115,6 +142,13 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         if (masterText) meta.text = masterText;
         if (masterResult.grounding) meta.grounding = masterResult.grounding;
         if (report) meta.image_inputs = report;
+        if (failed.length) {
+          meta.failed_scenes = failed;
+          meta.partial =
+            `${failed.length} of ${failed.length + named.length - 1} scene(s) failed; the master and the ` +
+            `${named.length - 1} scene(s) that succeeded are returned above. Re-run just the failed prompts rather than the whole set — ` +
+            'each failure message is in failed_scenes.';
+        }
         // A set is master + N scenes in one tools/call — the most timeout-prone
         // tool. Effective image count drives the risk hint.
         const risk = timeoutRiskHint({ model, imageSize: args.image_size, count: named.length, persistsFiles: client.mediaSink?.persistsFiles });

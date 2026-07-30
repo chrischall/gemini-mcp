@@ -81,6 +81,45 @@ describe('gemini_image_generate', () => {
     await h.close();
   });
 
+  it('count>1 keeps the images that worked when one fails — N billed successes must not be lost', async () => {
+    let call = 0;
+    vi.spyOn(client, 'generate').mockImplementation(async () => {
+      call += 1;
+      if (call === 2) throw new Error('Gemini returned no image: blocked by a safety filter');
+      return { images: [{ base64: PNG, mimeType: 'image/png' }] };
+    });
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
+    const res = await h.callTool('gemini_image_generate', { prompt: 'leaf', count: 3, output_dir: dir });
+    await h.close();
+
+    expect(res.isError).toBeFalsy();
+    const body = parseToolResult<{ images: string[]; failed_images?: Array<Record<string, unknown>>; partial?: string }>(res);
+    expect(body.images).toHaveLength(2);
+    expect(body.failed_images).toHaveLength(1);
+    expect(body.failed_images?.[0]).toMatchObject({ image: 2 });
+    expect(String(body.failed_images?.[0].error)).toMatch(/safety filter/);
+    expect(String(body.partial)).toMatch(/1 of 3/);
+  });
+
+  it('count>1 still throws when EVERY image fails — an empty success is worse than an error', async () => {
+    vi.spyOn(client, 'generate').mockRejectedValue(new Error('blocked by a safety filter'));
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
+    const res = await h.callTool('gemini_image_generate', { prompt: 'leaf', count: 3, output_dir: dir });
+    await h.close();
+
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/safety filter/);
+  });
+
+  it('count=1 failures propagate unchanged', async () => {
+    vi.spyOn(client, 'generate').mockRejectedValue(new Error('boom'));
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
+    const res = await h.callTool('gemini_image_generate', { prompt: 'leaf', output_dir: dir });
+    await h.close();
+
+    expect(res.isError).toBe(true);
+  });
+
   it('inline returns meta text block then image content blocks, writes nothing', async () => {
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness((srv) => registerGenerateTools(srv, client));

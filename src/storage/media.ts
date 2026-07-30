@@ -74,6 +74,20 @@ export interface MediaSink {
   /** Persist each item, returning one record per item, in the same order. */
   persist(items: MediaItem[], opts: PersistOpts): Promise<PersistedMedia[]>;
   /**
+   * Read back something this sink stored. Object-storage sinks only.
+   *
+   * Lets a generated image become a reference image without a round trip
+   * through HTTP: the server reads its own bucket rather than fetching its own
+   * signed URL, which it cannot sign for itself from the outside.
+   */
+  read?(key: string): Promise<{ bytes: Uint8Array; mimeType: string } | undefined>;
+  /**
+   * Mint a fresh reference for an object still in storage. Object-storage sinks
+   * only. A signed URL expires long before the object does, so without this an
+   * expired link is a dead end even though the bytes are still there.
+   */
+  resign?(key: string): Promise<PersistedMedia | undefined>;
+  /**
    * One-line, honest description of where the refs point — echoed into the
    * result payload so the caller is never left guessing whether it got a path,
    * a fetchable URL, or an opaque object ref. `undefined` for the disk sink,
@@ -114,6 +128,8 @@ export interface MediaBucket {
     value: ArrayBuffer | ArrayBufferView,
     options?: { httpMetadata?: { contentType?: string } },
   ): Promise<unknown>;
+  /** Present on a real R2 binding; optional so tests can supply a put-only fake. */
+  get?(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer>; httpMetadata?: { contentType?: string } } | null>;
 }
 
 export interface R2SinkOptions {
@@ -177,6 +193,21 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
   return {
     kind: 'r2',
     persistsFiles: false,
+    async read(key) {
+      if (!bucket.get) return undefined;
+      const object = await bucket.get(key);
+      if (!object) return undefined;
+      return {
+        bytes: new Uint8Array(await object.arrayBuffer()),
+        mimeType: object.httpMetadata?.contentType ?? 'application/octet-stream',
+      };
+    },
+    async resign(key) {
+      // Only for objects that still exist — re-signing a swept key would hand
+      // back a link that 404s, which is no better than the expired one.
+      if (bucket.get && !(await bucket.get(key))) return undefined;
+      return describe(key, now().getTime() + ttlMs);
+    },
     async persist(items, _opts) {
       // `mediaExt` is pure string work but lives in images.ts next to node:fs
       // imports; the dynamic import keeps that module off a Worker's eager

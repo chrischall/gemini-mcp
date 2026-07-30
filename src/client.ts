@@ -351,6 +351,9 @@ export class GeminiClient {
 
   constructor(opts: GeminiClientOptions = {}) {
     this.mediaSink = opts.mediaSink ?? createDiskSink();
+    // A replayed idempotent result must not hand back an expired media URL, so
+    // the job registry needs a way to re-sign from the stable r2_key.
+    this.session.jobs.resigner = this.mediaSink;
     this.explicitApiKey = opts.apiKey?.trim() || undefined;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -425,6 +428,25 @@ export class GeminiClient {
     // `timeout_ms` → $GEMINI_TIMEOUT_MS → 60s), so a URL fetch cannot be the
     // one unbounded network operation in the server.
     return fetchRemoteImage(url, { ...opts, fetchImpl: this.fetchImpl, timeoutMs: resolveTimeoutMs(opts.timeoutMs) });
+  }
+
+  /**
+   * Read back media this connector generated, straight out of its own store.
+   *
+   * The alternative — fetching our own `/media` URL — needs a signature the
+   * caller cannot mint and returns 403, which is the loop this exists to close.
+   */
+  async readStoredMedia(key: string): Promise<{ bytes: Uint8Array; mimeType: string }> {
+    const stored = await this.mediaSink.read?.(key.trim());
+    if (!stored) {
+      // Remediation goes in the MESSAGE: MCP serialization drops hints.
+      throw new McpToolError(
+        `No stored media for r2_key "${key}" — objects are removed on a retention schedule, so an old key may be gone. ` +
+          'Re-run the generation, or upload the bytes with `url` / `data_base64`.',
+        { hint: 'Use the exact media[].r2_key from a generation result.' },
+      );
+    }
+    return stored;
   }
 
   /** The default model after env override (no per-call arg). */
