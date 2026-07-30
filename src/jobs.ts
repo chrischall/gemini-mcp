@@ -91,11 +91,13 @@ async function refreshMedia(result: CallToolResult, sink: MediaResigner | undefi
   try { body = JSON.parse(first.text) as Record<string, unknown>; } catch { return result; }
 
   const entries = Array.isArray(body.media) ? (body.media as Array<Record<string, unknown>>) : [];
-  const keys = entries.map((e) => e.r2_key).filter((k): k is string => typeof k === 'string');
-  if (keys.length === 0) return result;
+  if (!entries.some((e) => typeof e.r2_key === 'string')) return result;
 
-  const refreshed = await Promise.all(keys.map(async (key) => {
-    try { return await sink.resign!(key); } catch { return undefined; }
+  // Per ENTRY, not per key: filtering first would shift every assignment after
+  // an entry without an r2_key and truncate the flat list below.
+  const refreshed = await Promise.all(entries.map(async (e) => {
+    if (typeof e.r2_key !== 'string') return undefined;
+    try { return await sink.resign!(e.r2_key); } catch { return undefined; }
   }));
   if (refreshed.every((r) => r === undefined)) return result;
 

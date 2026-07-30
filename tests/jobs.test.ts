@@ -164,6 +164,34 @@ describe('dispatch — replayed media URLs are re-minted', () => {
     }
   });
 
+  it('keeps positions aligned when some entries carry no r2_key at all', async () => {
+    // An entry without r2_key must not shift later assignments: the refresh is
+    // per-entry, and the flat list keeps its full length and order.
+    registry.resigner = {
+      resign: vi.fn(async (key: string) => ({ ref: `https://c.example.com/media/${key}?exp=2&sig=new`, key })),
+    };
+    const mixed = () =>
+      textResultOf({
+        images: ['inline-block-placeholder', 'https://c.example.com/media/gen/ab12cd-b.png?exp=1&sig=old'],
+        media: [
+          { url: 'inline-block-placeholder' }, // no r2_key (e.g. legacy / inline entry)
+          { url: 'https://c.example.com/media/gen/ab12cd-b.png?exp=1&sig=old', r2_key: 'gen/ab12cd-b.png' },
+        ],
+      });
+    await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => mixed());
+    const replay = metaOf(await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => mixed()));
+
+    const media = replay.media as Array<Record<string, unknown>>;
+    expect(media).toHaveLength(2);
+    expect(media[0].url).toBe('inline-block-placeholder'); // untouched, not clobbered
+    expect(media[0].curl_hint).toBeUndefined();
+    expect(media[1].url).toContain('sig=new');
+    const images = replay.images as string[];
+    expect(images).toHaveLength(2); // never truncated
+    expect(images[0]).toBe('inline-block-placeholder');
+    expect(images[1]).toContain('sig=new');
+  });
+
   it('is best-effort: a replay that cannot be refreshed is still a valid replay', async () => {
     registry.resigner = { resign: vi.fn().mockRejectedValue(new Error('KV down')) };
     await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => recorded());

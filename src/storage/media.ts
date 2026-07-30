@@ -156,9 +156,27 @@ export interface R2SinkOptions {
   urlTtlMs?: number;
   /** Key prefix (default `gen`). */
   prefix?: string;
+  /**
+   * Per-account namespace folded into every key
+   * (`<prefix>/<tenant>/<date>/…`) and ENFORCED by {@link MediaSink.read} /
+   * {@link MediaSink.resign}. The bucket is shared by every connector account
+   * and an `r2_key` is not a secret (it rides in every result), so without
+   * this a disclosed key would let any authenticated user read — and
+   * indefinitely re-sign — another account's media, outliving both the link
+   * expiry and a `MEDIA_URL_SECRET` rotation. Use {@link tenantIdFor} to
+   * derive it from the session's API key. Unset (single-user tests) means no
+   * namespace and no enforcement.
+   */
+  tenant?: string | (() => Promise<string> | string);
   /** Injectable for deterministic tests. */
   now?: () => Date;
   randomId?: () => string;
+}
+
+/** Stable, non-reversible short tenant id from a per-session secret. */
+export async function tenantIdFor(secret: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
+  return [...new Uint8Array(digest).slice(0, 6)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 // `gen`, not `media`: the objects are served at `/media/<key>`, and a `media`
@@ -190,11 +208,25 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
   const signedBase = opts.signedBaseUrl?.replace(/\/+$/, '');
   const ttlMs = opts.urlTtlMs ?? 0;
 
+  /** `<prefix>/` or `<prefix>/<tenant>/` — every key this sink may touch. */
+  let ownPrefixCache: Promise<string> | undefined;
+  const ownPrefix = () =>
+    (ownPrefixCache ??= (async () => {
+      const tenant = typeof opts.tenant === 'function' ? await opts.tenant() : opts.tenant;
+      return tenant ? `${prefix}/${tenant}/` : `${prefix}/`;
+    })());
+  /**
+   * Ownership gate for caller-supplied keys. A foreign key is refused without
+   * touching storage, so the refusal is indistinguishable from a swept object.
+   * With no tenant configured there is nothing to enforce (single-user shapes).
+   */
+  const owned = async (key: string) => !opts.tenant || key.startsWith(await ownPrefix());
+
   return {
     kind: 'r2',
     persistsFiles: false,
     async read(key) {
-      if (!bucket.get) return undefined;
+      if (!bucket.get || !(await owned(key))) return undefined;
       const object = await bucket.get(key);
       if (!object) return undefined;
       return {
@@ -203,6 +235,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       };
     },
     async resign(key) {
+      if (!(await owned(key))) return undefined;
       // Only for objects that still exist — re-signing a swept key would hand
       // back a link that 404s, which is no better than the expired one.
       if (bucket.get && !(await bucket.get(key))) return undefined;
@@ -213,11 +246,12 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       // imports; the dynamic import keeps that module off a Worker's eager
       // module graph.
       const { mediaExt } = await import('../images.js');
+      const keyBase = await ownPrefix();
       const day = now().toISOString().slice(0, 10);
       const expiresAtMs = now().getTime() + ttlMs;
       const refs: PersistedMedia[] = [];
       for (const it of items) {
-        const key = `${prefix}/${day}/${randomId()}-${safeKeySegment(it.base)}.${mediaExt(it.mimeType)}`;
+        const key = `${keyBase}${day}/${randomId()}-${safeKeySegment(it.base)}.${mediaExt(it.mimeType)}`;
         await bucket.put(key, base64ToBytes(it.base64), { httpMetadata: { contentType: it.mimeType } });
         refs.push(await describe(key, expiresAtMs));
       }

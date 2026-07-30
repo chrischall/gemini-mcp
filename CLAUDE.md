@@ -322,7 +322,12 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
   `session.jobs.resigner`) so a reused result never ships a dead link. Every
   media entry also carries a ready-to-run `curl_hint`, because the
   download-then-attach flow is the only way a chat-client user actually sees
-  the image.
+  the image. **Keys are tenant-namespaced** (`gen/<tenantIdFor(apiKey)>/…`)
+  and `read`/`resign` refuse keys outside the session's own prefix — an
+  `r2_key` rides in every result and is not a secret, and the bucket is shared
+  by every connector account, so without the gate a disclosed key would let
+  any authenticated user read and indefinitely re-sign another account's
+  media. The refusal is indistinguishable from a swept object.
 - **Media URLs are built from the request's own origin**, injected into
   `ctx.props` by the `withConnectorOrigin` wrapper around the `/mcp` and `/sse`
   apiHandlers. That is why a fork, a `*.workers.dev` preview and the custom
