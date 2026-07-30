@@ -253,6 +253,16 @@ describe('gemini_upload_file — r2_key (a generated image becomes a reference i
     expect(body.file_uri).toBe('files/abc123');
   });
 
+  it('works for audio the same way — the stored MIME type travels with the bytes', async () => {
+    const readStoredMedia = vi.fn().mockResolvedValue({ bytes: PNG_BYTES, mimeType: 'audio/mpeg' });
+    const uploadBytes = vi.fn().mockResolvedValue(uploaded());
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ readStoredMedia, uploadBytes }, false)));
+    await h.callTool('gemini_upload_file', { r2_key: 'gen/2026-07-30/ab12cd-a-jingle.mp3' });
+    await h.close();
+
+    expect(uploadBytes).toHaveBeenCalledWith(PNG_BYTES, 'audio/mpeg', 'a-jingle.mp3');
+  });
+
   it('says plainly when the object is gone, before any billable call', async () => {
     // A real client wired to an R2 sink whose object was already swept.
     const { GeminiClient } = await import('../../src/client.js');

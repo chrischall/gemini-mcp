@@ -145,7 +145,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         if (failed.length) {
           meta.failed_scenes = failed;
           meta.partial =
-            `${failed.length} of ${(args.scenes ?? Array.from({ length: args.count ?? 0 })).length} scene(s) failed; the master and the ` +
+            `${failed.length} of ${failed.length + named.length - 1} scene(s) failed; the master and the ` +
             `${named.length - 1} scene(s) that succeeded are returned above. Re-run just the failed prompts rather than the whole set — ` +
             'each failure message is in failed_scenes.';
         }

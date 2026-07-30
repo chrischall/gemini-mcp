@@ -76,33 +76,52 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         // For count>1, surface the FIRST call's grounding (each call grounds
         // independently; one representative set of sources beats concatenating N).
         let capturedGrounding: GroundingResult | undefined;
+        // count>1 is N billed generations in one tools/call, and any one can
+        // fail (a safety filter, a transient 5xx). Failures are collected per
+        // image so one bad draw cannot lose the ones that succeeded — same
+        // contract as gemini_image_set's failed_scenes. Zero successes still
+        // throws: an empty success is worse than an error.
+        const failed: Array<{ image: number; error: string }> = [];
+        let firstError: unknown;
         await withProgressHeartbeat(extra, `Generating ${count > 1 ? `${count} images` : 'image'} (${model})`, async () => {
           for (let i = 0; i < count; i++) {
-            // Distinct seed per image (seed+0 for the single-image case == echoed seed)
-            // so count>1 yields N *different* images, not N duplicates.
-            const result = await client.generate({
-              prompt: args.prompt,
-              images: refInputs.length > 0 ? refInputs : undefined,
-              model: args.model,
-              aspectRatio: args.aspect_ratio,
-              imageSize: args.image_size,
-              seed: seed + i,
-              thinkingLevel: args.thinking_level,
-              googleSearch: args.google_search,
-              videoUrl: video.videoUrl,
-              videoMimeType: video.videoMimeType,
-              timeoutMs: args.timeout_ms,
-            });
-            const { images: [img], text } = result;
-            if (text && !capturedText) capturedText = text;
-            if (result.grounding && !capturedGrounding) capturedGrounding = result.grounding;
-            named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
+            try {
+              // Distinct seed per image (seed+0 for the single-image case == echoed seed)
+              // so count>1 yields N *different* images, not N duplicates.
+              const result = await client.generate({
+                prompt: args.prompt,
+                images: refInputs.length > 0 ? refInputs : undefined,
+                model: args.model,
+                aspectRatio: args.aspect_ratio,
+                imageSize: args.image_size,
+                seed: seed + i,
+                thinkingLevel: args.thinking_level,
+                googleSearch: args.google_search,
+                videoUrl: video.videoUrl,
+                videoMimeType: video.videoMimeType,
+                timeoutMs: args.timeout_ms,
+              });
+              const { images: [img], text } = result;
+              if (text && !capturedText) capturedText = text;
+              if (result.grounding && !capturedGrounding) capturedGrounding = result.grounding;
+              named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
+            } catch (err) {
+              firstError ??= err;
+              failed.push({ image: i + 1, error: err instanceof Error ? err.message : String(err) });
+            }
           }
         });
+        if (named.length === 0) throw firstError;
         const meta = buildMeta(model, seed, args);
         if (capturedText) meta.text = capturedText;
         if (capturedGrounding) meta.grounding = capturedGrounding;
         if (report) meta.image_inputs = report;
+        if (failed.length) {
+          meta.failed_images = failed;
+          meta.partial =
+            `${failed.length} of ${count} image(s) failed; the ${named.length} that succeeded are returned above. ` +
+            'Re-run with count set to the shortfall rather than the whole batch — each failure message is in failed_images.';
+        }
         if (video.videoFileMeta) meta.video_file = video.videoFileMeta;
         meta.hint = REFINE_HINT;
         const risk = timeoutRiskHint({ model, imageSize: args.image_size, count, persistsFiles: client.mediaSink?.persistsFiles });

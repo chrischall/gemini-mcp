@@ -138,6 +138,32 @@ describe('dispatch — replayed media URLs are re-minted', () => {
     expect((replay.images as string[])[0]).toContain('sig=new');
   });
 
+  it('refreshes audio and video results too — the flat list is found by name', async () => {
+    for (const listName of ['audios', 'videos'] as const) {
+      const reg = new JobRegistry();
+      reg.resigner = {
+        resign: vi.fn().mockResolvedValue({ ref: 'https://c.example.com/media/gen/ab12cd-track.mp3?exp=2&sig=new', key: 'gen/ab12cd-track.mp3' }),
+      };
+      const recordedMedia = () =>
+        textResultOf({
+          [listName]: ['https://c.example.com/media/gen/ab12cd-track.mp3?exp=1&sig=old'],
+          media: [{ url: 'https://c.example.com/media/gen/ab12cd-track.mp3?exp=1&sig=old', r2_key: 'gen/ab12cd-track.mp3', expires_at: '2026-01-01T00:00:00.000Z' }],
+        });
+      await reg.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => recordedMedia());
+      const replay = metaOf(await reg.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => recordedMedia()));
+
+      expect(replay.media_urls_refreshed, listName).toBe(true);
+      expect((replay[listName] as string[])[0], listName).toContain('sig=new');
+      const entry = (replay.media as Array<Record<string, unknown>>)[0];
+      expect(entry.curl_hint).toBe(
+        'curl -sS -o track.mp3 "https://c.example.com/media/gen/ab12cd-track.mp3?exp=2&sig=new"',
+      );
+      // The resigner returned no expiry, so the stale recorded one must not
+      // survive to mislabel the fresh link.
+      expect(entry.expires_at).toBeUndefined();
+    }
+  });
+
   it('is best-effort: a replay that cannot be refreshed is still a valid replay', async () => {
     registry.resigner = { resign: vi.fn().mockRejectedValue(new Error('KV down')) };
     await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => recorded());

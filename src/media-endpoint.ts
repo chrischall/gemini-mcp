@@ -47,9 +47,13 @@ export function downloadFilename(key: string): string {
   return stripped || last;
 }
 
-/** Parse a single-range `Range: bytes=a-b` header. Multi-range is not supported. */
+/**
+ * Parse a single-range `Range: bytes=a-b` header. Multi-range is unsupported,
+ * and an unknown object size means no range handling at all (Range is advisory
+ * — `undefined` degrades to a full 200, never an error).
+ */
 function parseRange(header: string | null, size: number | undefined): { offset: number; length: number } | 'unsatisfiable' | undefined {
-  if (!header) return undefined;
+  if (!header || size === undefined) return undefined;
   const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
   if (!match) return undefined;
   const [, startText, endText] = match;
@@ -57,14 +61,13 @@ function parseRange(header: string | null, size: number | undefined): { offset: 
   if (startText === '') {
     // Suffix range: the last N bytes.
     const suffix = Number(endText);
-    if (!suffix || size === undefined) return undefined;
+    if (!suffix) return undefined;
     const offset = Math.max(0, size - suffix);
     return { offset, length: size - offset };
   }
   const offset = Number(startText);
-  if (size !== undefined && offset >= size) return 'unsatisfiable';
-  const end = endText === '' ? (size !== undefined ? size - 1 : undefined) : Number(endText);
-  if (end === undefined) return { offset, length: Number.MAX_SAFE_INTEGER };
+  if (offset >= size) return 'unsatisfiable';
+  const end = endText === '' ? size - 1 : Number(endText);
   if (end < offset) return 'unsatisfiable';
   return { offset, length: end - offset + 1 };
 }

@@ -103,8 +103,12 @@ async function refreshMedia(result: CallToolResult, sink: MediaResigner | undefi
   const refs: string[] = [];
   refreshed.forEach((fresh, i) => {
     if (!fresh) { refs.push(String(entries[i]?.url ?? '')); return; }
+    // Drop the recorded expiry rather than carrying it over: a re-signed URL
+    // has its own deadline (or none, on a public-bucket sink), and the old one
+    // would mislabel a live link as expired.
+    const { expires_at: _stale, ...rest } = entries[i];
     entries[i] = {
-      ...entries[i],
+      ...rest,
       url: fresh.ref,
       ...(fresh.expiresAt ? { expires_at: fresh.expiresAt } : {}),
       curl_hint: `curl -sS -o ${downloadFilename(fresh.key ?? 'media')} "${fresh.ref}"`,

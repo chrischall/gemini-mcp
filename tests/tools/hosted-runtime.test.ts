@@ -452,6 +452,22 @@ describe('every hosted generation returns an openable URL', () => {
     }
   });
 
+  it('audio gets the full media contract too — url, r2_key, expires_at, curl_hint on an .mp3', async () => {
+    // The r2_key lifecycle (sign_media, r2_key re-upload, replay refresh) is
+    // keyed on media[], so music must emit the same fields as images.
+    const b = bucket();
+    const client = stub(signed(b), { generateMusic: vi.fn().mockResolvedValue({ id: 'm1', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] }) });
+    const h = await createTestHarness((s) => registerMusicTools(s, client));
+    const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_music_generate', { prompt: 'x' }));
+    await h.close();
+
+    const media = body.media as Array<Record<string, string>>;
+    expect(media[0].r2_key).toBe(b.keys[0]);
+    expect(media[0].r2_key).toMatch(/\.mp3$/);
+    expect(media[0].expires_at).toBe('2026-07-31T12:00:00.000Z');
+    expect(media[0].curl_hint).toMatch(/^curl -sS -o \S+\.mp3 "https:\/\/connector\.example\.com\/media\//);
+  });
+
   it('returns an ABSOLUTE https URL from every configured sink — not merely "not r2://"', async () => {
     // Asserting only the absence of `r2://` let a bare object key pass, which
     // reads as a relative file path in `images[]`. The contract is a URL.
