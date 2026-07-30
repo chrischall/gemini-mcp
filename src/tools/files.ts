@@ -111,10 +111,12 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           .min(1)
           .optional()
           .describe(
-            'An `r2_key` from a previous generation result (media[].r2_key) — re-uploads media THIS connector generated, ' +
-            'so a generated image can become a reference image in one cheap call. The server reads its own bucket directly: ' +
-            'no HTTP request, no signed URL, and no expiry to worry about. Do NOT pass a /media URL as `url` for this — ' +
-            'that would be the connector fetching itself and needs a signature.',
+            onDisk
+              ? 'Unavailable on this server (media is written to local disk) — pass the file path via `path` instead.'
+              : 'An `r2_key` from a previous generation result (media[].r2_key) — re-uploads media THIS connector generated, ' +
+                'so a generated image can become a reference image in one cheap call. The server reads its own bucket directly: ' +
+                'no HTTP request, no signed URL, and no expiry to worry about. Do NOT pass a /media URL as `url` for this — ' +
+                'that would be the connector fetching itself and needs a signature.',
           ),
         path: z
           .string()
@@ -139,7 +141,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
       if (sources.length !== 1) {
         throw new McpToolError(
           sources.length === 0
-            ? 'Provide exactly one of `url`, `data_base64`, `r2_key`' + (onDisk ? ' or `path`.' : '.')
+            ? 'Provide exactly one of `url`, `data_base64`' + (onDisk ? ' or `path`.' : ' or `r2_key`.')
             : `Provide exactly one source, not ${sources.length} (${sources.join(', ')}).`,
         );
       }
@@ -176,6 +178,12 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           );
         }
         if (args.r2_key) {
+          if (onDisk) {
+            throw new McpToolError(
+              '`r2_key` is only available on the hosted connector — this server writes media to local disk, ' +
+                'so pass the generated file via `path` instead.',
+            );
+          }
           // Reading our own bucket rather than fetching our own /media URL. A
           // self-fetch would need a signature the caller cannot mint, which is
           // exactly the 403 loop this parameter exists to remove.

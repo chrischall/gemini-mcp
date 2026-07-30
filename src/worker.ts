@@ -4,7 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { VERSION } from './version.js';
 import { GeminiClient } from './client.js';
 import { geminiAuth, type GeminiProps } from './gemini-auth.js';
-import { createR2Sink } from './storage/media.js';
+import { createR2Sink, tenantIdFor } from './storage/media.js';
 import { createUploadHandler } from './upload-endpoint.js';
 import { createMediaHandler } from './media-endpoint.js';
 import { cleanupExpiredMedia, retentionMsFromDays, type CleanupBucket } from './media-cleanup.js';
@@ -89,6 +89,10 @@ function buildClient(props: GeminiProps & { connectorOrigin?: string }, env: Env
       sign: async (key, expiresAtMs) =>
         signMediaKey(await resolveSigningKey(env.MEDIA_URL_SECRET, env.OAUTH_KV), key, expiresAtMs),
       urlTtlMs,
+      // The bucket is shared by every connector account; the tenant component
+      // namespaces keys per API key and gates read/resign, so a disclosed
+      // r2_key cannot cross accounts.
+      tenant: () => tenantIdFor(props.apiKey),
     }),
   });
 }

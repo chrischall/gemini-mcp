@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
-import { createDiskSink, createR2Sink, type MediaBucket, type MediaItem } from '../../src/storage/media.js';
+import { createDiskSink, createR2Sink, tenantIdFor, type MediaBucket, type MediaItem } from '../../src/storage/media.js';
 
 /** Sinks return PersistedMedia records; most assertions here only want the ref. */
 function toRefs(persisted: Array<{ ref: string }>): string[] {
@@ -190,6 +190,57 @@ describe('createR2Sink', () => {
       await expect(sink.read!('gen/never-existed.png')).resolves.toBeUndefined();
       // A put-only binding (older test fakes) must degrade, not throw.
       await expect(createR2Sink(fakeBucket(), {}).read!('gen/x.png')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('tenant namespacing — a disclosed key must not cross accounts', () => {
+    /**
+     * The bucket is shared by every connector account and an r2_key is not a
+     * secret (it rides in every result). Without a tenant component in the key
+     * and an ownership check on read/resign, any authenticated user could read
+     * or indefinitely re-sign another account's media from a leaked key.
+     */
+    const signedOpts = {
+      signedBaseUrl: 'https://c.example.com/media',
+      sign: async () => 'sig',
+      urlTtlMs: 1000,
+    };
+
+    it('folds the tenant into the key prefix on persist', async () => {
+      const bucket = readableBucket();
+      await createR2Sink(bucket, { ...signedOpts, tenant: async () => 'ab12cd34ef56' }).persist([item('cat')], {});
+      expect(bucket.puts[0].key).toMatch(/^gen\/ab12cd34ef56\/\d{4}-\d{2}-\d{2}\//);
+    });
+
+    it('read/resign serve own keys and refuse foreign ones', async () => {
+      const bucket = readableBucket();
+      const mine = createR2Sink(bucket, { ...signedOpts, tenant: async () => 'aaaaaaaaaaaa' });
+      const theirs = createR2Sink(bucket, { ...signedOpts, tenant: async () => 'bbbbbbbbbbbb' });
+      await mine.persist([item('cat')], {});
+      const key = bucket.puts[0].key;
+
+      await expect(mine.read!(key)).resolves.toBeDefined();
+      await expect(mine.resign!(key)).resolves.toBeDefined();
+      // The foreign sink is refused WITHOUT touching storage — indistinguishable
+      // from a swept object, so the refusal leaks nothing about existence.
+      await expect(theirs.read!(key)).resolves.toBeUndefined();
+      await expect(theirs.resign!(key)).resolves.toBeUndefined();
+    });
+
+    it('tenantIdFor is a stable short hash, never the raw API key', async () => {
+      const a = await tenantIdFor('AIza-secret-key');
+      expect(a).toBe(await tenantIdFor('AIza-secret-key'));
+      expect(a).toMatch(/^[0-9a-f]{12}$/);
+      expect(a).not.toContain('AIza');
+      expect(await tenantIdFor('other-key')).not.toBe(a);
+    });
+
+    it('without a tenant (tests, single-user shapes) behaves exactly as before', async () => {
+      const bucket = readableBucket();
+      const sink = createR2Sink(bucket, signedOpts);
+      await sink.persist([item('cat')], {});
+      expect(bucket.puts[0].key).toMatch(/^gen\/\d{4}-\d{2}-\d{2}\//);
+      await expect(sink.read!(bucket.puts[0].key)).resolves.toBeDefined();
     });
   });
 

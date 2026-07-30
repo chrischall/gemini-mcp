@@ -235,6 +235,26 @@ describe('gemini_upload_file — source validation', () => {
     expect(both.isError).toBe(true);
     expect(JSON.stringify(both.content)).toMatch(/url, r2_key/);
   });
+
+  it('does not advertise r2_key on stdio, and refuses it with the actual fix (path)', async () => {
+    // Hosted-only source, mirroring how `path` is handled in the other
+    // direction: the schema says unavailable, the zero-source message omits
+    // it, and using it anyway names `path` — not a misleading retention story.
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadBytes: vi.fn() })));
+    const { tools } = await h.client.listTools();
+    const schema = JSON.stringify(tools.find((t) => t.name === 'gemini_upload_file')?.inputSchema);
+    expect(schema).toMatch(/Unavailable on this server/);
+
+    const none = await h.callTool('gemini_upload_file', {});
+    expect(JSON.stringify(none.content)).not.toMatch(/r2_key/);
+
+    const res = await h.callTool('gemini_upload_file', { r2_key: 'gen/k.png' });
+    await h.close();
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/hosted connector/);
+    expect(JSON.stringify(res.content)).toMatch(/`path`/);
+    expect(JSON.stringify(res.content)).not.toMatch(/retention/);
+  });
 });
 
 describe('gemini_upload_file — r2_key (a generated image becomes a reference image)', () => {
