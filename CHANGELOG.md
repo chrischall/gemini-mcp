@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0](https://github.com/chrischall/gemini-mcp/compare/v1.3.0...v1.4.0) (2026-07-30)
+
+
+### Features
+
+* **media:** survive expired links, partial batch failures, and replayed results ([#122](https://github.com/chrischall/gemini-mcp/issues/122)) ([7ce319e](https://github.com/chrischall/gemini-mcp/commit/7ce319eebbf70aef465d2fb1188c90240b616ea9))
+
+
+### Bug Fixes
+
+* **media:** tenant-namespace r2_keys, align replay refresh, stop advertising r2_key on stdio ([#125](https://github.com/chrischall/gemini-mcp/issues/125)) ([46bd514](https://github.com/chrischall/gemini-mcp/commit/46bd51450e46fafe9ddca81998c7993c569aecbc))
+
 ## [1.3.0](https://github.com/chrischall/gemini-mcp/compare/v1.2.0...v1.3.0) (2026-07-29)
 
 
