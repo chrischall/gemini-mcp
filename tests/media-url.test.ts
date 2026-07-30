@@ -27,7 +27,7 @@ function memoryStore(initial: Record<string, string> = {}) {
   };
 }
 
-function memoryBucket(objects: Record<string, { body: string; contentType?: string }> = {}) {
+function memoryBucket(objects: Record<string, { body: string; contentType?: string; etag?: string }> = {}) {
   return {
     get: vi.fn(async (key: string) => {
       const hit = objects[key];
@@ -36,6 +36,8 @@ function memoryBucket(objects: Record<string, { body: string; contentType?: stri
         body: new Blob([hit.body]).stream() as unknown as ReadableStream,
         httpMetadata: { contentType: hit.contentType },
         size: hit.body.length,
+        ...(hit.etag ? { httpEtag: hit.etag } : {}),
+        arrayBuffer: async () => new TextEncoder().encode(hit.body).buffer as ArrayBuffer,
       };
     }),
   };
@@ -286,5 +288,110 @@ describe('GET /media/<key>', () => {
 
     expect(res.status).toBe(200);
     expect(bucket.get).toHaveBeenCalledWith(key);
+  });
+
+  it('suggests a HUMAN filename — the uniqueness prefix is stripped from Content-Disposition', async () => {
+    // The reliable way to show a user an image in a chat client is download-
+    // then-attach, and an attachment named `abc123-a-cat.png` looks like a
+    // machine artefact. The prefix exists to make the KEY unique, not the name.
+    const bucket = memoryBucket({ [KEY]: { body: 'x', contentType: 'image/png' } });
+    const res = await handler(bucket)(new Request(await signedUrl()));
+
+    expect(res.headers.get('content-disposition')).toBe('inline; filename="a-cat.png"');
+  });
+
+  it('exposes the object ETag and advertises range support', async () => {
+    const bucket = memoryBucket({ [KEY]: { body: 'x', etag: '"r2etag"' } });
+    const res = await handler(bucket)(new Request(await signedUrl()));
+
+    expect(res.headers.get('etag')).toBe('"r2etag"');
+    expect(res.headers.get('accept-ranges')).toBe('bytes');
+  });
+
+  it('serves HEAD from a metadata read when the bucket offers one — no body opened', async () => {
+    const meta = { httpMetadata: { contentType: 'image/png' }, size: 8, httpEtag: '"e"' };
+    const bucket = { ...memoryBucket({ [KEY]: { body: 'PNGBYTES' } }), head: vi.fn(async () => meta) };
+    const res = await createMediaHandler({ bucket, store: memoryStore(), secret })(
+      new Request(await signedUrl(), { method: 'HEAD' }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-length')).toBe('8');
+    expect(res.headers.get('etag')).toBe('"e"');
+    expect(await res.text()).toBe('');
+    expect(bucket.head).toHaveBeenCalledWith(KEY);
+    expect(bucket.get).not.toHaveBeenCalled();
+  });
+
+  it('404s a HEAD for a swept object via the metadata read too', async () => {
+    const bucket = { ...memoryBucket({}), head: vi.fn(async () => null) };
+    const res = await createMediaHandler({ bucket, store: memoryStore(), secret })(
+      new Request(await signedUrl(), { method: 'HEAD' }),
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /media/<key> — Range requests', () => {
+  // What `curl -C -` resumes with and what a video element sends while seeking.
+  const secret = 'test-secret';
+  async function signedUrl(key = KEY, expiresAtMs = Date.now() + 60_000) {
+    const k = await resolveSigningKey(secret, memoryStore());
+    return buildMediaUrl('https://c.example.com/media', key, expiresAtMs, await signMediaKey(k, key, expiresAtMs));
+  }
+  const handler = (bucket: ReturnType<typeof memoryBucket>) => createMediaHandler({ bucket, store: memoryStore(), secret });
+  const bucket = () => memoryBucket({ [KEY]: { body: '0123456789', contentType: 'video/mp4' } });
+
+  it('serves a bounded range as 206 with Content-Range', async () => {
+    const res = await handler(bucket())(new Request(await signedUrl(), { headers: { range: 'bytes=2-5' } }));
+
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe('2345');
+    expect(res.headers.get('content-range')).toBe('bytes 2-5/10');
+    expect(res.headers.get('content-length')).toBe('4');
+  });
+
+  it('serves an open-ended range to the end of the object', async () => {
+    const res = await handler(bucket())(new Request(await signedUrl(), { headers: { range: 'bytes=7-' } }));
+
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe('789');
+    expect(res.headers.get('content-range')).toBe('bytes 7-9/10');
+  });
+
+  it('serves a suffix range (the last N bytes)', async () => {
+    const res = await handler(bucket())(new Request(await signedUrl(), { headers: { range: 'bytes=-3' } }));
+
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe('789');
+    expect(res.headers.get('content-range')).toBe('bytes 7-9/10');
+  });
+
+  it('clamps an end past the object to the real size', async () => {
+    const res = await handler(bucket())(new Request(await signedUrl(), { headers: { range: 'bytes=8-99' } }));
+
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe('89');
+    expect(res.headers.get('content-range')).toBe('bytes 8-9/10');
+  });
+
+  it('416s a range starting past the end, naming the real size', async () => {
+    const res = await handler(bucket())(new Request(await signedUrl(), { headers: { range: 'bytes=10-12' } }));
+
+    expect(res.status).toBe(416);
+    expect(res.headers.get('content-range')).toBe('bytes */10');
+  });
+
+  it('ignores a malformed Range header and serves the whole object as 200', async () => {
+    // Range is advisory: a bad header degrades to a full response, never an error.
+    for (const range of ['bytes=', 'bytes=b-a', 'chunks=1-2', 'bytes=5-2']) {
+      const res = await handler(bucket())(new Request(await signedUrl(), { headers: { range } }));
+      if (range === 'bytes=5-2') {
+        expect(res.status, range).toBe(416); // syntactically valid, semantically empty
+      } else {
+        expect(res.status, range).toBe(200);
+        expect(await res.text()).toBe('0123456789');
+      }
+    }
   });
 });

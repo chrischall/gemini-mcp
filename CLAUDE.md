@@ -167,7 +167,7 @@ shared util, configured non-Bearer.
 | `gemini_list_models` | `tools/models.ts` | `GET /v1beta/models?pageSize=200` (filtered to image models) | read |
 | `gemini_image_generate` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (×`count`) | write (binary-out) |
 | `gemini_image_edit` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (input images required) | write (binary-out) |
-| `gemini_image_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode) | write (binary-out) |
+| `gemini_image_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode; a failed scene is reported in `failed_scenes`, never thrown — N billed successes must not be lost to one failure) | write (binary-out) |
 | `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (GA since 2026-07) | write (binary-out) |
 | `gemini_video_generate` | `tools/video.ts` | `POST /v1beta/interactions` (omni, `response_format: video`, preview) | write (binary-out, MP4→disk) |
 | `gemini_music_generate` | `tools/music.ts` | `POST /v1beta/interactions` (Lyria, `response_format: audio`, preview) | write (binary-out, MP3/WAV) |
@@ -175,6 +175,7 @@ shared util, configured non-Bearer.
 | `gemini_upload_file` | `tools/files.ts` | `POST /upload/v1beta/files` (resumable) | write |
 | `gemini_list_files` | `tools/files.ts` | `GET /v1beta/files?pageSize=N` | read |
 | `gemini_delete_file` | `tools/files.ts` | `DELETE /v1beta/files/{id}` | write (confirm-gated) |
+| `gemini_sign_media` | `tools/files.ts` | none (re-signs an R2 key via `mediaSink.resign`) — **hosted connector only**, not registered on disk sinks | read |
 
 **Video & music reuse the interact plumbing.** `gemini_video_generate` (omni) and
 `gemini_music_generate` (Lyria) ride the **same `/v1beta/interactions` endpoint**
@@ -302,6 +303,26 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
   `crypto.subtle.verify` does the comparison so it is constant-time. Signed URLs
   beat unlisted random keys here because a key never expires and never revokes;
   rotating `MEDIA_URL_SECRET` invalidates every outstanding link at once.
+  `/media` also answers `HEAD` (from a metadata read when the binding offers
+  one) and single-range `Range` requests (206/416 — what `curl -C -` and a
+  seeking video element send), sets an ETag, and names the download via
+  `Content-Disposition` with the key's uniqueness prefix stripped
+  (`downloadFilename` in media-endpoint.ts — the ONE copy of that logic;
+  `curl_hint` and upload display names import it, don't fork it).
+- **The `r2_key` is the durable handle; the signed URL is ephemeral.** A signed
+  link expires (~48h) long before the object is swept (`MEDIA_TTL_DAYS`,
+  default 7 days), so everything that hands out a URL also hands out the key,
+  and three things close the gap: `gemini_sign_media` mints a fresh URL from a
+  key (hosted-only — it is not registered on disk sinks, where paths never
+  expire); `gemini_upload_file`'s `r2_key` source turns a generated image into
+  a Files-API reference by reading the connector's own bucket
+  (`client.readStoredMedia` → `sink.read`) instead of fetching its own signed
+  URL, which it could not sign for itself; and an idempotent replay re-mints
+  the URLs inside a recorded result (`refreshMedia` in jobs.ts, via
+  `session.jobs.resigner`) so a reused result never ships a dead link. Every
+  media entry also carries a ready-to-run `curl_hint`, because the
+  download-then-attach flow is the only way a chat-client user actually sees
+  the image.
 - **Media URLs are built from the request's own origin**, injected into
   `ctx.props` by the `withConnectorOrigin` wrapper around the `/mcp` and `/sse`
   apiHandlers. That is why a fork, a `*.workers.dev` preview and the custom

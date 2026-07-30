@@ -5,6 +5,7 @@ import type { GeminiClient } from '../client.js';
 import { withProgressHeartbeat } from './shared.js';
 import { base64ToBytes, wholeMb } from '../bytes.js';
 import { fileNameFromUrl } from '../fetch-image.js';
+import { downloadFilename } from '../media-endpoint.js';
 import { previewUnlessConfirmed, previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 /**
@@ -82,7 +83,9 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
         'Use this instead of pasting base64 into a tool call: the reference is a short string, so no image bytes ever ' +
         'enter the conversation, and it can be reused across many generations until it expires (~48h). ' +
         'Provide exactly one of `url` (the server downloads it), `data_base64`' +
-        (onDisk ? ', or `path` (a local file).' : '.') +
+        (onDisk
+          ? ', or `path` (a local file).'
+          : ', or `r2_key` (re-upload media this connector generated, from media[].r2_key in an earlier result).') +
         (onDisk
           ? ''
           : ' This connector also accepts raw bytes over HTTP: POST them to /upload with the same Authorization header ' +
@@ -103,6 +106,16 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           .min(1)
           .optional()
           .describe('Raw base64 or a data: URI. Last resort — this is the one form that costs model context (~14k tokens for a modest JPEG).'),
+        r2_key: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'An `r2_key` from a previous generation result (media[].r2_key) — re-uploads media THIS connector generated, ' +
+            'so a generated image can become a reference image in one cheap call. The server reads its own bucket directly: ' +
+            'no HTTP request, no signed URL, and no expiry to worry about. Do NOT pass a /media URL as `url` for this — ' +
+            'that would be the connector fetching itself and needs a signature.',
+          ),
         path: z
           .string()
           .min(1)
@@ -122,11 +135,11 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
       },
     },
     async (args, extra) => {
-      const sources = [args.url && 'url', args.data_base64 && 'data_base64', args.path && 'path'].filter(Boolean);
+      const sources = [args.url && 'url', args.data_base64 && 'data_base64', args.r2_key && 'r2_key', args.path && 'path'].filter(Boolean);
       if (sources.length !== 1) {
         throw new McpToolError(
           sources.length === 0
-            ? 'Provide exactly one of `url`, `data_base64`' + (onDisk ? ' or `path`.' : '.')
+            ? 'Provide exactly one of `url`, `data_base64`, `r2_key`' + (onDisk ? ' or `path`.' : '.')
             : `Provide exactly one source, not ${sources.length} (${sources.join(', ')}).`,
         );
       }
@@ -160,6 +173,17 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
             // 'upload', matching the data_base64 and path branches below —
             // this tool takes video and audio too, so 'image' would be a lie.
             args.display_name ?? fileNameFromUrl(args.url, 'upload'),
+          );
+        }
+        if (args.r2_key) {
+          // Reading our own bucket rather than fetching our own /media URL. A
+          // self-fetch would need a signature the caller cannot mint, which is
+          // exactly the 403 loop this parameter exists to remove.
+          const stored = await client.readStoredMedia(args.r2_key);
+          return client.uploadBytes(
+            stored.bytes,
+            args.mime_type ?? stored.mimeType,
+            args.display_name ?? downloadFilename(args.r2_key),
           );
         }
         if (args.data_base64) {
@@ -214,6 +238,49 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
       });
     },
   );
+
+  // Hosted connector only. On a disk-backed server the result carries a path
+  // that never expires, so a "refresh my link" tool would only ever error —
+  // don't advertise it there (mirrors the Worker not registering video).
+  if (!onDisk) {
+    server.registerTool(
+      'gemini_sign_media',
+      {
+        description:
+          'Mint a FRESH signed URL for media this connector generated, from its `r2_key`. ' +
+          'Signed media links expire well before the object behind them is cleaned up, so an expired link is not a dead ' +
+          'end — re-sign it instead of re-generating (and re-paying for) the image. Keywords: expired link, refresh url, ' +
+          're-sign, media url, download again.',
+        annotations: { readOnlyHint: true, openWorldHint: false },
+        inputSchema: {
+          r2_key: z.string().min(1).describe('The `media[].r2_key` from an earlier generation result'),
+        },
+      },
+      async (args) => {
+        const sink = client.mediaSink;
+        if (!sink?.resign) {
+          throw new McpToolError('This server does not serve media URLs — generated files are written to disk and the path in the result is already usable.', {
+            hint: 'gemini_sign_media applies to the hosted connector only.',
+          });
+        }
+        const fresh = await sink.resign(args.r2_key.trim());
+        if (!fresh) {
+          // Remediation goes in the MESSAGE: MCP serialization drops hints.
+          throw new McpToolError(
+            `No stored media for r2_key "${args.r2_key}" — it has probably passed its retention window. Re-run the generation to get a new one.`,
+            { hint: 'Objects are swept on a retention schedule (MEDIA_TTL_DAYS, default 7 days).' },
+          );
+        }
+        return textResult({
+          url: fresh.ref,
+          r2_key: fresh.key,
+          ...(fresh.expiresAt ? { expires_at: fresh.expiresAt } : {}),
+          curl_hint: `curl -sS -o ${downloadFilename(fresh.key ?? 'media')} "${fresh.ref}"`,
+          hint: 'In a Claude chat client, download this URL into your sandbox and present it as an output file — inline image blocks and markdown embeds do not render for the end user.',
+        });
+      },
+    );
+  }
 
   server.registerTool(
     'gemini_delete_file',

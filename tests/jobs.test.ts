@@ -105,6 +105,64 @@ describe('dispatch — idempotency_key', () => {
   });
 });
 
+describe('dispatch — replayed media URLs are re-minted', () => {
+  const recorded = () =>
+    textResultOf({
+      images: ['https://c.example.com/media/gen/abc123-cat.png?exp=1&sig=old'],
+      media: [{ url: 'https://c.example.com/media/gen/abc123-cat.png?exp=1&sig=old', r2_key: 'gen/abc123-cat.png', expires_at: '2026-01-01T00:00:00.000Z' }],
+    });
+
+  it('replaces an expired signed URL with a fresh one, everywhere it appears', async () => {
+    registry.resigner = {
+      resign: vi.fn().mockResolvedValue({
+        ref: 'https://c.example.com/media/gen/abc123-cat.png?exp=2&sig=new',
+        key: 'gen/abc123-cat.png',
+        expiresAt: '2026-12-31T00:00:00.000Z',
+      }),
+    };
+    await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => recorded());
+    const replay = metaOf(
+      await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => {
+        throw new Error('must not re-run');
+      }),
+    );
+
+    expect(replay.reused).toBe(true);
+    expect(replay.media_urls_refreshed).toBe(true);
+    const media = (replay.media as Array<Record<string, unknown>>)[0];
+    expect(media.url).toContain('sig=new');
+    expect(media.expires_at).toBe('2026-12-31T00:00:00.000Z');
+    // The curl hint is minted fresh too — a legacy recorded shape gains it.
+    expect(media.curl_hint).toBe('curl -sS -o cat.png "https://c.example.com/media/gen/abc123-cat.png?exp=2&sig=new"');
+    // The flat list must agree with media[], or the caller copies the dead one.
+    expect((replay.images as string[])[0]).toContain('sig=new');
+  });
+
+  it('is best-effort: a replay that cannot be refreshed is still a valid replay', async () => {
+    registry.resigner = { resign: vi.fn().mockRejectedValue(new Error('KV down')) };
+    await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => recorded());
+    const replay = metaOf(
+      await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => recorded()),
+    );
+
+    expect(replay.reused).toBe(true);
+    expect(replay.media_urls_refreshed).toBeUndefined();
+    expect((replay.media as Array<Record<string, unknown>>)[0].url).toContain('sig=old');
+  });
+
+  it('leaves stdio replays untouched — no resigner, refs are paths that never expire', async () => {
+    const result = textResultOf({ images: ['/tmp/out/cat.png'] });
+    await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => result);
+    const replay = metaOf(
+      await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'k' }, async () => result),
+    );
+
+    expect(replay.reused).toBe(true);
+    expect(replay.media_urls_refreshed).toBeUndefined();
+    expect((replay.images as string[])[0]).toBe('/tmp/out/cat.png');
+  });
+});
+
 describe('dispatch — async job handle', () => {
   const settle = () => new Promise((r) => setImmediate(r));
 

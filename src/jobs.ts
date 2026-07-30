@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { textResult, McpToolError } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { downloadFilename } from './media-endpoint.js';
 
 /**
  * In-memory job registry backing idempotency (#53) and the async job pattern
@@ -70,6 +71,57 @@ export function fingerprintRequest(toolName: string, parts: unknown): string {
   return createHash('sha256').update(`${toolName}\u0000${JSON.stringify(parts)}`).digest('hex');
 }
 
+/**
+ * Re-mint any media URLs a recorded result carries, before it is replayed.
+ *
+ * A recorded result can outlive the signed URLs inside it — and after a change
+ * to the result shape it can even carry the OLD shape entirely. Either way the
+ * caller gets something that looks right and does not work. Re-signing from the
+ * `r2_key`, which is stable, fixes both: an expired link becomes a live one,
+ * and a legacy entry gains the `url`/`curl_hint` fields the current shape has.
+ *
+ * Best-effort by design. A replay that cannot be refreshed is still a valid
+ * replay — the point of idempotency is not billing twice, and failing here
+ * would trade a stale URL for no result at all.
+ */
+async function refreshMedia(result: CallToolResult, sink: MediaResigner | undefined): Promise<CallToolResult> {
+  const first = result.content?.[0];
+  if (!sink?.resign || !first || first.type !== 'text') return result;
+  let body: Record<string, unknown>;
+  try { body = JSON.parse(first.text) as Record<string, unknown>; } catch { return result; }
+
+  const entries = Array.isArray(body.media) ? (body.media as Array<Record<string, unknown>>) : [];
+  const keys = entries.map((e) => e.r2_key).filter((k): k is string => typeof k === 'string');
+  if (keys.length === 0) return result;
+
+  const refreshed = await Promise.all(keys.map(async (key) => {
+    try { return await sink.resign!(key); } catch { return undefined; }
+  }));
+  if (refreshed.every((r) => r === undefined)) return result;
+
+  const mediaKeyName = ['images', 'videos', 'audios'].find((k) => Array.isArray(body[k]));
+  const refs: string[] = [];
+  refreshed.forEach((fresh, i) => {
+    if (!fresh) { refs.push(String(entries[i]?.url ?? '')); return; }
+    entries[i] = {
+      ...entries[i],
+      url: fresh.ref,
+      ...(fresh.expiresAt ? { expires_at: fresh.expiresAt } : {}),
+      curl_hint: `curl -sS -o ${downloadFilename(fresh.key ?? 'media')} "${fresh.ref}"`,
+    };
+    refs.push(fresh.ref);
+  });
+  body.media = entries;
+  if (mediaKeyName) body[mediaKeyName] = refs;
+  body.media_urls_refreshed = true;
+  return { ...result, content: [{ ...first, text: JSON.stringify(body, null, 2) }, ...(result.content ?? []).slice(1)] };
+}
+
+/** The slice of a MediaSink this module needs, kept structural to avoid a cycle. */
+export interface MediaResigner {
+  resign?(key: string): Promise<{ ref: string; key?: string; expiresAt?: string } | undefined>;
+}
+
 /** Clone `result`, adding `reused: true` + `reused_job_id` to its meta block. */
 function annotateReused(result: CallToolResult, jobId: string): CallToolResult {
   const content = result.content ?? [];
@@ -112,6 +164,13 @@ function jobHandle(jobId: string, status: JobStatus): CallToolResult {
  * `client.session.jobs`.
  */
 export class JobRegistry {
+  /**
+   * Lets a replayed result have its media URLs re-minted. Set by the session
+   * that owns this registry; absent on stdio, where refs are file paths that
+   * never expire.
+   */
+  resigner: MediaResigner | undefined;
+
   private readonly jobs = new Map<string, JobEntry>();
   private readonly byKey = new Map<string, string>(); // idempotencyKey -> jobId
   private readonly runningByFingerprint = new Map<string, string>(); // fingerprint -> jobId (only while running)
@@ -176,7 +235,10 @@ export class JobRegistry {
     }
     if (hit) {
       if (async) return jobHandle(hit.jobId, hit.status);
-      return annotateReused(await hit.promise, hit.jobId);
+      // Refresh before annotating: a recorded result can outlive the signed
+      // URLs inside it, and replaying an expired link is its own kind of wrong
+      // answer — it looks like success.
+      return annotateReused(await refreshMedia(await hit.promise, this.resigner), hit.jobId);
     }
 
     const jobId = randomUUID();

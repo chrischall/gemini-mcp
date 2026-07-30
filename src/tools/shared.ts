@@ -6,6 +6,7 @@ import { resolveVideoPath, videoMimeType } from '../images.js';
 import { IMAGE_URL_MAX_BYTES } from '../fetch-image.js';
 import { wholeMb } from '../bytes.js';
 import { createDiskSink, type MediaSink } from '../storage/media.js';
+import { downloadFilename } from '../media-endpoint.js';
 
 /**
  * Fallback sink for call sites that pass no explicit one (every pre-existing
@@ -367,6 +368,12 @@ export async function emitMedia(
           url: p.ref,
           ...(p.key ? { r2_key: p.key } : {}),
           ...(p.expiresAt ? { expires_at: p.expiresAt } : {}),
+          // A ready-to-run command, not a description of one. Models copy an
+          // exact string far more reliably than they compose one — and in a
+          // chat client this download-then-attach flow is the ONLY way the end
+          // user actually sees the image (inline MCP blocks and markdown embeds
+          // both render for the model and not for them).
+          ...(p.key ? { curl_hint: `curl -sS -o ${downloadFilename(p.key)} "${p.ref}"` } : {}),
         })),
       }
     : {};

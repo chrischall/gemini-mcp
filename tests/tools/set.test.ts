@@ -315,3 +315,68 @@ describe('timeout_ms passthrough', () => {
     await h.close();
   });
 });
+
+/**
+ * A set is N+1 billed generations in one tools/call. `Promise.all` rejected the
+ * whole batch on the first scene failure — losing the master and every scene
+ * that HAD succeeded — and surfaced as an opaque "Error occurred during tool
+ * execution" naming neither the scene nor the cause.
+ */
+describe('gemini_image_set partial failure', () => {
+  it('keeps the master and the scenes that worked, and names what failed', async () => {
+    let call = 0;
+    vi.spyOn(client, 'generate').mockImplementation(async () => {
+      call += 1;
+      // call 1 = master, 2 = scene 1, 3 = scene 2 (fails), 4 = scene 3
+      if (call === 3) throw new Error('Gemini returned no image: blocked by a safety filter');
+      return { images: [{ base64: PNG, mimeType: 'image/png' }] };
+    });
+    const h = await createTestHarness((srv) => registerSetTools(srv, client));
+    const res = await h.callTool('gemini_image_set', {
+      master_prompt: 'a cartoon fox',
+      scenes: ['waving', 'eating', 'asleep'],
+      output_dir: dir,
+    });
+    await h.close();
+
+    expect(res.isError).toBeFalsy();
+    const body = parseToolResult<{ images: string[]; failed_scenes?: Array<Record<string, unknown>>; partial?: string }>(res);
+    // master + 2 surviving scenes, rather than nothing at all.
+    expect(body.images).toHaveLength(3);
+    expect(body.failed_scenes).toHaveLength(1);
+    expect(body.failed_scenes?.[0]).toMatchObject({ scene: 2, prompt: 'eating' });
+    expect(String(body.failed_scenes?.[0].error)).toMatch(/safety filter/);
+    expect(String(body.partial)).toMatch(/1 of 3 scene\(s\) failed/);
+  });
+
+  it('chain mode keeps anchoring on the last image that actually exists', async () => {
+    let call = 0;
+    const spy = vi.spyOn(client, 'generate').mockImplementation(async () => {
+      call += 1;
+      if (call === 3) throw new Error('transient 503');
+      return { images: [{ base64: PNG, mimeType: `image/png;n=${call}` }] };
+    });
+    const h = await createTestHarness((srv) => registerSetTools(srv, client));
+    await h.callTool('gemini_image_set', {
+      master_prompt: 'fox',
+      scenes: ['s1', 's2', 's3'],
+      reference_mode: 'chain',
+      output_dir: dir,
+    });
+    await h.close();
+
+    // Scene 3 must chain from scene 1's output (n=2), NOT from the failure.
+    expect(spy.mock.calls[3][0].images?.[0].mimeType).toBe('image/png;n=2');
+  });
+
+  it('still reports nothing when every scene succeeds', async () => {
+    vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const h = await createTestHarness((srv) => registerSetTools(srv, client));
+    const res = await h.callTool('gemini_image_set', { master_prompt: 'fox', scenes: ['a'], output_dir: dir });
+    await h.close();
+
+    const body = parseToolResult<Record<string, unknown>>(res);
+    expect(body.failed_scenes).toBeUndefined();
+    expect(body.partial).toBeUndefined();
+  });
+});

@@ -399,6 +399,10 @@ describe('every hosted generation returns an openable URL', () => {
     expect(media[0].url).toMatch(/^https:\/\/connector\.example\.com\/media\/gen\/.*\?exp=\d+&sig=/);
     expect(media[0].r2_key).toBe(b.keys[0]);
     expect(media[0].expires_at).toBe('2026-07-31T12:00:00.000Z');
+    // A ready-to-run download command, named after the HUMAN filename (the
+    // key's uniqueness prefix stripped) — the download-then-attach flow is how
+    // an end user actually sees the image in a chat client.
+    expect(media[0].curl_hint).toBe(`curl -sS -o ${b.keys[0].split('/').pop()!.replace(/^[0-9a-f]{6,12}-/i, '')} "${media[0].url}"`);
     // The flat list stays the primary field, and now holds the same URL.
     expect((body.images as string[])[0]).toBe(media[0].url);
   });

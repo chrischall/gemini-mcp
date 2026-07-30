@@ -156,4 +156,65 @@ describe('createR2Sink', () => {
     const withoutUrl = createR2Sink(fakeBucket(), {});
     expect(withoutUrl.note()).toMatch(/not.*publicly|no public/i);
   });
+
+  /** fakeBucket plus the `get` a real R2 binding has, backed by what was put. */
+  function readableBucket() {
+    const base = fakeBucket();
+    return {
+      ...base,
+      puts: base.puts,
+      async get(key: string) {
+        const hit = base.puts.find((p) => p.key === key);
+        if (!hit) return null;
+        return {
+          arrayBuffer: async () => hit.bytes.buffer as ArrayBuffer,
+          httpMetadata: hit.httpMetadata as { contentType?: string },
+        };
+      },
+    };
+  }
+
+  describe('read() — a generated image becoming a reference image', () => {
+    it('returns the stored bytes and content type for a key it persisted', async () => {
+      const bucket = readableBucket();
+      const sink = createR2Sink(bucket, {});
+      await sink.persist([item('cat')], {});
+
+      const stored = await sink.read!(bucket.puts[0].key);
+      expect(Buffer.from(stored!.bytes)).toEqual(Buffer.from(PNG_B64, 'base64'));
+      expect(stored!.mimeType).toBe('image/png');
+    });
+
+    it('returns undefined for a swept key, and on a bucket with no get()', async () => {
+      const sink = createR2Sink(readableBucket(), {});
+      await expect(sink.read!('gen/never-existed.png')).resolves.toBeUndefined();
+      // A put-only binding (older test fakes) must degrade, not throw.
+      await expect(createR2Sink(fakeBucket(), {}).read!('gen/x.png')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('resign() — a fresh URL without a fresh (billed) generation', () => {
+    const signedOpts = {
+      signedBaseUrl: 'https://connector.example.com/media',
+      sign: async (key: string, exp: number) => `sig-${key.length}-${exp}`,
+      urlTtlMs: 3600_000,
+      now: () => new Date('2026-07-30T12:00:00Z'),
+    };
+
+    it('mints a new signed URL + expiry for an object still in storage', async () => {
+      const bucket = readableBucket();
+      const sink = createR2Sink(bucket, signedOpts);
+      await sink.persist([item('cat')], {});
+
+      const fresh = await sink.resign!(bucket.puts[0].key);
+      expect(fresh!.key).toBe(bucket.puts[0].key);
+      expect(fresh!.ref).toMatch(/^https:\/\/connector\.example\.com\/media\/gen\/.*exp=/);
+      expect(fresh!.expiresAt).toBe('2026-07-30T13:00:00.000Z');
+    });
+
+    it('refuses to re-sign a swept key — a fresh link that 404s is no fix', async () => {
+      const sink = createR2Sink(readableBucket(), signedOpts);
+      await expect(sink.resign!('gen/swept.png')).resolves.toBeUndefined();
+    });
+  });
 });

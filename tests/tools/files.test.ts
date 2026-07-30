@@ -227,6 +227,101 @@ describe('gemini_upload_file — source validation', () => {
     expect(JSON.stringify(both.content)).toMatch(/not 2/);
     await h.close();
   });
+
+  it('counts r2_key as a source like any other', async () => {
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadBytes: vi.fn() }, false)));
+    const both = await h.callTool('gemini_upload_file', { url: 'https://x/y.png', r2_key: 'gen/k.png' });
+    await h.close();
+    expect(both.isError).toBe(true);
+    expect(JSON.stringify(both.content)).toMatch(/url, r2_key/);
+  });
+});
+
+describe('gemini_upload_file — r2_key (a generated image becomes a reference image)', () => {
+  it('reads its own bucket and re-uploads the stored bytes — no HTTP, no signature', async () => {
+    const readStoredMedia = vi.fn().mockResolvedValue({ bytes: PNG_BYTES, mimeType: 'image/png' });
+    const uploadBytes = vi.fn().mockResolvedValue(uploaded());
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ readStoredMedia, uploadBytes }, false)));
+    const body = parseToolResult<Record<string, unknown>>(
+      await h.callTool('gemini_upload_file', { r2_key: 'gen/2026-07-30/abc123-a-cat.png' }),
+    );
+    await h.close();
+
+    expect(readStoredMedia).toHaveBeenCalledWith('gen/2026-07-30/abc123-a-cat.png');
+    // Display name matches what /media would call the file — prefix stripped.
+    expect(uploadBytes).toHaveBeenCalledWith(PNG_BYTES, 'image/png', 'a-cat.png');
+    expect(body.file_uri).toBe('files/abc123');
+  });
+
+  it('says plainly when the object is gone, before any billable call', async () => {
+    // A real client wired to an R2 sink whose object was already swept.
+    const { GeminiClient } = await import('../../src/client.js');
+    const client = new GeminiClient({
+      apiKey: 'k',
+      mediaSink: createR2Sink({ put: async () => ({}), get: async () => null }, {}),
+    });
+    const uploadBytes = vi.spyOn(client, 'uploadBytes');
+    const h = await createTestHarness((s) => registerFileTools(s, client));
+    const res = await h.callTool('gemini_upload_file', { r2_key: 'gen/long-gone.png' });
+    await h.close();
+
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/No stored media.*gen\/long-gone\.png/);
+    // Remediation must be in the MESSAGE — MCP serialization drops hints.
+    expect(JSON.stringify(res.content)).toMatch(/retention/);
+    expect(JSON.stringify(res.content)).toMatch(/Re-run the generation/);
+    expect(uploadBytes).not.toHaveBeenCalled();
+  });
+});
+
+describe('gemini_sign_media', () => {
+  const freshRef = {
+    ref: 'https://c.example.com/media/gen/2026-07-30/abc123-a-cat.png?exp=9&sig=s',
+    key: 'gen/2026-07-30/abc123-a-cat.png',
+    expiresAt: '2026-08-01T12:00:00.000Z',
+  };
+
+  it('mints a fresh signed URL from a stable r2_key — no regeneration, no new billing', async () => {
+    const resign = vi.fn().mockResolvedValue(freshRef);
+    const h = await createTestHarness((s) =>
+      registerFileTools(s, stub({ mediaSink: { persistsFiles: false, resign } })),
+    );
+    const body = parseToolResult<Record<string, unknown>>(
+      await h.callTool('gemini_sign_media', { r2_key: ` ${freshRef.key} ` }),
+    );
+    await h.close();
+
+    expect(resign).toHaveBeenCalledWith(freshRef.key); // trimmed
+    expect(body.url).toBe(freshRef.ref);
+    expect(body.r2_key).toBe(freshRef.key);
+    expect(body.expires_at).toBe(freshRef.expiresAt);
+    // The ready-to-run command names the HUMAN filename, matching /media's
+    // Content-Disposition.
+    expect(body.curl_hint).toBe(`curl -sS -o a-cat.png "${freshRef.ref}"`);
+  });
+
+  it('distinguishes a swept object from an expired link', async () => {
+    const h = await createTestHarness((s) =>
+      registerFileTools(s, stub({ mediaSink: { persistsFiles: false, resign: vi.fn().mockResolvedValue(undefined) } })),
+    );
+    const res = await h.callTool('gemini_sign_media', { r2_key: 'gen/swept.png' });
+    await h.close();
+
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/retention window/);
+    expect(JSON.stringify(res.content)).toMatch(/Re-run the generation/);
+  });
+
+  it('is not registered on a disk-backed server, where paths never expire', () => {
+    const names = (client: GeminiClient) => {
+      const seen: string[] = [];
+      registerFileTools({ registerTool: (n: string) => { seen.push(n); } } as never, client);
+      return seen;
+    };
+    // Nothing to re-sign on stdio: the result already carries a durable path.
+    expect(names(stub())).not.toContain('gemini_sign_media');
+    expect(names(stub({}, false))).toContain('gemini_sign_media');
+  });
 });
 
 describe('gemini_list_files', () => {
