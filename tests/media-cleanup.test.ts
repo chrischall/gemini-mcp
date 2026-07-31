@@ -57,6 +57,22 @@ describe('cleanupExpiredMedia', () => {
     expect(result.deleted).toBe(0);
   });
 
+  it('sweeps signed uploads (up/) on the same schedule but NEVER the library (lib/)', async () => {
+    const bucket = fakeBucket([
+      { key: 'gen/old.png', ageDays: 30 },
+      { key: 'up/tenant/2026-01-01/old-photo.jpg', ageDays: 30 },
+      { key: 'up/tenant/2026-07-28/fresh-photo.jpg', ageDays: 1 },
+      // Saved characters/styles have NO expiry — a sweep that removed them
+      // would silently break every `characters:` reference next bedtime.
+      { key: 'lib/tenant/characters/finn.json', ageDays: 400 },
+      { key: 'lib/tenant/characters/finn.png', ageDays: 400 },
+      { key: 'lib/tenant/styles/bold-cartoon-sports.json', ageDays: 400 },
+    ]);
+    await cleanupExpiredMedia(bucket, 7 * DAY, { now: () => NOW });
+
+    expect(bucket.deleted.sort()).toEqual(['gen/old.png', 'up/tenant/2026-01-01/old-photo.jpg']);
+  });
+
   it('pages through a truncated listing', async () => {
     const bucket = fakeBucket(
       Array.from({ length: 25 }, (_, i) => ({ key: `gen/old-${i}.png`, ageDays: 10 })),

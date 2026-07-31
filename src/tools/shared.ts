@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { textResult, McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { GeminiClient, GeneratedImage, GeneratedMedia } from '../client.js';
+import type { GeminiClient, GeneratedImage, GeneratedMedia, ImageInput } from '../client.js';
 import { resolveVideoPath, videoMimeType } from '../images.js';
 import { IMAGE_URL_MAX_BYTES } from '../fetch-image.js';
-import { wholeMb } from '../bytes.js';
+import { bytesToBase64, base64ToBytes, wholeMb } from '../bytes.js';
 import { createDiskSink, type MediaSink } from '../storage/media.js';
 import { downloadFilename } from '../media-endpoint.js';
+import { buildZip } from '../zip.js';
 
 /**
  * Fallback sink for call sites that pass no explicit one (every pre-existing
@@ -72,6 +73,152 @@ export const asyncSchema = z
   );
 
 /**
+ * Wait-then-hand-off budget shared by every generation tool: wait up to the
+ * budget for the in-band result, and past it return a `{ job_id }` handle
+ * (the work continues; the caller polls `gemini_get_result`). The middle
+ * ground between fully synchronous and `async: true`.
+ */
+export const maxWaitMsSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(600_000)
+  .optional()
+  .describe(
+    'Wait up to this many ms for the result; if generation is still running when the budget expires, return ' +
+      '{ job_id, status: "running" } immediately instead (poll gemini_get_result). Keeps fast results in-band while a ' +
+      'slow batch can never trip the host tools/call timeout (-32001) — e.g. 20000 for multi-image sets. Ignored when async is set.',
+  );
+
+/**
+ * Reference images already in THIS connector's object store, by `r2_key`.
+ * Hosted connector only — the server reads its own bucket (tenant-gated), so
+ * no bytes enter the conversation and no signed URL is needed.
+ */
+export function imagesR2KeysSchema(label = 'Reference images'): z.ZodOptional<z.ZodArray<z.ZodString>> {
+  return z
+    .array(z.string().min(1))
+    .optional()
+    .describe(
+      `${label} by r2_key from THIS connector's store: a signed upload (gemini_get_upload_url → curl PUT) or an earlier ` +
+        "generation's media[].r2_key. The server reads its own bucket directly — no bytes in the conversation, no signed URL, " +
+        'no ~48h Files API expiry. Hosted connector only.',
+    );
+}
+
+/** Saved-character names attached to a generation (hosted connector only). */
+export const charactersSchema = z
+  .array(z.string().min(1))
+  .max(8)
+  .optional()
+  .describe(
+    'Names of saved characters (see gemini_list_characters / gemini_save_character): each one\'s reference image and ' +
+      'description are attached to the request automatically, keeping recurring subjects consistent without re-sending anything. ' +
+      'Hosted connector only.',
+  );
+
+/** Saved-style name applied to a generation (hosted connector only). */
+export const styleSchema = z
+  .string()
+  .min(1)
+  .optional()
+  .describe(
+    'Name of a saved style preset (see gemini_list_styles / gemini_save_style): its prompt fragment — and reference image, ' +
+      'if it has one — is applied to the request automatically. Hosted connector only.',
+  );
+
+/** What {@link resolveCharacterRefs} hands back to a generation handler. */
+export interface CharacterRefs {
+  /** Character reference images (in name order), then the style reference if any. */
+  inputs: ImageInput[];
+  /** Prompt preamble naming each attached character. */
+  characterLine?: string;
+  /** The saved style's prompt fragment, to append to every prompt. */
+  styleFragment?: string;
+  /** `characters` / `style` echoes for the result meta. */
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * Turn `characters: ["finn", …]` / `style: "…"` into reference-image inputs
+ * plus prompt text, from the account's saved library.
+ *
+ * A name that is not saved fails BEFORE any billable call, and names what IS
+ * saved — a generation silently missing its reference is a wasted charge that
+ * looks like a model failure.
+ */
+export async function resolveCharacterRefs(
+  client: GeminiClient,
+  names: string[] | undefined,
+  styleName: string | undefined,
+): Promise<CharacterRefs> {
+  if (!names?.length && !styleName) return { inputs: [] };
+  const library = client.library;
+  if (!library) {
+    throw new McpToolError(
+      '`characters` / `style` reference this account\'s saved library, which exists on the hosted connector only. ' +
+        'On this server pass the reference images directly (images / images_url / images_file_uris) and put the style text in the prompt.',
+    );
+  }
+  const inputs: ImageInput[] = [];
+  const described: string[] = [];
+  for (const name of names ?? []) {
+    const record = await library.getCharacter(name);
+    const image = record && (await library.readCharacterImage(name));
+    if (!record || !image) {
+      const available = (await library.listCharacters()).map((c) => c.name);
+      throw new McpToolError(
+        `No saved character "${name}". ` +
+          (available.length ? `Saved characters: ${available.join(', ')}. ` : 'None are saved yet. ') +
+          'Save one with gemini_save_character.',
+      );
+    }
+    inputs.push({ base64: bytesToBase64(image.bytes), mimeType: image.mimeType });
+    described.push(`${record.name} — ${record.description}`);
+  }
+  let styleFragment: string | undefined;
+  let styleImageAttached = false;
+  if (styleName) {
+    const record = await library.getStyle(styleName);
+    if (!record) {
+      const available = (await library.listStyles()).map((s) => s.name);
+      throw new McpToolError(
+        `No saved style "${styleName}". ` +
+          (available.length ? `Saved styles: ${available.join(', ')}. ` : 'None are saved yet. ') +
+          'Save one with gemini_save_style.',
+      );
+    }
+    styleFragment = record.prompt_fragment;
+    if (record.image_key) {
+      const image = await library.readStyleImage(styleName);
+      if (image) {
+        inputs.push({ base64: bytesToBase64(image.bytes), mimeType: image.mimeType });
+        styleImageAttached = true;
+      }
+    }
+  }
+  const characterLine = described.length
+    ? `Use the attached reference images for these characters, in order: ${described
+        .map((d, i) => `(${i + 1}) ${d}`)
+        .join('; ')}. Keep each character visually consistent with their reference image.` +
+      (styleImageAttached ? ' The final attached image is a style reference, not a character.' : '')
+    : styleImageAttached
+      ? 'The attached image is a style reference.'
+      : undefined;
+  const meta: Record<string, unknown> = {};
+  if (names?.length) meta.characters = names;
+  if (styleName) meta.style = styleName;
+  return { inputs, characterLine, styleFragment, meta: Object.keys(meta).length ? meta : undefined };
+}
+
+/** Compose the effective prompt from the caller's text + library lines. */
+export function composePrompt(prompt: string, refs: { characterLine?: string; styleFragment?: string }): string {
+  return [refs.characterLine, prompt, refs.styleFragment ? `Style: ${refs.styleFragment}` : undefined]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/**
  * Reference images the SERVER fetches, so the bytes never pass through the
  * model's context window. Defined once and reused under both the `images_url`
  * and `master_images_url` names.
@@ -127,6 +274,7 @@ export const sharedImageSchema = {
   timeout_ms: timeoutMsSchema,
   idempotency_key: idempotencyKeySchema,
   async: asyncSchema,
+  max_wait_ms: maxWaitMsSchema,
 };
 
 /** A generated image plus the base filename (no extension) to write it under. */
@@ -320,7 +468,7 @@ export interface NamedMedia { media: GeneratedMedia; base: string; }
 export async function emitMedia(
   named: NamedMedia[],
   kind: 'image' | 'video' | 'audio',
-  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink },
+  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink; urlTtlMs?: number },
   meta?: Record<string, unknown>,
   onWritten?: (paths: string[]) => void | Promise<void>,
 ): Promise<CallToolResult> {
@@ -335,6 +483,7 @@ export async function emitMedia(
   const sink = opts.sink ?? DEFAULT_SINK;
   const persisted = await sink.persist(named.map((n) => ({ base: n.base, base64: n.media.base64, mimeType: n.media.mimeType })), {
     output_dir: opts.output_dir,
+    urlTtlMs: opts.urlTtlMs,
   });
   const refs = persisted.map((p) => p.ref);
   // `onWritten` (sidecars, the written-outputs set) is meaningful only when the
@@ -387,11 +536,57 @@ export async function emitMedia(
  */
 export async function emit(
   named: NamedImage[],
-  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink },
+  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink; urlTtlMs?: number },
   meta?: Record<string, unknown>,
   onWritten?: (paths: string[]) => void | Promise<void>,
 ): Promise<CallToolResult> {
   return emitMedia(named.map((n) => ({ media: n.image, base: n.base })), 'image', opts, meta, onWritten);
+}
+
+/**
+ * Signed-URL lifetime for MULTI-image results (and their bundle zip) on
+ * object-storage sinks: ~7 days rather than the default ~48h, clamped by the
+ * sink to the retention window. A set is a batch someone comes back to; its
+ * links dying in two days while the objects live seven served nobody.
+ */
+export const SET_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Bundle a multi-image result into ONE downloadable zip and return the meta
+ * fields to merge into the result (`bundle_url` + a detailed `bundle` object).
+ *
+ * Object-storage sinks only, and only when there is more than one image — the
+ * point is turning N downloads into one `curl`, which a single image already
+ * is. Best-effort: a result that cost N billable generations must never fail
+ * because zipping or storing the bundle did.
+ */
+export async function persistBundle(
+  named: NamedImage[],
+  sink: MediaSink | undefined,
+  base: string,
+): Promise<Record<string, unknown>> {
+  if (!sink || sink.persistsFiles || named.length < 2) return {};
+  try {
+    const { mediaExt } = await import('../images.js');
+    const zip = buildZip(named.map((n) => ({ name: `${n.base}.${mediaExt(n.image.mimeType)}`, bytes: base64ToBytes(n.image.base64) })));
+    const [persisted] = await sink.persist(
+      [{ base: `${base}-bundle`, base64: bytesToBase64(zip), mimeType: 'application/zip' }],
+      { urlTtlMs: SET_URL_TTL_MS },
+    );
+    if (!persisted || persisted.unavailable) return {};
+    return {
+      bundle_url: persisted.ref,
+      bundle: {
+        url: persisted.ref,
+        ...(persisted.key ? { r2_key: persisted.key } : {}),
+        ...(persisted.expiresAt ? { expires_at: persisted.expiresAt } : {}),
+        files: named.map((n) => n.base),
+        ...(persisted.key ? { curl_hint: `curl -sS -o ${downloadFilename(persisted.key)} "${persisted.ref}"` } : {}),
+      },
+    };
+  } catch {
+    return {};
+  }
 }
 
 /**

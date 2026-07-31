@@ -119,6 +119,24 @@ async function refreshMedia(result: CallToolResult, sink: MediaResigner | undefi
   });
   body.media = entries;
   if (mediaKeyName) body[mediaKeyName] = refs;
+  // A multi-image set also carries a bundle zip; its link expires like any
+  // other and re-signs from its own r2_key. Best-effort, like the rest.
+  const bundle = body.bundle as Record<string, unknown> | undefined;
+  if (bundle && typeof bundle.r2_key === 'string') {
+    try {
+      const fresh = await sink.resign!(bundle.r2_key);
+      if (fresh) {
+        const { expires_at: _staleBundle, ...rest } = bundle;
+        body.bundle = {
+          ...rest,
+          url: fresh.ref,
+          ...(fresh.expiresAt ? { expires_at: fresh.expiresAt } : {}),
+          curl_hint: `curl -sS -o ${downloadFilename(fresh.key ?? 'media')} "${fresh.ref}"`,
+        };
+        body.bundle_url = fresh.ref;
+      }
+    } catch { /* an un-refreshed bundle link is still a valid replay */ }
+  }
   body.media_urls_refreshed = true;
   return { ...result, content: [{ ...first, text: JSON.stringify(body, null, 2) }, ...(result.content ?? []).slice(1)] };
 }
@@ -153,6 +171,14 @@ export interface DispatchOpts {
   idempotencyKey?: string;
   /** Return a `{ job_id, status }` handle immediately instead of awaiting work. */
   async?: boolean;
+  /**
+   * Wait up to this long for the result; if the work is still running when the
+   * budget expires, return the `{ job_id, status }` handle instead (the work
+   * continues; the caller polls `gemini_get_result`). The middle ground
+   * between fully-synchronous (risks the host's tools/call timeout) and
+   * `async` (never waits). Ignored when `async` is set.
+   */
+  waitMs?: number;
 }
 
 /** Immediate handle for an async call — the caller polls `gemini_get_result`. */
@@ -161,6 +187,23 @@ function jobHandle(jobId: string, status: JobStatus): CallToolResult {
     job_id: jobId,
     status,
     hint: `Generation running in the background. Poll gemini_get_result with job_id "${jobId}" until status is "done" (results are per-process and expire ~10 min after completion).`,
+  });
+}
+
+/**
+ * Await `promise` for at most `waitMs`; `undefined` means the budget expired
+ * with the work still pending (rejections propagate as usual). The timer never
+ * holds the process open, and a late rejection after the budget expired is
+ * already handled by the registry's own settle handlers.
+ */
+function awaitWithBudget(promise: Promise<CallToolResult>, waitMs: number): Promise<CallToolResult | undefined> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(undefined), waitMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    promise.then(
+      (result) => { clearTimeout(timer); resolve(result); },
+      (err: unknown) => { clearTimeout(timer); reject(err); },
+    );
   });
 }
 
@@ -226,7 +269,7 @@ export class JobRegistry {
    * different registry and therefore a genuinely separate generation.
    */
   async dispatch(opts: DispatchOpts, work: () => Promise<CallToolResult>): Promise<CallToolResult> {
-    const { toolName, fingerprint, idempotencyKey, async } = opts;
+    const { toolName, fingerprint, idempotencyKey, async, waitMs } = opts;
     const now = Date.now();
 
     let hit: JobEntry | undefined;
@@ -241,10 +284,14 @@ export class JobRegistry {
     }
     if (hit) {
       if (async) return jobHandle(hit.jobId, hit.status);
+      const settled = waitMs !== undefined && hit.status === 'running'
+        ? await awaitWithBudget(hit.promise, waitMs)
+        : await hit.promise;
+      if (settled === undefined) return jobHandle(hit.jobId, 'running');
       // Refresh before annotating: a recorded result can outlive the signed
       // URLs inside it, and replaying an expired link is its own kind of wrong
       // answer — it looks like success.
-      return annotateReused(await refreshMedia(await hit.promise, this.resigner), hit.jobId);
+      return annotateReused(await refreshMedia(settled, this.resigner), hit.jobId);
     }
 
     const jobId = randomUUID();
@@ -265,6 +312,13 @@ export class JobRegistry {
       if (this.runningByFingerprint.get(fingerprint) === jobId) this.runningByFingerprint.delete(fingerprint);
     });
     if (async) return jobHandle(jobId, 'running');
+    if (waitMs !== undefined) {
+      const settled = await awaitWithBudget(promise, waitMs);
+      // Budget expired with the work still running: hand back the job id — the
+      // work continues and the caller polls, exactly as with `async: true`,
+      // except a fast result would have been returned in-band.
+      return settled ?? jobHandle(jobId, 'running');
+    }
     return promise;
   }
 

@@ -28,6 +28,7 @@ interface Stub {
   fetchRemoteImage: ReturnType<typeof vi.fn>;
   uploadBytes: ReturnType<typeof vi.fn>;
   getFile: ReturnType<typeof vi.fn>;
+  readStoredMedia: ReturnType<typeof vi.fn>;
 }
 
 function stubClient(opts: { onDisk?: boolean; fetchBytes?: Uint8Array; fetchMime?: string } = {}): Stub {
@@ -55,14 +56,16 @@ function stubClient(opts: { onDisk?: boolean; fetchBytes?: Uint8Array; fetchMime
     uri: `https://generativelanguage.googleapis.com/v1beta/${ref.replace(/^.*\/(files\/)/, '$1')}`,
     mimeType: 'image/webp',
   }));
+  const readStoredMedia = vi.fn(async (_key: string) => ({ bytes: PNG_BYTES, mimeType: 'image/png' }));
   const client = {
     mediaSink: opts.onDisk === false ? createR2Sink({ put: async () => ({}) }, {}) : createDiskSink(),
     session,
     fetchRemoteImage,
     uploadBytes,
     getFile,
+    readStoredMedia,
   } as unknown as GeminiClient;
-  return { client, session, fetchRemoteImage, uploadBytes, getFile };
+  return { client, session, fetchRemoteImage, uploadBytes, getFile, readStoredMedia };
 }
 
 let dir: string;
@@ -130,6 +133,41 @@ describe('images_file_uris', () => {
 
     expect(s.getFile).toHaveBeenCalledTimes(1);
     expect(inputs).toHaveLength(2);
+  });
+});
+
+describe('images_r2_keys', () => {
+  it('reads the connector store server-side and yields an INLINE part — no signature, no conversation bytes', async () => {
+    const s = stubClient({ onDisk: false });
+    const key = 'up/ab12cd34ef56/2026-07-31/x-photo.png';
+    const { inputs, report } = await resolveImageInputs({ images_r2_keys: [key] }, s.client);
+
+    expect(s.readStoredMedia).toHaveBeenCalledWith(key);
+    expect(inputs).toEqual([{ base64: PNG_B64, mimeType: 'image/png' }]);
+    expect(report?.r2_keys).toEqual([{ r2_key: key, mime_type: 'image/png', bytes: PNG_BYTES.byteLength }]);
+    expect(s.fetchRemoteImage).not.toHaveBeenCalled();
+    expect(s.uploadBytes).not.toHaveBeenCalled();
+  });
+
+  it('reads a repeated key exactly ONCE within a call', async () => {
+    const s = stubClient({ onDisk: false });
+    const key = 'gen/ab12cd34ef56/2026-07-31/x-cat.png';
+    const { inputs } = await resolveImageInputs({ images_r2_keys: [key, key] }, s.client);
+
+    expect(s.readStoredMedia).toHaveBeenCalledTimes(1);
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toBe(inputs[1]);
+  });
+
+  it('propagates the store error verbatim — a swept key must name itself', async () => {
+    const s = stubClient({ onDisk: false });
+    s.readStoredMedia.mockRejectedValueOnce(new Error('No stored media for r2_key "gen/swept.png"'));
+    await expect(resolveImageInputs({ images_r2_keys: ['gen/swept.png'] }, s.client)).rejects.toThrow(/gen\/swept\.png/);
+  });
+
+  it('counts as an image input for the presence helpers', () => {
+    expect(hasImageInput({ images_r2_keys: ['gen/x.png'] })).toBe(true);
+    expect(() => requireImageInput({ images_r2_keys: ['gen/x.png'] })).not.toThrow();
   });
 });
 

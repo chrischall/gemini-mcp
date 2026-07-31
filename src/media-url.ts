@@ -28,14 +28,14 @@ export interface SecretStore {
   put(key: string, value: string): Promise<unknown>;
 }
 
-function base64UrlEncode(bytes: ArrayBuffer | Uint8Array): string {
+export function base64UrlEncode(bytes: ArrayBuffer | Uint8Array): string {
   const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   let binary = '';
   for (let i = 0; i < view.length; i++) binary += String.fromCharCode(view[i]);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function base64UrlDecode(text: string): Uint8Array {
+export function base64UrlDecode(text: string): Uint8Array {
   const padded = text.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(text.length / 4) * 4, '=');
   const binary = atob(padded);
   const out = new Uint8Array(binary.length);

@@ -7,6 +7,9 @@ import { geminiAuth, type GeminiProps } from './gemini-auth.js';
 import { createR2Sink, tenantIdFor } from './storage/media.js';
 import { createUploadHandler } from './upload-endpoint.js';
 import { createMediaHandler } from './media-endpoint.js';
+import { createSignedPutHandler } from './put-endpoint.js';
+import { createUploadUrlMinter, signUploadKey } from './upload-url.js';
+import { createR2Library } from './library.js';
 import { cleanupExpiredMedia, retentionMsFromDays, type CleanupBucket } from './media-cleanup.js';
 import { withConnectorOrigin } from './connector-origin.js';
 import { resolveSigningKey, signMediaKey, MEDIA_URL_TTL_MS } from './media-url.js';
@@ -17,6 +20,8 @@ import { registerInteractTools } from './tools/interact.js';
 import { registerMusicTools } from './tools/music.js';
 import { registerJobTools } from './tools/jobs.js';
 import { registerFileTools } from './tools/files.js';
+import { registerLibraryTools } from './tools/library.js';
+import { registerUploadUrlTools } from './tools/uploads.js';
 
 /**
  * The hosted connector: gemini-mcp over streamable HTTP for claude.ai, behind
@@ -49,6 +54,10 @@ export const CONNECTOR_TOOLS: Array<(server: McpServer, client: GeminiClient) =>
   registerMusicTools,
   registerJobTools,
   registerFileTools,
+  // Both are hosted-only capabilities and self-gate on the client (library /
+  // uploadUrls) — on stdio the registrars are simply not in the list.
+  registerLibraryTools,
+  registerUploadUrlTools,
 ];
 
 /**
@@ -81,6 +90,10 @@ function retentionMs(env: Env): number {
  */
 function buildClient(props: GeminiProps & { connectorOrigin?: string }, env: Env): GeminiClient {
   const urlTtlMs = Math.min(MEDIA_URL_TTL_MS, retentionMs(env));
+  // The bucket is shared by every connector account; the tenant component
+  // namespaces keys per API key and gates read/resign, so a disclosed
+  // r2_key cannot cross accounts.
+  const tenant = () => tenantIdFor(props.apiKey);
   return new GeminiClient({
     apiKey: props.apiKey,
     mediaSink: createR2Sink(env.MEDIA_BUCKET, {
@@ -89,11 +102,25 @@ function buildClient(props: GeminiProps & { connectorOrigin?: string }, env: Env
       sign: async (key, expiresAtMs) =>
         signMediaKey(await resolveSigningKey(env.MEDIA_URL_SECRET, env.OAUTH_KV), key, expiresAtMs),
       urlTtlMs,
-      // The bucket is shared by every connector account; the tenant component
-      // namespaces keys per API key and gates read/resign, so a disclosed
-      // r2_key cannot cross accounts.
-      tenant: () => tenantIdFor(props.apiKey),
+      // Signed uploads (`up/`) and the character library (`lib/`) are readable
+      // by the session that owns them; writes still go only under `gen/`.
+      readPrefixes: ['up', 'lib'],
+      // No per-persist override may mint a link outliving the retention sweep.
+      maxUrlTtlMs: retentionMs(env),
+      tenant,
     }),
+    // Saved characters/styles — permanent (the cleanup cron skips `lib/`).
+    library: createR2Library(env.MEDIA_BUCKET, { tenant }),
+    // Signed PUT upload URLs, pointing at this request's own origin — same
+    // zero-config origin story as the /media links.
+    uploadUrls: props.connectorOrigin
+      ? createUploadUrlMinter({
+          baseUrl: `${props.connectorOrigin}/put`,
+          sign: async (key, contentType, expiresAtMs) =>
+            signUploadKey(await resolveSigningKey(env.MEDIA_URL_SECRET, env.OAUTH_KV), key, contentType, expiresAtMs),
+          tenant,
+        })
+      : undefined,
   });
 }
 
@@ -155,6 +182,17 @@ const handler = new OAuthProvider({
       if (pathname === '/authorize') return handleAuthorize(request, env, geminiAuth);
       if (pathname.startsWith('/media/')) {
         return createMediaHandler({
+          bucket: env.MEDIA_BUCKET,
+          store: env.OAUTH_KV,
+          secret: env.MEDIA_URL_SECRET,
+        })(request);
+      }
+      // `/put` is `/media`'s mirror image: a signature-authorized WRITE, so a
+      // shell can upload a reference image with no bearer token. The URL is
+      // minted by the authenticated session (gemini_get_upload_url) and names
+      // one tenant-scoped key, one content type, and a ~10-minute deadline.
+      if (pathname.startsWith('/put/')) {
+        return createSignedPutHandler({
           bucket: env.MEDIA_BUCKET,
           store: env.OAUTH_KV,
           secret: env.MEDIA_URL_SECRET,

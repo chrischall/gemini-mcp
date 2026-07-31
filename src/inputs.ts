@@ -12,6 +12,7 @@ import { base64ToBytes, bytesToBase64 } from './bytes.js';
  * | `images_base64`    | the tool-call JSON  | **yes — ~14k tokens per JPEG** |
  * | `images_url`       | a public https URL  | no (the server fetches) |
  * | `images_file_uris` | Gemini Files API    | no (a `files/…` ref) |
+ * | `images_r2_keys`   | the connector's own store (hosted) | no (the server reads its bucket) |
  *
  * Everything downstream — `client.generate`, `client.interact`,
  * `generateVideo`, `generateMusic` — sees only {@link ImageInput}, so a new
@@ -38,6 +39,13 @@ export interface ImageInputArgs {
   images_url?: string[];
   /** Files API references (`files/<id>` or the full uri). */
   images_file_uris?: string[];
+  /**
+   * `r2_key`s of objects in the connector's OWN store — signed uploads
+   * (`PUT /put`) and previously generated media. Hosted connector only: the
+   * sink reads its own bucket (tenant-gated), so no bytes pass through the
+   * conversation and no signature is needed.
+   */
+  images_r2_keys?: string[];
   /** macOS clipboard (stdio only). */
   from_clipboard?: boolean;
 }
@@ -50,6 +58,8 @@ export interface ImageInputReport {
   file_uris?: string[];
   /** Local paths promoted to a Files API upload on their repeat reference. */
   auto_uploaded?: Array<{ path: string; file_uri: string; expires?: string }>;
+  /** Connector-store objects attached by `images_r2_keys`, in order. */
+  r2_keys?: Array<{ r2_key: string; mime_type: string; bytes: number }>;
 }
 
 export interface ResolvedImageInputs {
@@ -65,6 +75,7 @@ export function hasImageInput(args: ImageInputArgs): boolean {
       args.images_base64?.length ||
       args.images_url?.length ||
       args.images_file_uris?.length ||
+      args.images_r2_keys?.length ||
       args.from_clipboard,
   );
 }
@@ -132,6 +143,21 @@ export async function resolveImageInputs(args: ImageInputArgs, client: GeminiCli
     const input: ImageInput = { uri: file.uri, mimeType: file.mimeType };
     seenUris.set(ref, input);
     (report.file_uris ??= []).push(file.name);
+    inputs.push(input);
+  }
+
+  // 6. r2_keys — the connector reads its OWN store (tenant-gated), so a signed
+  // upload or an earlier generation becomes a reference without a fetch, a
+  // signature, or a byte in the conversation. Deduped within the call, same as
+  // URLs. `readStoredMedia` throws an actionable error for a swept/foreign key.
+  const seenKeys = new Map<string, ImageInput>();
+  for (const key of args.images_r2_keys ?? []) {
+    const hit = seenKeys.get(key);
+    if (hit) { inputs.push(hit); continue; }
+    const stored = await client.readStoredMedia(key);
+    const input: ImageInput = { base64: bytesToBase64(stored.bytes), mimeType: stored.mimeType };
+    seenKeys.set(key, input);
+    (report.r2_keys ??= []).push({ r2_key: key.trim(), mime_type: stored.mimeType, bytes: stored.bytes.byteLength });
     inputs.push(input);
   }
 
@@ -229,6 +255,7 @@ export function requireImageInput(args: ImageInputArgs): void {
   if (hasImageInput(args)) return;
   throw new McpToolError(
     'Provide at least one input image via `images_url` (an https URL the server fetches), `images_file_uris` ' +
-      '(from gemini_upload_file), `images` (a local path), `images_base64`, or `from_clipboard`.',
+      '(from gemini_upload_file), `images_r2_keys` (a hosted-connector upload or earlier generation), ' +
+      '`images` (a local path), `images_base64`, or `from_clipboard`.',
   );
 }

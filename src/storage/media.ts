@@ -26,6 +26,14 @@ export interface MediaItem {
 export interface PersistOpts {
   /** Local output directory (disk sink only; ignored where there is no disk). */
   output_dir?: string;
+  /**
+   * Signed-URL lifetime override for THIS persist (object-storage sinks only;
+   * the disk sink's paths never expire). Clamped to the sink's
+   * {@link R2SinkOptions.maxUrlTtlMs} so a link can never outlive the object
+   * behind it. Multi-image sets pass ~7 days here so a batch stays fetchable
+   * for the whole retention window instead of the default ~48h.
+   */
+  urlTtlMs?: number;
 }
 
 /**
@@ -154,8 +162,23 @@ export interface R2SinkOptions {
   sign?: (key: string, expiresAtMs: number) => Promise<string>;
   /** How long a signed URL stays valid; also reported as `expires_at`. */
   urlTtlMs?: number;
+  /**
+   * Hard ceiling on any signed URL's lifetime, including per-persist
+   * {@link PersistOpts.urlTtlMs} overrides. The Worker passes the retention
+   * window here (`MEDIA_TTL_DAYS`), so no override can mint a link that
+   * outlives the object the retention cron will sweep.
+   */
+  maxUrlTtlMs?: number;
   /** Key prefix (default `gen`). */
   prefix?: string;
+  /**
+   * Key prefixes {@link MediaSink.read}/{@link MediaSink.resign} will serve IN
+   * ADDITION to {@link prefix}, still tenant-gated (`<p>/<tenant>/…`). The
+   * Worker lists `up` (signed uploads) and `lib` (the character library) so an
+   * uploaded reference photo is readable by the session that uploaded it —
+   * writes still go only under {@link prefix}.
+   */
+  readPrefixes?: string[];
   /**
    * Per-account namespace folded into every key
    * (`<prefix>/<tenant>/<date>/…`) and ENFORCED by {@link MediaSink.read} /
@@ -184,7 +207,7 @@ export async function tenantIdFor(secret: string): Promise<string> {
 const KEY_PREFIX_DEFAULT = 'gen';
 
 /** Object-key-safe name: no slashes, no dot-segments, never empty. */
-function safeKeySegment(base: string): string {
+export function safeKeySegment(base: string): string {
   const cleaned = base
     .replace(/[^A-Za-z0-9._-]+/g, '-')
     .replace(/\.{2,}/g, '-')
@@ -208,19 +231,27 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
   const signedBase = opts.signedBaseUrl?.replace(/\/+$/, '');
   const ttlMs = opts.urlTtlMs ?? 0;
 
-  /** `<prefix>/` or `<prefix>/<tenant>/` — every key this sink may touch. */
-  let ownPrefixCache: Promise<string> | undefined;
-  const ownPrefix = () =>
-    (ownPrefixCache ??= (async () => {
-      const tenant = typeof opts.tenant === 'function' ? await opts.tenant() : opts.tenant;
-      return tenant ? `${prefix}/${tenant}/` : `${prefix}/`;
-    })());
+  const readPrefixes = [prefix, ...(opts.readPrefixes ?? [])];
+  let tenantCache: Promise<string | undefined> | undefined;
+  const tenantId = () =>
+    (tenantCache ??= Promise.resolve(typeof opts.tenant === 'function' ? opts.tenant() : opts.tenant));
+  /** `<prefix>/` or `<prefix>/<tenant>/` — where every WRITE goes. */
+  const ownPrefix = async () => {
+    const tenant = await tenantId();
+    return tenant ? `${prefix}/${tenant}/` : `${prefix}/`;
+  };
   /**
-   * Ownership gate for caller-supplied keys. A foreign key is refused without
-   * touching storage, so the refusal is indistinguishable from a swept object.
-   * With no tenant configured there is nothing to enforce (single-user shapes).
+   * Ownership gate for caller-supplied keys: this session's own namespace
+   * under any readable prefix (`gen/<tenant>/…`, plus e.g. `up/`/`lib/` on the
+   * Worker). A foreign key is refused without touching storage, so the refusal
+   * is indistinguishable from a swept object. With no tenant configured there
+   * is nothing to enforce (single-user shapes).
    */
-  const owned = async (key: string) => !opts.tenant || key.startsWith(await ownPrefix());
+  const owned = async (key: string) => {
+    if (!opts.tenant) return true;
+    const tenant = await tenantId();
+    return readPrefixes.some((p) => key.startsWith(`${p}/${tenant}/`));
+  };
 
   return {
     kind: 'r2',
@@ -241,14 +272,16 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       if (bucket.get && !(await bucket.get(key))) return undefined;
       return describe(key, now().getTime() + ttlMs);
     },
-    async persist(items, _opts) {
+    async persist(items, persistOpts) {
       // `mediaExt` is pure string work but lives in images.ts next to node:fs
       // imports; the dynamic import keeps that module off a Worker's eager
       // module graph.
       const { mediaExt } = await import('../images.js');
       const keyBase = await ownPrefix();
       const day = now().toISOString().slice(0, 10);
-      const expiresAtMs = now().getTime() + ttlMs;
+      // Per-persist TTL override, clamped so a link never outlives its object.
+      const effectiveTtlMs = Math.min(persistOpts.urlTtlMs ?? ttlMs, opts.maxUrlTtlMs ?? Infinity);
+      const expiresAtMs = now().getTime() + effectiveTtlMs;
       const refs: PersistedMedia[] = [];
       for (const it of items) {
         const key = `${keyBase}${day}/${randomId()}-${safeKeySegment(it.base)}.${mediaExt(it.mimeType)}`;
