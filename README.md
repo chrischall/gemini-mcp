@@ -87,6 +87,16 @@ progress), two guards make re-issuing safe and unnecessary:
 | `gemini_list_files` | List the files currently uploaded under this API key, with MIME types and expiry times |
 | `gemini_delete_file` | Delete an uploaded file before its ~48h expiry (confirm-gated) |
 | `gemini_sign_media` | *(hosted connector only)* Mint a fresh signed URL for generated media from its `r2_key` — an expired link is not a dead end |
+| `gemini_get_upload_url` | *(hosted connector only)* Mint a short-lived signed PUT URL so a shell can upload a reference image with no auth header; the PUT returns an `r2_key` usable in `images_r2_keys`, `gemini_save_character`, or `gemini_upload_file` |
+| `gemini_save_character` / `gemini_list_characters` / `gemini_delete_character` | *(hosted connector only)* Persistent per-account character library: save a reference image + description under a name, then pass `characters: ["name"]` on generation tools. No expiry |
+| `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | *(hosted connector only)* Persistent per-account style presets: a reusable prompt fragment (optionally with a reference image), applied by passing `style: "name"` on generation tools. No expiry |
+
+Generation tools also share three throughput/latency controls: `async: true` (return a `job_id`
+immediately), `max_wait_ms` (wait up to a budget, then hand back the `job_id` — fast results stay
+in-band, slow batches never trip the host timeout), and `idempotency_key` (a retry returns the
+recorded result instead of re-billing). On the hosted connector, a `gemini_image_set` result with
+more than one image also carries a **`bundle_url`** — one signed URL for a zip of every image in
+the set — and set links are signed for ~7 days instead of the default ~48h.
 
 ## Seeing your images (hosted connector)
 
@@ -150,7 +160,7 @@ safe form, and a markdown link is a reasonable enhancement where you know it ren
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MEDIA_TTL_DAYS` | `7` | Objects older than this are deleted by a daily cron (both the current `gen/` prefix and the legacy `media/` one) |
+| `MEDIA_TTL_DAYS` | `7` | Objects older than this are deleted by a daily cron — generated media (`gen/`, legacy `media/`) and signed uploads (`up/`). The character/style library (`lib/`) is exempt: saved entries never expire |
 | `MEDIA_URL_SECRET` | generated | HMAC key for `/media` links; rotate to revoke all outstanding URLs |
 | `MEDIA_PUBLIC_BASE_URL` | unset | Serve from R2 directly instead of the Worker route |
 
@@ -167,7 +177,9 @@ Every tool that takes a reference image — `gemini_image_generate`, `gemini_ima
 |---|---|---|
 | `images_url` (`master_images_url`) | the **server** downloads the https URL | none |
 | `images_file_uris` (`master_images_file_uris`) | a `files/<id>` reference, already uploaded | none |
+| `images_r2_keys` (`master_images_r2_keys`) | the connector reads its **own store** (hosted connector only) | none |
 | `images` | read off local disk (stdio builds only) | none |
+| `characters` / `style` | saved library entries, attached by name (hosted connector only) | none |
 | `images_base64` | **through the tool-call JSON** | **~14k tokens per JPEG** |
 
 `images_base64` is the fallback of last resort. It costs roughly 14k tokens per modest photo,
@@ -227,6 +239,53 @@ Then pass `"images_file_uris": ["files/abc123"]` to any image tool. The body is 
 straight to the Files API (nothing is buffered), so `Content-Length` is required — curl sets it
 automatically with `--data-binary @file`. Accepted content types are `image/*`, `video/*` and
 `audio/*`; an optional `?name=` or `X-Filename` header sets the display name.
+
+### Signed upload URLs — no token at all (hosted connector)
+
+`POST /upload` needs the MCP session's OAuth bearer token, which a sandboxed shell often does
+not have. `gemini_get_upload_url` closes that gap: the authenticated MCP session mints a
+short-lived (~10 min) signed **PUT** URL, and the shell uploads with zero auth headers — the
+signature in the URL is the authorization, mirroring how `/media` downloads work.
+
+```bash
+# 1. tool call: gemini_get_upload_url { filename: "photo.jpg", content_type: "image/jpeg" }
+#    → { upload_url, r2_key, expires_at, curl_hint }
+
+# 2. shell:
+curl -sS -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_URL"
+# → { "r2_key": "up/<tenant>/2026-07-31/ab12cd34-photo.jpg", "size_bytes": 812345, ... }
+```
+
+The signature covers one tenant-scoped object key, the declared content type (`image/*` only)
+and the expiry; uploads are capped at 15MB, enforced while reading the stream. The returned
+`r2_key` is then usable three ways: directly as `images_r2_keys` on any generation tool (the
+server reads its own bucket — no bytes in the conversation), permanently via
+`gemini_save_character`, or as a ~48h Files API reference via `gemini_upload_file({ r2_key })`.
+Uploads themselves follow the media retention schedule (`up/` prefix, default 7 days).
+
+### Character & style library (hosted connector)
+
+Recurring subjects and styles can be saved once, per account, with **no expiry** (the retention
+cron deliberately skips the library's `lib/` prefix):
+
+```jsonc
+// once:
+{ "tool": "gemini_save_character", "name": "finn",
+  "description": "6-year-old boy, curly red hair", "image_r2_key": "up/…/photo.jpg" }
+{ "tool": "gemini_save_style", "name": "bold-cartoon-sports",
+  "prompt_fragment": "bold cartoon style, thick outlines, saturated colors" }
+
+// afterwards, on any generation:
+{ "tool": "gemini_image_set",
+  "master_prompt": "Finn on a soccer field",
+  "scenes": ["kicking the ball", "celebrating a goal"],
+  "characters": ["finn"], "style": "bold-cartoon-sports" }
+```
+
+Naming a character attaches its saved reference image and weaves its description into the
+prompt; naming a style appends its fragment (and attaches its reference image, if it has one).
+`gemini_image_set` passes character references to the master *and every scene call*, which is
+what keeps the subject consistent across the set.
 
 ## Quick Start
 
