@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/chrischall/gemini-mcp/compare/v1.5.0...v1.5.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **client:** stop invoking fetch with a foreign receiver in the Files API upload ([#130](https://github.com/chrischall/gemini-mcp/issues/130)) ([71560cc](https://github.com/chrischall/gemini-mcp/commit/71560ccab1440cc7ee9ab4e758c937af38dcea5b))
+
 ## [1.5.0](https://github.com/chrischall/gemini-mcp/compare/v1.4.0...v1.5.0) (2026-08-01)
 
 
