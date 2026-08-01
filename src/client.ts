@@ -377,7 +377,18 @@ export class GeminiClient {
     // the job registry needs a way to re-sign from the stable r2_key.
     this.session.jobs.resigner = this.mediaSink;
     this.explicitApiKey = opts.apiKey?.trim() || undefined;
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    // Never store the global `fetch` raw on the instance: it would be invoked
+    // as `this.fetchImpl(...)`, handing native fetch this GeminiClient as its
+    // receiver — workerd rejects any non-global receiver with "Illegal
+    // invocation: function called with incorrect 'this' reference", while
+    // Node's fetch does not care, so only production could see the crash
+    // (it did: every hosted generation whose reference image took the >6MB
+    // Files-API promotion). The arrow pins the receiver to the global scope.
+    // An INJECTED impl is stored as-is, so tests can emulate workerd's
+    // receiver check and catch any `this.fetchImpl(...)` call site — which is
+    // also why call sites must alias it to a local before calling (see
+    // uploadToFilesApi). Guarded by tests/tools/hosted-reference-forms.test.ts.
+    this.fetchImpl = opts.fetchImpl ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
@@ -573,10 +584,14 @@ export class GeminiClient {
     contentLength: number,
   ): Promise<UploadedFile> {
     const key = this.requireKey();
+    // Local alias so the calls below carry NO receiver: `this.fetchImpl(...)`
+    // would hand native fetch this GeminiClient as `this`, which workerd
+    // rejects with an Illegal invocation (see the constructor note).
+    const doFetch = this.fetchImpl;
 
     // 1. start — establish the resumable upload session
     const startPath = '/files';
-    const startRes = await this.fetchImpl(`${UPLOAD_BASE_URL}${startPath}`, {
+    const startRes = await doFetch(`${UPLOAD_BASE_URL}${startPath}`, {
       method: 'POST',
       headers: {
         'x-goog-api-key': key,
@@ -609,7 +624,7 @@ export class GeminiClient {
     // falls back to chunked encoding, which the resumable protocol does not
     // accept (this half is docs-derived; see docs/GEMINI-API.md).
     const streaming = !(body instanceof Blob);
-    const upRes = await this.fetchImpl(uploadUrl, {
+    const upRes = await doFetch(uploadUrl, {
       method: 'POST',
       headers: {
         'X-Goog-Upload-Offset': '0',

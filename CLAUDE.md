@@ -659,6 +659,22 @@ caller to display them. `search_types` is Interactions-only; don't add it to
   boots the real `wrangler dev` bundle and is the only guard that can. Keep the
   stdio-only `.env` bootstrap in `src/dotenv.ts` (imported solely by
   `src/index.ts`), and keep `client.ts` side-effect-free.
+- **Never invoke a stored native function through a property
+  (`this.fetchImpl(...)`).** workerd's WebIDL receiver check rejects native
+  `fetch` called with any receiver other than the global scope — `Illegal
+  invocation: function called with incorrect 'this' reference` — while Node's
+  fetch doesn't care, so every node-pool test stays green and the crash is
+  production-only. It shipped once: `uploadToFilesApi` called
+  `this.fetchImpl(...)`, and every hosted generation whose reference image
+  took the >6MB Files-API promotion (r2_key uploads, saved characters, large
+  `images_url`) died on it, while text-only generation and library writes
+  worked — a baffling split until you know the receiver rule. The constructor
+  wraps the DEFAULT fetch in an arrow; call sites alias to a local first
+  (`const doFetch = this.fetchImpl`); an INJECTED impl is stored raw so tests
+  can emulate workerd's receiver check. Guarded by
+  `tests/tools/hosted-reference-forms.test.ts` — keep new `fetchImpl` call
+  sites receiver-free, and note the workers-pool suite CANNOT catch this
+  (vitest wraps workerd's global fetch in plain JS, which hides the check).
 - **No module-level mutable state in `src/` — it leaks across tenants.**
   Cloudflare shares ONE Worker isolate across many Durable Object instances, so
   a module-level `Map`/`let` is shared by every authenticated claude.ai session
