@@ -96,7 +96,9 @@ immediately), `max_wait_ms` (wait up to a budget, then hand back the `job_id` �
 in-band, slow batches never trip the host timeout), and `idempotency_key` (a retry returns the
 recorded result instead of re-billing). On the hosted connector, a `gemini_image_set` result with
 more than one image also carries a **`bundle_url`** — one signed URL for a zip of every image in
-the set — and set links are signed for ~7 days instead of the default ~48h.
+the set — and set links are signed for ~7 days instead of the default ~48h. (A set too large to
+zip safely in Worker memory skips the bundle and says so via `bundle_skipped`; the per-image
+links are unaffected.)
 
 ## Seeing your images (hosted connector)
 

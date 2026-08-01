@@ -207,13 +207,20 @@ export async function resolveCharacterRefs(
       }
     }
   }
+  // The style note is POSITIONAL, never "the final attached image": every
+  // caller appends the caller's own reference images (images / images_url /
+  // images_file_uris / images_r2_keys) AFTER these inputs, so a "final image"
+  // claim would point the model at the caller's last subject photo whenever
+  // characters/style are combined with direct references. These inputs always
+  // lead the attachment order, so index-based wording stays true regardless
+  // of what follows.
   const characterLine = described.length
     ? `Use the attached reference images for these characters, in order: ${described
         .map((d, i) => `(${i + 1}) ${d}`)
         .join('; ')}. Keep each character visually consistent with their reference image.` +
-      (styleImageAttached ? ' The final attached image is a style reference, not a character.' : '')
+      (styleImageAttached ? ` Attached image (${described.length + 1}) is a style reference, not a character.` : '')
     : styleImageAttached
-      ? 'The attached image is a style reference.'
+      ? 'The first attached image is a style reference.'
       : undefined;
   const meta: Record<string, unknown> = {};
   if (names?.length) meta.characters = names;
@@ -562,13 +569,26 @@ export async function emit(
 export const SET_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * Total DECODED size cap for bundling a set into a zip. Zipping holds roughly
+ * 4× the set's bytes at peak (the decoded copies, the STORE zip, and the
+ * zip's own base64) on top of the base64 strings the result already carries —
+ * and a Cloudflare isolate gets ~128MB, where an OOM kill is uncatchable, so
+ * the try/catch in {@link persistBundle} cannot honor its best-effort promise
+ * against it. The guard runs on sizes ESTIMATED from base64 length, before a
+ * single byte is decoded.
+ */
+export const BUNDLE_MAX_TOTAL_BYTES = 24 * 1024 * 1024;
+
+/**
  * Bundle a multi-image result into ONE downloadable zip and return the meta
  * fields to merge into the result (`bundle_url` + a detailed `bundle` object).
  *
  * Object-storage sinks only, and only when there is more than one image — the
  * point is turning N downloads into one `curl`, which a single image already
  * is. Best-effort: a result that cost N billable generations must never fail
- * because zipping or storing the bundle did.
+ * because zipping or storing the bundle did — but a skipped bundle is SAID
+ * (`bundle_skipped`), never silently absent, so the caller falls back to the
+ * per-image URLs instead of hunting for a field that will never appear.
  */
 export async function persistBundle(
   named: NamedImage[],
@@ -576,6 +596,14 @@ export async function persistBundle(
   base: string,
 ): Promise<Record<string, unknown>> {
   if (!sink || sink.persistsFiles || named.length < 2) return {};
+  const totalBytes = named.reduce((sum, n) => sum + Math.floor((n.image.base64.length * 3) / 4), 0);
+  if (totalBytes > BUNDLE_MAX_TOTAL_BYTES) {
+    return {
+      bundle_skipped:
+        `The set totals ~${wholeMb(totalBytes)}MB decoded, over the ${wholeMb(BUNDLE_MAX_TOTAL_BYTES)}MB bundling cap ` +
+        '(zipping peaks at ~4x that in Worker memory). Download the images individually via their media urls / curl_hints.',
+    };
+  }
   try {
     const { mediaExt } = await import('../images.js');
     const zip = buildZip(named.map((n) => ({ name: `${n.base}.${mediaExt(n.image.mimeType)}`, bytes: base64ToBytes(n.image.base64) })));
@@ -583,7 +611,9 @@ export async function persistBundle(
       [{ base: `${base}-bundle`, base64: bytesToBase64(zip), mimeType: 'application/zip' }],
       { urlTtlMs: SET_URL_TTL_MS },
     );
-    if (!persisted || persisted.unavailable) return {};
+    if (!persisted || persisted.unavailable) {
+      return { bundle_skipped: 'The bundle zip could not be stored; the images themselves are unaffected — download them individually via their media urls / curl_hints.' };
+    }
     return {
       bundle_url: persisted.ref,
       bundle: {
@@ -595,7 +625,7 @@ export async function persistBundle(
       },
     };
   } catch {
-    return {};
+    return { bundle_skipped: 'Bundling failed; the images themselves are unaffected — download them individually via their media urls / curl_hints.' };
   }
 }
 

@@ -61,6 +61,7 @@ async function hostedClient() {
   await library.saveCharacter({ name: 'finn', description: '6-year-old boy, curly red hair', image: { bytes: PNG_BYTES, mimeType: 'image/png' } });
   await library.saveCharacter({ name: 'bongo', description: 'a drum-playing monkey', image: { bytes: PNG_BYTES, mimeType: 'image/png' } });
   await library.saveStyle({ name: 'bold-cartoon-sports', promptFragment: 'bold cartoon style, thick outlines' });
+  await library.saveStyle({ name: 'watercolor', promptFragment: 'soft watercolor washes', image: { bytes: PNG_BYTES, mimeType: 'image/png' } });
   const client = new GeminiClient({
     mediaSink: createR2Sink(bucket, {
       signedBaseUrl: 'https://connector.example/media',
@@ -166,6 +167,46 @@ describe('gemini_image_generate with characters (hosted)', () => {
 
     expect(res.isError).toBeFalsy();
     expect(spy.mock.calls[0][0].images).toHaveLength(1);
+  });
+});
+
+describe('style reference wording when combined with direct reference images', () => {
+  // Every caller appends the caller's own reference images AFTER the library
+  // inputs, so the style note must be positional — "the final attached image"
+  // would mislabel the caller's last subject photo as the style reference.
+  it('names the style image by its position, not as "final"', async () => {
+    const { client } = await hostedClient();
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue(IMAGE);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
+    await h.callTool('gemini_image_generate', {
+      prompt: 'Finn painting a fence',
+      characters: ['finn'],
+      style: 'watercolor',
+      images_base64: [PNG_B64],
+    });
+    await h.close();
+
+    const call = spy.mock.calls[0][0];
+    // Order: finn (1), style image (2), then the caller's own reference.
+    expect(call.images).toHaveLength(3);
+    expect(call.prompt).toContain('Attached image (2) is a style reference, not a character');
+    expect(call.prompt).not.toContain('final attached image');
+  });
+
+  it('says "first attached image" for a style-only reference followed by direct refs', async () => {
+    const { client } = await hostedClient();
+    const spy = vi.spyOn(client, 'generate').mockResolvedValue(IMAGE);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
+    await h.callTool('gemini_image_generate', {
+      prompt: 'a fence',
+      style: 'watercolor',
+      images_base64: [PNG_B64],
+    });
+    await h.close();
+
+    const call = spy.mock.calls[0][0];
+    expect(call.images).toHaveLength(2);
+    expect(call.prompt).toContain('The first attached image is a style reference');
   });
 });
 
