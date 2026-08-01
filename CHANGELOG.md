@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.0](https://github.com/chrischall/gemini-mcp/compare/v1.4.0...v1.5.0) (2026-08-01)
+
+
+### Features
+
+* **connector:** signed upload URLs, persistent character/style library, and set bundles ([#126](https://github.com/chrischall/gemini-mcp/issues/126)) ([5a0157c](https://github.com/chrischall/gemini-mcp/commit/5a0157c8028c6b20642deb2cd275d0d35b3e9fa8))
+
+
+### Bug Fixes
+
+* **connector:** address PR [#126](https://github.com/chrischall/gemini-mcp/issues/126) review follow-ups (nits from [#127](https://github.com/chrischall/gemini-mcp/issues/127)) ([#129](https://github.com/chrischall/gemini-mcp/issues/129)) ([754dde1](https://github.com/chrischall/gemini-mcp/commit/754dde1903cd2c930fab70f47d0404789b673c7d))
+
 ## [1.4.0](https://github.com/chrischall/gemini-mcp/compare/v1.3.0...v1.4.0) (2026-07-30)
 
 
