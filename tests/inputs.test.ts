@@ -169,6 +169,27 @@ describe('images_r2_keys', () => {
     expect(hasImageInput({ images_r2_keys: ['gen/x.png'] })).toBe(true);
     expect(() => requireImageInput({ images_r2_keys: ['gen/x.png'] })).not.toThrow();
   });
+
+  it('promotes a LARGE stored object to a Files API reference instead of inlining it', async () => {
+    // Same rule as images_url: generateContent caps a whole request near 20MB,
+    // so a 7MB inline reference risks failing the request itself.
+    const big = new Uint8Array(6 * 1024 * 1024 + 1).fill(9);
+    const s = stubClient({ onDisk: false });
+    s.readStoredMedia.mockResolvedValueOnce({ bytes: big, mimeType: 'image/jpeg' });
+    const key = 'up/ab12cd34ef56/2026-07-31/x-huge.jpg';
+    const { inputs, report } = await resolveImageInputs({ images_r2_keys: [key] }, s.client);
+
+    expect(s.uploadBytes).toHaveBeenCalledTimes(1);
+    // Reference assertions, not deep equality — deep-comparing megabytes of
+    // typed array is what a test timeout looks like.
+    const [bytesArg, mimeArg, nameArg] = s.uploadBytes.mock.calls[0];
+    expect(bytesArg).toBe(big);
+    expect(mimeArg).toBe('image/jpeg');
+    expect(nameArg).toBe('x-huge.jpg');
+    expect(inputs[0].uri).toMatch(/files\/up1$/);
+    expect(inputs[0].base64).toBeUndefined();
+    expect(report?.r2_keys?.[0].file_uri).toBe('files/up1');
+  });
 });
 
 describe('input ordering', () => {

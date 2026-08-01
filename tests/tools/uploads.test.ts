@@ -59,10 +59,12 @@ describe('gemini_get_upload_url', () => {
     expect(String(body.hint)).toMatch(/gemini_save_character/);
   });
 
-  it('refuses non-image content types at the schema', async () => {
+  it('refuses non-raster content types at the schema — video and SVG alike', async () => {
     const h = await createTestHarness((s) => registerUploadUrlTools(s, stub()));
-    const res = await h.callTool('gemini_get_upload_url', { filename: 'a.mp4', content_type: 'video/mp4' });
-    expect(res.isError).toBe(true);
+    const video = await h.callTool('gemini_get_upload_url', { filename: 'a.mp4', content_type: 'video/mp4' });
+    expect(video.isError).toBe(true);
+    const svg = await h.callTool('gemini_get_upload_url', { filename: 'a.svg', content_type: 'image/svg+xml' });
+    expect(svg.isError).toBe(true);
     await h.close();
   });
 });

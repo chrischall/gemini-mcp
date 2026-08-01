@@ -3,7 +3,7 @@ import { textResult, McpToolError, readEnvVar } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { GeminiClient, GeneratedImage, GeneratedMedia, ImageInput } from '../client.js';
 import { resolveVideoPath, videoMimeType } from '../images.js';
-import { IMAGE_URL_MAX_BYTES } from '../fetch-image.js';
+import { IMAGE_URL_MAX_BYTES, IMAGE_INLINE_MAX_BYTES } from '../fetch-image.js';
 import { bytesToBase64, base64ToBytes, wholeMb } from '../bytes.js';
 import { createDiskSink, type MediaSink } from '../storage/media.js';
 import { downloadFilename } from '../media-endpoint.js';
@@ -162,6 +162,16 @@ export async function resolveCharacterRefs(
   }
   const inputs: ImageInput[] = [];
   const described: string[] = [];
+  // Same size rule as every other funnel: a large reference is promoted to a
+  // Files API reference rather than inlined — generateContent caps a whole
+  // request near 20MB, and a crew of full-resolution characters would hit it.
+  const toInput = async (image: { bytes: Uint8Array; mimeType: string }, displayName: string): Promise<ImageInput> => {
+    if (image.bytes.byteLength <= IMAGE_INLINE_MAX_BYTES) {
+      return { base64: bytesToBase64(image.bytes), mimeType: image.mimeType };
+    }
+    const uploaded = await client.uploadBytes(image.bytes, image.mimeType, displayName);
+    return { uri: uploaded.uri, mimeType: uploaded.mimeType };
+  };
   for (const name of names ?? []) {
     const record = await library.getCharacter(name);
     const image = record && (await library.readCharacterImage(name));
@@ -173,7 +183,7 @@ export async function resolveCharacterRefs(
           'Save one with gemini_save_character.',
       );
     }
-    inputs.push({ base64: bytesToBase64(image.bytes), mimeType: image.mimeType });
+    inputs.push(await toInput(image, name));
     described.push(`${record.name} — ${record.description}`);
   }
   let styleFragment: string | undefined;
@@ -192,7 +202,7 @@ export async function resolveCharacterRefs(
     if (record.image_key) {
       const image = await library.readStyleImage(styleName);
       if (image) {
-        inputs.push({ base64: bytesToBase64(image.bytes), mimeType: image.mimeType });
+        inputs.push(await toInput(image, styleName));
         styleImageAttached = true;
       }
     }

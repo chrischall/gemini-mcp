@@ -58,8 +58,10 @@ export interface ImageInputReport {
   file_uris?: string[];
   /** Local paths promoted to a Files API upload on their repeat reference. */
   auto_uploaded?: Array<{ path: string; file_uri: string; expires?: string }>;
-  /** Connector-store objects attached by `images_r2_keys`, in order. */
-  r2_keys?: Array<{ r2_key: string; mime_type: string; bytes: number }>;
+  /** Connector-store objects attached by `images_r2_keys`, in order.
+   * `file_uri` is present when the object was large enough to be promoted to
+   * a Files API reference instead of inlined. */
+  r2_keys?: Array<{ r2_key: string; mime_type: string; bytes: number; file_uri?: string }>;
 }
 
 export interface ResolvedImageInputs {
@@ -149,15 +151,31 @@ export async function resolveImageInputs(args: ImageInputArgs, client: GeminiCli
   // 6. r2_keys — the connector reads its OWN store (tenant-gated), so a signed
   // upload or an earlier generation becomes a reference without a fetch, a
   // signature, or a byte in the conversation. Deduped within the call, same as
-  // URLs. `readStoredMedia` throws an actionable error for a swept/foreign key.
+  // URLs, and — also same as URLs — a large object is promoted to a Files API
+  // reference rather than inlined, because `generateContent` caps a whole
+  // request near 20MB and two large inline references would fail it.
+  // `readStoredMedia` throws an actionable error for a swept/foreign key.
   const seenKeys = new Map<string, ImageInput>();
   for (const key of args.images_r2_keys ?? []) {
     const hit = seenKeys.get(key);
     if (hit) { inputs.push(hit); continue; }
     const stored = await client.readStoredMedia(key);
-    const input: ImageInput = { base64: bytesToBase64(stored.bytes), mimeType: stored.mimeType };
+    const entry: { r2_key: string; mime_type: string; bytes: number; file_uri?: string } = {
+      r2_key: key.trim(),
+      mime_type: stored.mimeType,
+      bytes: stored.bytes.byteLength,
+    };
+    (report.r2_keys ??= []).push(entry);
+    let input: ImageInput;
+    if (stored.bytes.byteLength <= IMAGE_INLINE_MAX_BYTES) {
+      input = { base64: bytesToBase64(stored.bytes), mimeType: stored.mimeType };
+    } else {
+      const displayName = key.trim().split('/').pop() || 'image';
+      const uploaded = await client.uploadBytes(stored.bytes, stored.mimeType, displayName);
+      entry.file_uri = uploaded.name;
+      input = { uri: uploaded.uri, mimeType: uploaded.mimeType };
+    }
     seenKeys.set(key, input);
-    (report.r2_keys ??= []).push({ r2_key: key.trim(), mime_type: stored.mimeType, bytes: stored.bytes.byteLength });
     inputs.push(input);
   }
 

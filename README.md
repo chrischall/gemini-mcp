@@ -256,8 +256,10 @@ curl -sS -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_
 # → { "r2_key": "up/<tenant>/2026-07-31/ab12cd34-photo.jpg", "size_bytes": 812345, ... }
 ```
 
-The signature covers one tenant-scoped object key, the declared content type (`image/*` only)
-and the expiry; uploads are capped at 15MB, enforced while reading the stream. The returned
+The signature covers one tenant-scoped object key, the declared content type and the expiry;
+uploads are capped at 15MB, enforced while reading the stream. Only **raster** image types are
+accepted (jpeg/png/webp/gif/avif/heic/heif/bmp/tiff) — SVG is deliberately refused, because an
+SVG is a scriptable document and `/media` serves from the connector's own origin. The returned
 `r2_key` is then usable three ways: directly as `images_r2_keys` on any generation tool (the
 server reads its own bucket — no bytes in the conversation), permanently via
 `gemini_save_character`, or as a ~48h Files API reference via `gemini_upload_file({ r2_key })`.

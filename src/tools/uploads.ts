@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, textResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
-import { UPLOAD_MAX_BYTES } from '../upload-url.js';
+import { UPLOAD_MAX_BYTES, RASTER_IMAGE_TYPE_PATTERN } from '../upload-url.js';
 import { wholeMb } from '../bytes.js';
 
 /**
@@ -45,8 +45,10 @@ export function registerUploadUrlTools(server: McpServer, client: GeminiClient):
           .describe('Filename of the upload (e.g. "finn.jpg") — sanitized into the object key and the suggested curl command'),
         content_type: z
           .string()
-          .regex(/^image\/[\w.+-]+$/i, 'must be an image MIME type like image/jpeg')
-          .describe('MIME type of the bytes that will be PUT (image/* only). The PUT must send exactly this Content-Type.'),
+          // Raster only — image/svg+xml is a scriptable document and /media
+          // serves from the connector's own origin (see RASTER_IMAGE_TYPE_PATTERN).
+          .regex(RASTER_IMAGE_TYPE_PATTERN, 'must be a raster image MIME type like image/jpeg (SVG is not accepted)')
+          .describe('MIME type of the bytes that will be PUT — raster images only (jpeg/png/webp/gif/avif/heic/heif/bmp/tiff; not SVG). The PUT must send exactly this Content-Type.'),
       },
     },
     async (args) => {

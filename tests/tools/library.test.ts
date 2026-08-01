@@ -110,6 +110,23 @@ describe('gemini_save_character', () => {
     await h.close();
   });
 
+  it('refuses an SVG reference image — the library serves from the connector origin', async () => {
+    const client = stub({
+      fetchRemoteImage: vi.fn(async (url: string) => ({
+        bytes: PNG_BYTES, mimeType: 'image/svg+xml', size: PNG_BYTES.byteLength, finalUrl: url, requestedUrl: url,
+      })),
+      readStoredMedia: vi.fn(async () => ({ bytes: PNG_BYTES, mimeType: 'image/svg+xml' })),
+    });
+    const h = await createTestHarness((s) => registerLibraryTools(s, client));
+    for (const source of [{ image_url: 'https://x.example/a.svg' }, { image_r2_key: 'up/aaaaaaaaaaaa/a.svg' }]) {
+      const res = await h.callTool('gemini_save_character', { name: 'evil', description: 'd', ...source });
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toMatch(/raster images only/);
+    }
+    expect(await client.library!.getCharacter('evil')).toBeUndefined();
+    await h.close();
+  });
+
   it('rejects names outside the slug charset at the schema', async () => {
     const client = stub();
     const h = await createTestHarness((s) => registerLibraryTools(s, client));

@@ -6,7 +6,7 @@ import { ChainedRequest404Error, type GeminiClient } from '../client.js';
 import { slugify, baseName, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
+import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -137,6 +137,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         timeout_ms: timeoutMsSchema,
         idempotency_key: idempotencyKeySchema,
         async: asyncSchema,
+        max_wait_ms: maxWaitMsSchema,
         from_clipboard: z
           .boolean()
           .optional()
@@ -191,7 +192,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         images_url: args.images_url, images_file_uris: args.images_file_uris,
         video_url: args.video_url, video_path: args.video_path,
       });
-      return client.session.jobs.dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async () => {
         const { inputs, report } = await resolveImageInputs({ ...args, images }, client);
         const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args, client));
         const callOpts = {

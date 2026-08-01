@@ -169,6 +169,28 @@ describe('gemini_image_generate with characters (hosted)', () => {
   });
 });
 
+describe('large character references', () => {
+  it('promotes a >6MB saved reference to a Files API upload instead of inlining it', async () => {
+    const { client } = await hostedClient();
+    const big = new Uint8Array(7 * 1024 * 1024).fill(7);
+    await client.library!.saveCharacter({ name: 'jumbo', description: 'an elephant', image: { bytes: big, mimeType: 'image/png' } });
+    const uploadBytes = vi.spyOn(client, 'uploadBytes').mockResolvedValue({
+      name: 'files/big1',
+      uri: 'https://generativelanguage.googleapis.com/v1beta/files/big1',
+      mimeType: 'image/png',
+    } as never);
+    const generate = vi.spyOn(client, 'generate').mockResolvedValue(IMAGE);
+    const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
+    await h.callTool('gemini_image_generate', { prompt: 'Jumbo at the beach', characters: ['jumbo'] });
+    await h.close();
+
+    expect(uploadBytes).toHaveBeenCalledTimes(1);
+    const input = (generate.mock.calls[0][0].images as Array<{ uri?: string; base64?: string }>)[0];
+    expect(input.uri).toMatch(/files\/big1$/);
+    expect(input.base64).toBeUndefined();
+  });
+});
+
 describe('characters on a server with no library (stdio)', () => {
   it('says the library is hosted-only and names the direct alternatives', async () => {
     const client = new GeminiClient({});

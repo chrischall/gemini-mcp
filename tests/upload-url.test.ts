@@ -103,15 +103,24 @@ describe('buildUploadUrl', () => {
 });
 
 describe('acceptableUploadType', () => {
-  it('accepts image types and refuses everything else', () => {
+  it('accepts raster image types and refuses everything else', () => {
     expect(acceptableUploadType('image/jpeg')).toBe(true);
     expect(acceptableUploadType('image/png')).toBe(true);
     expect(acceptableUploadType('IMAGE/WebP')).toBe(true);
+    expect(acceptableUploadType('image/heic')).toBe(true);
     expect(acceptableUploadType('video/mp4')).toBe(false);
     expect(acceptableUploadType('text/html')).toBe(false);
     expect(acceptableUploadType('application/octet-stream')).toBe(false);
     expect(acceptableUploadType('image/jpeg; charset=utf-8')).toBe(false);
     expect(acceptableUploadType('')).toBe(false);
+  });
+
+  it('refuses SVG — a scriptable document served from the connector origin is stored XSS', () => {
+    expect(acceptableUploadType('image/svg+xml')).toBe(false);
+    expect(acceptableUploadType('image/SVG+XML')).toBe(false);
+    // And any other non-raster "image" documents that might sneak in.
+    expect(acceptableUploadType('image/svg')).toBe(false);
+    expect(acceptableUploadType('image/xml+svg')).toBe(false);
   });
 });
 
@@ -152,7 +161,8 @@ describe('createUploadUrlMinter', () => {
     expect(minted.key.startsWith('up/feedface0000/')).toBe(true);
   });
 
-  it('refuses a non-image content type at mint time', async () => {
-    await expect(minter().mint('a.mp4', 'video/mp4')).rejects.toThrow(/image\/\*/);
+  it('refuses non-raster content types at mint time, SVG included', async () => {
+    await expect(minter().mint('a.mp4', 'video/mp4')).rejects.toThrow(/raster image type/);
+    await expect(minter().mint('a.svg', 'image/svg+xml')).rejects.toThrow(/SVG/);
   });
 });

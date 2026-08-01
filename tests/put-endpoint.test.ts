@@ -117,6 +117,16 @@ describe('createSignedPutHandler', () => {
     expect(bucket.puts).toHaveLength(0);
   });
 
+  it('refuses an SVG content type outright with 415 — even correctly signed', async () => {
+    // Belt and braces: the mint tool already refuses SVG, but the endpoint
+    // must not trust that — a signature over image/svg+xml (e.g. minted by an
+    // older deploy) still may not store a scriptable document.
+    const { h, bucket } = handler();
+    const res = await h(putRequest(await signedUrl(KEY, 'image/svg+xml'), { contentType: 'image/svg+xml' }));
+    expect(res.status).toBe(415);
+    expect(bucket.puts).toHaveLength(0);
+  });
+
   it('refuses a Content-Type that does not match the signed one with 415', async () => {
     const { h, bucket } = handler();
     const res = await h(putRequest(await signedUrl(), { contentType: 'image/png' }));
@@ -178,7 +188,7 @@ describe('wellFormedUploadKey', () => {
     expect(wellFormedUploadKey('gen/tenant/x.jpg')).toBe(false);
     expect(wellFormedUploadKey('up/../x')).toBe(false);
     expect(wellFormedUploadKey('up//x')).toBe(false);
-    expect(wellFormedUploadKey('up/a b')).toBe(false);
+    expect(wellFormedUploadKey('up/a\u0000b')).toBe(false);
     expect(wellFormedUploadKey('up/a b')).toBe(false);
     expect(wellFormedUploadKey('up/a\nb')).toBe(false);
     expect(wellFormedUploadKey('up')).toBe(false);

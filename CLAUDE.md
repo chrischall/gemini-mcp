@@ -105,8 +105,9 @@ src/
                   #   up/<tenant>/…). Backs gemini_get_upload_url
   put-endpoint.ts # PUT /put/<key> — the other no-OAuth route, /media's mirror:
                   #   signature-authorized WRITE so a shell can upload a
-                  #   reference image with zero auth headers. image/* only,
-                  #   15MB cap enforced while reading, CT must match the signed one
+                  #   reference image with zero auth headers. RASTER images only
+                  #   (never SVG — stored XSS), 15MB cap enforced while reading,
+                  #   CT must match the signed one
   library.ts      # per-account character/style library under lib/<tenant>/ in
                   #   R2 — records + copied image bytes, NO expiry (cleanup
                   #   skips lib/). createR2Library; gates the library tools
@@ -382,10 +383,17 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
   mirror image, a signature-authorized WRITE. `gemini_get_upload_url` (gated on
   `client.uploadUrls`, built per session in `buildClient`) mints a ~10-min URL
   whose signature covers the method, one `up/<tenant>/…` key and the declared
-  `image/*` content type; the payload shape deliberately differs from the media
-  GET payload so neither signature can be replayed as the other
+  content type — **raster image types only** (`RASTER_IMAGE_TYPE_PATTERN`;
+  never widen it back to `image/*`, which admitted `image/svg+xml` — an SVG is
+  a scriptable document, and `/media` serves from the same origin as the OAuth
+  pages, i.e. stored XSS; the library's `image_url`/`image_r2_key` sources
+  enforce the same gate, and `/media` additionally sends a no-script
+  CSP+sandbox as defense in depth). The payload shape deliberately differs
+  from the media GET payload so neither signature can be replayed as the other
   (`src/upload-url.ts` documents the argument — keep the endpoint's key/CT
-  charset checks, they are what make it sound). 15MB cap enforced while
+  charset checks, they are what make it sound; and keep the NUL separators as
+  \u0000 ESCAPES, never literal bytes — a literal NUL makes git treat the file
+  as binary, guarded by tests/source-hygiene.test.ts). 15MB cap enforced while
   reading the stream, never trusted from Content-Length. This is the
   zero-auth-header upload path for sandboxed shells that hold no OAuth token.
 - **The character/style library (`src/library.ts`) is per-tenant and immortal.**

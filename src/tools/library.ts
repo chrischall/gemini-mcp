@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, textResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { LIBRARY_NAME_PATTERN, type CharacterLibrary, type LibraryImage } from '../library.js';
+import { acceptableUploadType } from '../upload-url.js';
 import { withProgressHeartbeat } from './shared.js';
 import { previewUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -42,12 +43,24 @@ async function resolveLibraryImage(
   if (args.image_r2_key && args.image_url) {
     throw new McpToolError('Provide `image_r2_key` OR `image_url`, not both.');
   }
+  // Raster only, on BOTH sources: library images can be re-signed and served
+  // from /media (the connector's own origin), so a scriptable SVG saved here
+  // would be stored XSS — the same gate the signed-upload path enforces.
+  const rasterOnly = (image: LibraryImage): LibraryImage => {
+    if (!acceptableUploadType(image.mimeType)) {
+      throw new McpToolError(
+        `The reference image is "${image.mimeType}", but the library accepts raster images only ` +
+          '(jpeg/png/webp/gif/avif/heic/heif/bmp/tiff — not SVG, which can carry scripts). Convert it to PNG or JPEG first.',
+      );
+    }
+    return image;
+  };
   if (args.image_r2_key) {
-    return client.readStoredMedia(args.image_r2_key);
+    return rasterOnly(await client.readStoredMedia(args.image_r2_key));
   }
   if (args.image_url) {
     const fetched = await client.fetchRemoteImage(args.image_url);
-    return { bytes: fetched.bytes, mimeType: fetched.mimeType };
+    return rasterOnly({ bytes: fetched.bytes, mimeType: fetched.mimeType });
   }
   if (required) {
     throw new McpToolError(
