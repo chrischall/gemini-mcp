@@ -408,6 +408,11 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
   `bundle_url` (+ `bundle.r2_key`/`curl_hint`), and signs set media + bundle
   for ~7 days (`SET_URL_TTL_MS`, clamped by the sink's `maxUrlTtlMs` to the
   retention window). Idempotent replays re-sign `bundle_url` too (jobs.ts).
+  Bundling is best-effort but never *silently* absent: a set estimated over
+  `BUNDLE_MAX_TOTAL_BYTES` (~24MB decoded — zipping peaks at ~4× that, and a
+  Worker-isolate OOM is uncatchable) is skipped before any decode, and every
+  skip (size, storage failure) is surfaced as `bundle_skipped` so callers
+  fall back to the per-image URLs.
 - **`max_wait_ms`** (all generation tools, `JobRegistry.dispatch({ waitMs })`)
   waits up to the budget then returns the job handle — the middle ground
   between sync and `async: true`. Not part of the fingerprint.

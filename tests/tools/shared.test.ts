@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pickSeed, emit, IMAGE_SIZES, sharedImageSchema, withProgressHeartbeat, timeoutRiskHint } from '../../src/tools/shared.js';
+import { pickSeed, emit, IMAGE_SIZES, sharedImageSchema, withProgressHeartbeat, timeoutRiskHint, persistBundle, BUNDLE_MAX_TOTAL_BYTES } from '../../src/tools/shared.js';
+import type { MediaSink } from '../../src/storage/media.js';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
@@ -294,5 +295,38 @@ describe('emit with meta', () => {
     const named = [{ image: { base64: PNG, mimeType: 'image/png' }, base: 'test' }];
     const res = await emit(named, { inline: true });
     expect(res.content[0].type).toBe('image');
+  });
+});
+
+describe('persistBundle size guard', () => {
+  const objectSink = (persist: MediaSink['persist']): MediaSink =>
+    ({ kind: 'r2', persistsFiles: false, persist }) as MediaSink;
+
+  it('skips an over-cap set BEFORE decoding and says so instead of returning {} silently', async () => {
+    // Two images that together estimate just over the cap. The guard works on
+    // base64 LENGTH, so no decode (and no 4x memory peak) ever happens.
+    const half = 'A'.repeat(Math.ceil((BUNDLE_MAX_TOTAL_BYTES / 2) * (4 / 3)) + 8);
+    const persist = vi.fn();
+    const named = [1, 2].map((i) => ({ base: `img-${i}`, image: { base64: half, mimeType: 'image/png' } }));
+    const out = await persistBundle(named, objectSink(persist), 'set');
+    expect(out.bundle_url).toBeUndefined();
+    expect(String(out.bundle_skipped)).toContain('bundling cap');
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('surfaces bundle_skipped when storing the zip throws, instead of a silent {}', async () => {
+    const persist = vi.fn().mockRejectedValue(new Error('boom'));
+    const named = [1, 2].map((i) => ({ base: `img-${i}`, image: { base64: PNG, mimeType: 'image/png' } }));
+    const out = await persistBundle(named, objectSink(persist), 'set');
+    expect(out.bundle_url).toBeUndefined();
+    expect(String(out.bundle_skipped)).toContain('download them individually');
+  });
+
+  it('still returns {} where a bundle was never promised (disk sink / single image)', async () => {
+    const persist = vi.fn();
+    const single = [{ base: 'img', image: { base64: PNG, mimeType: 'image/png' } }];
+    expect(await persistBundle(single, objectSink(persist), 'set')).toEqual({});
+    expect(await persistBundle(single, undefined, 'set')).toEqual({});
+    expect(persist).not.toHaveBeenCalled();
   });
 });

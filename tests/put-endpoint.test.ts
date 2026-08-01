@@ -124,6 +124,11 @@ describe('createSignedPutHandler', () => {
     const { h, bucket } = handler();
     const res = await h(putRequest(await signedUrl(KEY, 'image/svg+xml'), { contentType: 'image/svg+xml' }));
     expect(res.status).toBe(415);
+    // The refusal must not contradict itself: SVG *is* image/*, so the message
+    // names the raster-only gate instead of claiming "image/* only".
+    const body = (await res.json()) as { error: string; hint: string };
+    expect(body.error).toContain('raster');
+    expect(body.error).not.toContain('image/*');
     expect(bucket.puts).toHaveLength(0);
   });
 

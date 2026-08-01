@@ -17,7 +17,9 @@ import { wholeMb } from './bytes.js';
  *  - the key must be a well-formed `up/…` key (charset-checked before the
  *    signature is even verified — a control character in a crafted key is how
  *    a cross-protocol signature confusion would have to start);
- *  - Content-Type must match the signed one exactly, and must be image/*;
+ *  - Content-Type must match the signed one exactly, and must be a raster
+ *    image type (never SVG, which can carry scripts — see
+ *    RASTER_IMAGE_TYPE_PATTERN in upload-url.ts);
  *  - Content-Length is required and capped, and the cap is re-enforced while
  *    reading the stream — a client can under-declare, so the declared length
  *    is a fast rejection, not the enforcement.
@@ -96,7 +98,12 @@ export function createSignedPutHandler(env: PutEndpointEnv, basePath = '/put/') 
 
     const ct = url.searchParams.get('ct');
     if (ct && !acceptableUploadType(ct)) {
-      return fail(415, `Unsupported content type "${ct}" — signed uploads accept image/* only.`, 'Mint the URL with an image content_type (e.g. image/jpeg).');
+      return fail(
+        415,
+        `Unsupported content type "${ct}" — signed uploads accept raster image types only ` +
+          '(jpeg/png/webp/gif/avif/heic/heif/bmp/tiff; not SVG, which can carry scripts).',
+        'Mint the URL with a raster image content_type (e.g. image/jpeg).',
+      );
     }
 
     const now = env.now?.() ?? Date.now();
