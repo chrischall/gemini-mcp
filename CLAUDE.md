@@ -18,6 +18,13 @@ Interactions endpoint** as `gemini_interact` — the tool naming is media-first
 (`gemini_<media>_<action>`). Realtime Lyria (WebSocket) is intentionally
 **not** implemented (see the video/music design spec).
 
+The hosted connector additionally serves: `gemini_get_upload_url` (signed PUT
+upload URLs — zero-auth-header uploads from a shell), a persistent per-account
+character/style library (`gemini_save/list/delete_character`/`_style`, applied
+via `characters`/`style` params on the generation tools), `images_r2_keys`
+inputs, `max_wait_ms` wait-then-hand-off on generation tools, and a `bundle_url`
+zip on multi-image `gemini_image_set` results.
+
 Auth is a Google **API key** (`GEMINI_API_KEY`) sent in the `x-goog-api-key`
 header — Gemini does **not** use `Authorization: Bearer`. Because the model is
 baked into the URL path (`/models/{model}:generateContent`) rather than the body,
@@ -89,10 +96,25 @@ src/
                   #   is the capability flag every disk-only feature gates on
   media-url.ts    # HMAC signing/verification for /media links + the zero-config
                   #   secret (MEDIA_URL_SECRET else generated once into OAUTH_KV)
-  media-endpoint.ts # GET /media/<key> — streams an object out of R2. The ONLY
-                  #   route outside OAuth: a browser opening a link has no
+  media-endpoint.ts # GET /media/<key> — streams an object out of R2. One of the
+                  #   TWO routes outside OAuth: a browser opening a link has no
                   #   bearer token, so the signature is the authorization
-  media-cleanup.ts# the retention sweep the daily cron runs (MEDIA_TTL_DAYS)
+  upload-url.ts   # signed PUT upload URLs: sign/verify (same secret as /media,
+                  #   DIFFERENT payload shape so signatures can't cross
+                  #   protocols) + createUploadUrlMinter (10-min TTL, keys
+                  #   up/<tenant>/…). Backs gemini_get_upload_url
+  put-endpoint.ts # PUT /put/<key> — the other no-OAuth route, /media's mirror:
+                  #   signature-authorized WRITE so a shell can upload a
+                  #   reference image with zero auth headers. RASTER images only
+                  #   (never SVG — stored XSS), 15MB cap enforced while reading,
+                  #   CT must match the signed one
+  library.ts      # per-account character/style library under lib/<tenant>/ in
+                  #   R2 — records + copied image bytes, NO expiry (cleanup
+                  #   skips lib/). createR2Library; gates the library tools
+  zip.ts          # STORE-only zip writer (crc32) — bundles a multi-image set
+                  #   into the one-curl bundle_url. Pure, Worker-safe
+  media-cleanup.ts# the retention sweep the daily cron runs (MEDIA_TTL_DAYS);
+                  #   sweeps gen/, legacy media/ AND up/ — NEVER lib/
   worker.ts       # Cloudflare Worker entry — createConnector(); NOT in the tsc
                   #   build (wrangler compiles it). See docs/DEPLOY-CONNECTOR.md
   gemini-auth.ts  # ConnectorAuth for the hosted connector: one API-key field,
@@ -119,6 +141,10 @@ src/
     music.ts      # gemini_music_generate (Lyria, Interactions) (registerMusicTools)
     jobs.ts       # gemini_get_result (async poll)            (registerJobTools)
     files.ts      # gemini_upload_file / _list_files / _delete_file (registerFileTools)
+    library.ts    # gemini_save/list/delete_character + _style (registerLibraryTools)
+                  #   — self-gates on client.library (hosted only)
+    uploads.ts    # gemini_get_upload_url                    (registerUploadUrlTools)
+                  #   — self-gates on client.uploadUrls (hosted only)
     shared.ts     # ASPECT_RATIOS, IMAGE_SIZES, sharedImageSchema, pickSeed,
                   #   buildMeta, and emit() (inline-vs-write-to-disk result wrapper)
 
@@ -176,6 +202,9 @@ shared util, configured non-Bearer.
 | `gemini_list_files` | `tools/files.ts` | `GET /v1beta/files?pageSize=N` | read |
 | `gemini_delete_file` | `tools/files.ts` | `DELETE /v1beta/files/{id}` | write (confirm-gated) |
 | `gemini_sign_media` | `tools/files.ts` | none (re-signs an R2 key via `mediaSink.resign`) — **hosted connector only**, not registered on disk sinks | read |
+| `gemini_get_upload_url` | `tools/uploads.ts` | none (mints a signed `PUT /put/<key>` URL, ~10 min TTL) — **hosted only**, gated on `client.uploadUrls` | read |
+| `gemini_save_character` / `gemini_list_characters` / `gemini_delete_character` | `tools/library.ts` | R2 `lib/<tenant>/characters/…` (no expiry) — **hosted only**, gated on `client.library`; delete confirm-gated | write / read / write |
+| `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | `tools/library.ts` | R2 `lib/<tenant>/styles/…` (no expiry) — **hosted only** | write / read / write |
 
 **Video & music reuse the interact plumbing.** `gemini_video_generate` (omni) and
 `gemini_music_generate` (Lyria) ride the **same `/v1beta/interactions` endpoint**
@@ -296,7 +325,8 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
   Worker, which always supplies its own origin), the result carries an explicit
   `media_url_unavailable` rather than a bare object key that reads like a
   filename — say it plainly instead of shipping something that looks openable.
-- **`/media` is the one route outside OAuth, on purpose.** A browser opening a
+- **`/media` is one of exactly two routes outside OAuth, on purpose** (the
+  other is `PUT /put/<key>`, below). A browser opening a
   link, a link-preview fetcher and a `curl` in a sandbox all carry no bearer
   token; requiring one recreates the exact problem the route exists to solve.
   The expiring HMAC signature is the authorization — it names one object, and
@@ -349,6 +379,38 @@ never a shared singleton. A Worker has no filesystem, which drives everything el
 - **`gemini_video_generate` is deliberately NOT registered** on the Worker: MCP
   has no inline video content block, so video output is disk-only. Audio does
   have one, so music is served.
+- **`PUT /put/<key>` is the second (and last) no-OAuth route** — `/media`'s
+  mirror image, a signature-authorized WRITE. `gemini_get_upload_url` (gated on
+  `client.uploadUrls`, built per session in `buildClient`) mints a ~10-min URL
+  whose signature covers the method, one `up/<tenant>/…` key and the declared
+  content type — **raster image types only** (`RASTER_IMAGE_TYPE_PATTERN`;
+  never widen it back to `image/*`, which admitted `image/svg+xml` — an SVG is
+  a scriptable document, and `/media` serves from the same origin as the OAuth
+  pages, i.e. stored XSS; the library's `image_url`/`image_r2_key` sources
+  enforce the same gate, and `/media` additionally sends a no-script
+  CSP+sandbox as defense in depth). The payload shape deliberately differs
+  from the media GET payload so neither signature can be replayed as the other
+  (`src/upload-url.ts` documents the argument — keep the endpoint's key/CT
+  charset checks, they are what make it sound; and keep the NUL separators as
+  \u0000 ESCAPES, never literal bytes — a literal NUL makes git treat the file
+  as binary, guarded by tests/source-hygiene.test.ts). 15MB cap enforced while
+  reading the stream, never trusted from Content-Length. This is the
+  zero-auth-header upload path for sandboxed shells that hold no OAuth token.
+- **The character/style library (`src/library.ts`) is per-tenant and immortal.**
+  `lib/<tenant>/…` is the ONE prefix the retention cron never sweeps; saving a
+  character COPIES the bytes into `lib/` precisely so no pointer dangles when
+  `gen/`/`up/` objects are swept. `characters: ["name"]` / `style: "name"` on
+  generate/edit/set resolve through `resolveCharacterRefs` (tools/shared.ts),
+  which fails fast on an unknown name — before anything billable — and the
+  set tool carries character refs to the master AND every scene call.
+- **Multi-image sets bundle.** On an object-storage sink, `gemini_image_set`
+  with >1 image also persists a STORE-only zip (`src/zip.ts`) and returns
+  `bundle_url` (+ `bundle.r2_key`/`curl_hint`), and signs set media + bundle
+  for ~7 days (`SET_URL_TTL_MS`, clamped by the sink's `maxUrlTtlMs` to the
+  retention window). Idempotent replays re-sign `bundle_url` too (jobs.ts).
+- **`max_wait_ms`** (all generation tools, `JobRegistry.dispatch({ waitMs })`)
+  waits up to the budget then returns the job handle — the middle ground
+  between sync and `async: true`. Not part of the fingerprint.
 - **Disk-only *inputs* fail fast**, via `assertLocalInputsAvailable` at the top
   of each handler (before any billable call): `images`/`master_images`,
   `from_clipboard`, `video_path` → an `McpToolError` naming the alternatives
@@ -389,7 +451,9 @@ Four forms, and **only one of them costs model context**:
 | --- | --- | --- |
 | `images_url` / `master_images_url` | the SERVER fetches the https URL | none |
 | `images_file_uris` / `master_images_file_uris` | a `files/<id>` reference | none |
+| `images_r2_keys` / `master_images_r2_keys` | the connector reads its OWN bucket (hosted only; `readStoredMedia`, tenant-gated) | none |
 | `images` / `master_images` | local disk (stdio only) | none |
+| `characters` / `style` | saved library entries attached by name (hosted only; `resolveCharacterRefs` in tools/shared.ts) | none |
 | `images_base64` | **the tool-call JSON** | **~14k tokens per JPEG** |
 
 That table is the whole point of the feature: `images_base64` is not merely

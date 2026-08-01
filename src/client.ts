@@ -2,6 +2,8 @@ import { basename } from 'node:path';
 import { readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, DEFAULT_VIDEO_MODEL, DEFAULT_MUSIC_MODEL, type GeminiModel, type RawModel } from './models.js';
 import { createDiskSink, type MediaSink } from './storage/media.js';
+import type { CharacterLibrary } from './library.js';
+import type { UploadUrlMinter } from './upload-url.js';
 import { SessionState } from './session.js';
 import { fetchRemoteImage, type FetchedImage } from './fetch-image.js';
 
@@ -320,6 +322,18 @@ export interface GeminiClientOptions {
    * an R2-backed sink because it has no filesystem.
    */
   mediaSink?: MediaSink;
+  /**
+   * The per-account character/style library (hosted connector only — it lives
+   * in the shared R2 bucket, tenant-namespaced). Its presence gates the
+   * `gemini_save_character` / `gemini_save_style` tool family.
+   */
+  library?: CharacterLibrary;
+  /**
+   * Mints short-lived signed PUT upload URLs (hosted connector only — stdio
+   * has no HTTP surface to PUT against). Its presence gates
+   * `gemini_get_upload_url`.
+   */
+  uploadUrls?: UploadUrlMinter;
 }
 
 export class GeminiClient {
@@ -349,8 +363,16 @@ export class GeminiClient {
    */
   readonly session = new SessionState();
 
+  /** Per-account character/style library — hosted connector only (see options). */
+  readonly library: CharacterLibrary | undefined;
+
+  /** Signed upload-URL minter — hosted connector only (see options). */
+  readonly uploadUrls: UploadUrlMinter | undefined;
+
   constructor(opts: GeminiClientOptions = {}) {
     this.mediaSink = opts.mediaSink ?? createDiskSink();
+    this.library = opts.library;
+    this.uploadUrls = opts.uploadUrls;
     // A replayed idempotent result must not hand back an expired media URL, so
     // the job registry needs a way to re-sign from the stable r2_key.
     this.session.jobs.resigner = this.mediaSink;

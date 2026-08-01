@@ -96,6 +96,12 @@ function baseHeaders(key: string, object: { httpMetadata?: { contentType?: strin
     // The bytes are model output being handed to a browser — never let a
     // sniffed content type turn an image response into something executable.
     'x-content-type-options': 'nosniff',
+    // Defense in depth against stored XSS: this route serves user-influenced
+    // bytes from the SAME ORIGIN as the connector's OAuth pages, so if a
+    // scriptable document type (SVG, HTML) ever slipped past the raster-only
+    // upload gates, this neutralizes it — no script, no fetch, and a unique
+    // opaque origin via sandbox. Pixels don't need any of what this disables.
+    'content-security-policy': "default-src 'none'; sandbox",
     // Range support is cheap on R2 and is what makes a resumable `curl -C -`
     // work against a large video.
     'accept-ranges': 'bytes',

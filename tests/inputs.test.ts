@@ -28,6 +28,7 @@ interface Stub {
   fetchRemoteImage: ReturnType<typeof vi.fn>;
   uploadBytes: ReturnType<typeof vi.fn>;
   getFile: ReturnType<typeof vi.fn>;
+  readStoredMedia: ReturnType<typeof vi.fn>;
 }
 
 function stubClient(opts: { onDisk?: boolean; fetchBytes?: Uint8Array; fetchMime?: string } = {}): Stub {
@@ -55,14 +56,16 @@ function stubClient(opts: { onDisk?: boolean; fetchBytes?: Uint8Array; fetchMime
     uri: `https://generativelanguage.googleapis.com/v1beta/${ref.replace(/^.*\/(files\/)/, '$1')}`,
     mimeType: 'image/webp',
   }));
+  const readStoredMedia = vi.fn(async (_key: string) => ({ bytes: PNG_BYTES, mimeType: 'image/png' }));
   const client = {
     mediaSink: opts.onDisk === false ? createR2Sink({ put: async () => ({}) }, {}) : createDiskSink(),
     session,
     fetchRemoteImage,
     uploadBytes,
     getFile,
+    readStoredMedia,
   } as unknown as GeminiClient;
-  return { client, session, fetchRemoteImage, uploadBytes, getFile };
+  return { client, session, fetchRemoteImage, uploadBytes, getFile, readStoredMedia };
 }
 
 let dir: string;
@@ -130,6 +133,62 @@ describe('images_file_uris', () => {
 
     expect(s.getFile).toHaveBeenCalledTimes(1);
     expect(inputs).toHaveLength(2);
+  });
+});
+
+describe('images_r2_keys', () => {
+  it('reads the connector store server-side and yields an INLINE part — no signature, no conversation bytes', async () => {
+    const s = stubClient({ onDisk: false });
+    const key = 'up/ab12cd34ef56/2026-07-31/x-photo.png';
+    const { inputs, report } = await resolveImageInputs({ images_r2_keys: [key] }, s.client);
+
+    expect(s.readStoredMedia).toHaveBeenCalledWith(key);
+    expect(inputs).toEqual([{ base64: PNG_B64, mimeType: 'image/png' }]);
+    expect(report?.r2_keys).toEqual([{ r2_key: key, mime_type: 'image/png', bytes: PNG_BYTES.byteLength }]);
+    expect(s.fetchRemoteImage).not.toHaveBeenCalled();
+    expect(s.uploadBytes).not.toHaveBeenCalled();
+  });
+
+  it('reads a repeated key exactly ONCE within a call', async () => {
+    const s = stubClient({ onDisk: false });
+    const key = 'gen/ab12cd34ef56/2026-07-31/x-cat.png';
+    const { inputs } = await resolveImageInputs({ images_r2_keys: [key, key] }, s.client);
+
+    expect(s.readStoredMedia).toHaveBeenCalledTimes(1);
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toBe(inputs[1]);
+  });
+
+  it('propagates the store error verbatim — a swept key must name itself', async () => {
+    const s = stubClient({ onDisk: false });
+    s.readStoredMedia.mockRejectedValueOnce(new Error('No stored media for r2_key "gen/swept.png"'));
+    await expect(resolveImageInputs({ images_r2_keys: ['gen/swept.png'] }, s.client)).rejects.toThrow(/gen\/swept\.png/);
+  });
+
+  it('counts as an image input for the presence helpers', () => {
+    expect(hasImageInput({ images_r2_keys: ['gen/x.png'] })).toBe(true);
+    expect(() => requireImageInput({ images_r2_keys: ['gen/x.png'] })).not.toThrow();
+  });
+
+  it('promotes a LARGE stored object to a Files API reference instead of inlining it', async () => {
+    // Same rule as images_url: generateContent caps a whole request near 20MB,
+    // so a 7MB inline reference risks failing the request itself.
+    const big = new Uint8Array(6 * 1024 * 1024 + 1).fill(9);
+    const s = stubClient({ onDisk: false });
+    s.readStoredMedia.mockResolvedValueOnce({ bytes: big, mimeType: 'image/jpeg' });
+    const key = 'up/ab12cd34ef56/2026-07-31/x-huge.jpg';
+    const { inputs, report } = await resolveImageInputs({ images_r2_keys: [key] }, s.client);
+
+    expect(s.uploadBytes).toHaveBeenCalledTimes(1);
+    // Reference assertions, not deep equality — deep-comparing megabytes of
+    // typed array is what a test timeout looks like.
+    const [bytesArg, mimeArg, nameArg] = s.uploadBytes.mock.calls[0];
+    expect(bytesArg).toBe(big);
+    expect(mimeArg).toBe('image/jpeg');
+    expect(nameArg).toBe('x-huge.jpg');
+    expect(inputs[0].uri).toMatch(/files\/up1$/);
+    expect(inputs[0].base64).toBeUndefined();
+    expect(report?.r2_keys?.[0].file_uri).toBe('files/up1');
   });
 });
 

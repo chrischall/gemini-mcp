@@ -5,7 +5,7 @@ import { resolveModel } from '../models.js';
 import type { GeminiClient, GeneratedImage } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, persistBundle, SET_URL_TTL_MS, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -14,7 +14,8 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
     'gemini_image_set',
     {
       description:
-        'Generate a consistent SET of images: a master image from master_prompt, then one image per scene that references the master so the subject/style stays consistent. Provide `scenes` (explicit per-image prompts) OR `count` (variations of the master).',
+        'Generate a consistent SET of images: a master image from master_prompt, then one image per scene that references the master so the subject/style stays consistent. Provide `scenes` (explicit per-image prompts) OR `count` (variations of the master). ' +
+        'Scene generations run in parallel (reference_mode "master", the default). On the hosted connector: saved `characters` and a saved `style` can seed the whole set by name, multi-image results include a `bundle_url` zip of every image (one curl instead of N), and `max_wait_ms` returns a pollable job handle if the batch runs long.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
         master_prompt: z.string().min(1).describe('Prompt for the master/reference image'),
@@ -25,6 +26,9 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         master_images: z.array(z.string().min(1)).optional().describe('Reference image paths passed to the master generation call'),
         master_images_url: imagesUrlSchema('Reference images passed to the master AND to every scene call (fetched once)'),
         master_images_file_uris: imagesFileUrisSchema('Reference images passed to the master AND to every scene call'),
+        master_images_r2_keys: imagesR2KeysSchema('Reference images passed to the master AND to every scene call'),
+        characters: charactersSchema,
+        style: styleSchema,
         master_images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs for master generation. Last resort: prefer master_images_url or master_images_file_uris, which keep image bytes out of the conversation'),
         confirm: schemaConfirm,
         ...sharedImageSchema,
@@ -47,8 +51,9 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         thinking_level: args.thinking_level, google_search: args.google_search,
         master_images: args.master_images, master_images_base64: args.master_images_base64, from_clipboard: args.from_clipboard,
         master_images_url: args.master_images_url, master_images_file_uris: args.master_images_file_uris,
+        master_images_r2_keys: args.master_images_r2_keys, characters: args.characters, style: args.style,
       });
-      return client.session.jobs.dispatch({ toolName: 'gemini_image_set', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_image_set', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async () => {
         const seed = pickSeed(args.seed);
         const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level, googleSearch: args.google_search, timeoutMs: args.timeout_ms };
         const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
@@ -65,15 +70,28 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         //  - `masterOnly` — path / base64 / clipboard references. Master-only,
         //    exactly as before these parameters existed, so pre-existing calls
         //    still build byte-identical requests.
+        // Saved characters/style resolve first and fail fast on an unknown
+        // name, before anything billable. Their reference images join the
+        // CARRIED group — consistency references belong on every scene call.
+        const charRefs = await resolveCharacterRefs(client, args.characters, args.style);
+        // The master prompt gets the full library treatment (character
+        // preamble + style fragment). Scene prompts get only the style
+        // fragment: their first attached image is the master output, so the
+        // preamble's "attached in order" claim would be off by one there —
+        // the master image itself is what anchors identity scene to scene.
+        const masterPrompt = composePrompt(args.master_prompt, charRefs);
+        const styleOnly = { styleFragment: charRefs.styleFragment };
         const carried = await resolveImageInputs(
-          { images_url: args.master_images_url, images_file_uris: args.master_images_file_uris },
+          { images_url: args.master_images_url, images_file_uris: args.master_images_file_uris, images_r2_keys: args.master_images_r2_keys },
           client,
         );
+        /** What every SCENE call attaches (after its master/previous image). */
+        const carriedRefs = [...charRefs.inputs, ...carried.inputs];
         const masterOnly = await resolveImageInputs(
           { images: args.master_images, images_base64: args.master_images_base64, from_clipboard: args.from_clipboard },
           client,
         );
-        const masterRefInputs = [...masterOnly.inputs, ...carried.inputs];
+        const masterRefInputs = [...charRefs.inputs, ...masterOnly.inputs, ...carried.inputs];
         /** Scenes that failed, so one bad scene cannot lose the whole batch. */
         const failed: Array<{ scene: number; prompt: string; error: string }> = [];
         const report = carried.report || masterOnly.report
@@ -82,7 +100,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         const named: NamedImage[] = [];
         const masterResult = await withProgressHeartbeat(extra, `Generating image set (${model})`, async () => {
           const result = await client.generate({
-            prompt: args.master_prompt,
+            prompt: masterPrompt,
             images: masterRefInputs.length > 0 ? masterRefInputs : undefined,
             seed,
             ...cfg,
@@ -115,7 +133,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
             let ref: GeneratedImage = master;
             for (let i = 0; i < scenePrompts.length; i++) {
               try {
-                const { images: [img] } = await client.generate({ prompt: scenePrompts[i], images: [ref, ...carried.inputs], seed: seed + i + 1, ...cfg });
+                const { images: [img] } = await client.generate({ prompt: composePrompt(scenePrompts[i], styleOnly), images: [ref, ...carriedRefs], seed: seed + i + 1, ...cfg });
                 named.push({ image: img, base: sceneName(i) });
                 // Chain mode anchors each scene on the previous OUTPUT, so a
                 // failure must not advance the reference — the next scene
@@ -127,7 +145,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
             }
           } else {
             const settled = await Promise.allSettled(
-              scenePrompts.map((p, i) => client.generate({ prompt: p, images: [master, ...carried.inputs], seed: seed + i + 1, ...cfg }).then((r) => r.images[0])),
+              scenePrompts.map((p, i) => client.generate({ prompt: composePrompt(p, styleOnly), images: [master, ...carriedRefs], seed: seed + i + 1, ...cfg }).then((r) => r.images[0])),
             );
             settled.forEach((outcome, i) => {
               if (outcome.status === 'fulfilled') named.push({ image: outcome.value, base: sceneName(i) });
@@ -142,6 +160,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         if (masterText) meta.text = masterText;
         if (masterResult.grounding) meta.grounding = masterResult.grounding;
         if (report) meta.image_inputs = report;
+        if (charRefs.meta) Object.assign(meta, charRefs.meta);
         if (failed.length) {
           meta.failed_scenes = failed;
           meta.partial =
@@ -153,7 +172,14 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         // tool. Effective image count drives the risk hint.
         const risk = timeoutRiskHint({ model, imageSize: args.image_size, count: named.length, persistsFiles: client.mediaSink?.persistsFiles });
         if (risk) meta.timeout_risk = risk;
-        return emit(named, { ...args, sink: client.mediaSink }, meta);
+        // One zip of the whole set (object-storage sinks, >1 image) — the
+        // consumer runs ONE curl instead of N. Best-effort; per-image URLs and
+        // curl_hints below are unaffected.
+        if (!args.inline) Object.assign(meta, await persistBundle(named, client.mediaSink, slug));
+        // A set is a batch someone comes back to: sign its links (and the
+        // bundle's) for ~7 days rather than the default ~48h. The sink clamps
+        // to the retention window; the disk sink ignores it entirely.
+        return emit(named, { ...args, sink: client.mediaSink, urlTtlMs: SET_URL_TTL_MS }, meta);
       });
     },
   );

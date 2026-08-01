@@ -227,6 +227,10 @@ describe('GET /media/<key>', () => {
     expect(res.headers.get('content-type')).toBe('image/png');
     // Model output rendered by a browser: never let sniffing reinterpret it.
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    // Defense in depth against stored XSS: this route shares an origin with
+    // the OAuth pages, so even a scriptable document type that somehow got
+    // stored must render inert (no script, sandboxed opaque origin).
+    expect(res.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
     expect(await res.text()).toBe('PNGBYTES');
     expect(bucket.get).toHaveBeenCalledWith(KEY);
   });

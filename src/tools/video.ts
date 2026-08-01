@@ -5,7 +5,7 @@ import type { GeminiClient } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
-import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
+import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -52,6 +52,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         timeout_ms: timeoutMsSchema,
         idempotency_key: idempotencyKeySchema,
         async: asyncSchema,
+        max_wait_ms: maxWaitMsSchema,
         confirm: schemaConfirm,
       },
     },
@@ -77,7 +78,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         images_url: args.images_url, images_file_uris: args.images_file_uris,
         previous_interaction_id: previousInteractionId,
       });
-      return client.session.jobs.dispatch({ toolName: 'gemini_video_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_video_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async () => {
         const { inputs, report } = await resolveImageInputs(args, client);
         const r = await withProgressHeartbeat(extra, `Generating video (${model})`, () =>
           client.generateVideo({

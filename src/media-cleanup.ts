@@ -52,8 +52,11 @@ const DEFAULT_MAX_OBJECTS = 5_000;
  * `gen/` is where media is written now; `media/` is where it was written before
  * the rename that made URLs read `/media/gen/…` instead of `/media/media/…`.
  * Both are swept — retention that ignores the existing backlog is not retention.
+ * `up/` (signed uploads) is swept on the same schedule: a reference photo worth
+ * keeping gets copied into the character library (`lib/`), which is the ONE
+ * prefix deliberately absent here — saved characters and styles have no expiry.
  */
-const LEGACY_AND_CURRENT_PREFIXES = ['gen/', 'media/'];
+const LEGACY_AND_CURRENT_PREFIXES = ['gen/', 'media/', 'up/'];
 /** R2 accepts bulk deletes in batches; 1000 is the documented ceiling. */
 const DELETE_BATCH = 1_000;
 

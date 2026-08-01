@@ -5,7 +5,7 @@ import { resolveModel } from '../models.js';
 import type { GeminiClient, GroundingResult } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs, requireImageInput } from '../inputs.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
+import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -33,7 +33,10 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         images: z.array(z.string().min(1)).optional().describe('Paths to reference input images (image-conditioned generation)'),
         images_url: imagesUrlSchema(),
         images_file_uris: imagesFileUrisSchema(),
+        images_r2_keys: imagesR2KeysSchema(),
         images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, which keep image bytes out of the conversation'),
+        characters: charactersSchema,
+        style: styleSchema,
         video_url: z.string().url().optional().describe('Public YouTube URL (or a previously uploaded Files API uri) as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
         video_path: videoPathSchema,
         confirm: schemaConfirm,
@@ -58,16 +61,23 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
         thinking_level: args.thinking_level, google_search: args.google_search, count,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
-        images_url: args.images_url, images_file_uris: args.images_file_uris,
+        images_url: args.images_url, images_file_uris: args.images_file_uris, images_r2_keys: args.images_r2_keys,
+        characters: args.characters, style: args.style,
         video_url: args.video_url, video_path: args.video_path,
       });
-      return client.session.jobs.dispatch({ toolName: 'gemini_image_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_image_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async () => {
         const seed = pickSeed(args.seed);
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
+        // Saved characters/style resolve first (and fail fast on an unknown
+        // name — before anything billable), so their reference images lead the
+        // input order the prompt preamble describes.
+        const charRefs = await resolveCharacterRefs(client, args.characters, args.style);
+        const prompt = composePrompt(args.prompt, charRefs);
         // Resolved ONCE, before the count loop: a URL is fetched (and a large
         // one uploaded) a single time no matter how many images are generated.
-        const { inputs: refInputs, report } = await withProgressHeartbeat(extra, 'Resolving reference images', () =>
+        const { inputs: directInputs, report } = await withProgressHeartbeat(extra, 'Resolving reference images', () =>
           resolveImageInputs(args, client));
+        const refInputs = [...charRefs.inputs, ...directInputs];
         // Upload ONCE (before the count loop) — every generate call references
         // the same files/… uri.
         const video = await withProgressHeartbeat(extra, 'Uploading video to the Gemini Files API', () => resolveVideoInput(args, client));
@@ -89,7 +99,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
               // Distinct seed per image (seed+0 for the single-image case == echoed seed)
               // so count>1 yields N *different* images, not N duplicates.
               const result = await client.generate({
-                prompt: args.prompt,
+                prompt,
                 images: refInputs.length > 0 ? refInputs : undefined,
                 model: args.model,
                 aspectRatio: args.aspect_ratio,
@@ -116,6 +126,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         if (capturedText) meta.text = capturedText;
         if (capturedGrounding) meta.grounding = capturedGrounding;
         if (report) meta.image_inputs = report;
+        if (charRefs.meta) Object.assign(meta, charRefs.meta);
         if (failed.length) {
           meta.failed_images = failed;
           meta.partial =
@@ -145,7 +156,10 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         images: z.array(z.string().min(1)).optional().describe('Paths to input image file(s) (1 = edit, 2+ = compose)'),
         images_url: imagesUrlSchema('Input images'),
         images_file_uris: imagesFileUrisSchema('Input images'),
+        images_r2_keys: imagesR2KeysSchema('Input images'),
         images_base64: z.array(z.string().min(1)).optional().describe('Input images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, which keep image bytes out of the conversation'),
+        characters: charactersSchema,
+        style: styleSchema,
         filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
         confirm: schemaConfirm,
         ...sharedImageSchema,
@@ -153,7 +167,9 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
     },
     async (args, extra) => {
       assertLocalInputsAvailable(client.mediaSink, args);
-      requireImageInput(args);
+      // Saved characters count as input images for the required-input check —
+      // the library attaches their references inside the handler.
+      if (!args.characters?.length) requireImageInput(args);
       // Confirm-gate local file inputs (see gemini_image_generate). base64 /
       // clipboard inputs are not local-path reads and pass through ungated.
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, SEND_LOCAL_ACTION, GENERATE_ENDPOINT, args.images);
@@ -163,15 +179,19 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
         thinking_level: args.thinking_level, google_search: args.google_search,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
-        images_url: args.images_url, images_file_uris: args.images_file_uris,
+        images_url: args.images_url, images_file_uris: args.images_file_uris, images_r2_keys: args.images_r2_keys,
+        characters: args.characters, style: args.style,
       });
-      return client.session.jobs.dispatch({ toolName: 'gemini_image_edit', fingerprint, idempotencyKey: args.idempotency_key, async: args.async }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_image_edit', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async () => {
         const seed = pickSeed(args.seed);
         const slug = args.filename ? baseName(args.filename) : slugify(args.prompt);
-        const { inputs, report } = await withProgressHeartbeat(extra, 'Resolving input images', () => resolveImageInputs(args, client));
+        const charRefs = await resolveCharacterRefs(client, args.characters, args.style);
+        const prompt = composePrompt(args.prompt, charRefs);
+        const { inputs: directInputs, report } = await withProgressHeartbeat(extra, 'Resolving input images', () => resolveImageInputs(args, client));
+        const inputs = [...charRefs.inputs, ...directInputs];
         const result = await withProgressHeartbeat(extra, `Editing image (${model})`, () =>
           client.generate({
-            prompt: args.prompt,
+            prompt,
             images: inputs,
             model: args.model,
             aspectRatio: args.aspect_ratio,
@@ -186,6 +206,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         if (text) meta.text = text;
         if (result.grounding) meta.grounding = result.grounding;
         if (report) meta.image_inputs = report;
+        if (charRefs.meta) Object.assign(meta, charRefs.meta);
         meta.hint = REFINE_HINT;
         const risk = timeoutRiskHint({ model, imageSize: args.image_size, persistsFiles: client.mediaSink?.persistsFiles });
         if (risk) meta.timeout_risk = risk;

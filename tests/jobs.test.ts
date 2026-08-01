@@ -272,3 +272,73 @@ describe('dispatch — async job handle', () => {
     d.resolve(textResultOf({ images: ['a.png'] }));
   });
 });
+
+describe('dispatch — waitMs budget (max_wait_ms)', () => {
+  it('returns the result in-band when work finishes within the budget', async () => {
+    const r = await registry.dispatch({ toolName: 't', fingerprint: 'f', waitMs: 5000 }, async () => textResultOf({ images: ['a.png'] }));
+    const m = metaOf(r);
+    expect(m.images).toEqual(['a.png']);
+    expect(m.job_id).toBeUndefined();
+  });
+
+  it('returns a running job handle when the budget expires — and the result is later pollable', async () => {
+    const d = deferred<CallToolResult>();
+    const handle = await registry.dispatch({ toolName: 't', fingerprint: 'f', waitMs: 10 }, () => d.promise);
+    const h = metaOf(handle);
+    expect(h.status).toBe('running');
+    expect(typeof h.job_id).toBe('string');
+
+    d.resolve(textResultOf({ images: ['late.png'] }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(metaOf(registry.getResult(h.job_id as string)).images).toEqual(['late.png']);
+  });
+
+  it('propagates a failure that lands within the budget', async () => {
+    await expect(
+      registry.dispatch({ toolName: 't', fingerprint: 'f', waitMs: 5000 }, async () => { throw new McpToolError('boom'); }),
+    ).rejects.toThrow('boom');
+  });
+
+  it('async wins over waitMs (never waits at all)', async () => {
+    const d = deferred<CallToolResult>();
+    const r = await registry.dispatch({ toolName: 't', fingerprint: 'f', async: true, waitMs: 60_000 }, () => d.promise);
+    expect(metaOf(r).status).toBe('running');
+    d.resolve(textResultOf({}));
+  });
+
+  it('attaching to an in-flight identical request honours the budget too', async () => {
+    const d = deferred<CallToolResult>();
+    const p1 = registry.dispatch({ toolName: 't', fingerprint: 'same' }, () => d.promise);
+    const handle = await registry.dispatch({ toolName: 't', fingerprint: 'same', waitMs: 10 }, async () => textResultOf({ never: true }));
+    expect(metaOf(handle).status).toBe('running');
+    d.resolve(textResultOf({ ok: 1 }));
+    expect(metaOf(await p1).ok).toBe(1);
+  });
+});
+
+describe('replay refresh — bundle_url', () => {
+  it('re-signs the bundle from its r2_key alongside the media entries', async () => {
+    const resign = vi.fn(async (key: string) => ({
+      ref: `https://c.example.com/media/${key}?exp=9&sig=new`,
+      key,
+      expiresAt: '2026-08-07T00:00:00.000Z',
+    }));
+    registry.resigner = { resign };
+    const recorded = textResultOf({
+      images: ['https://c.example.com/media/gen/a.png?exp=1&sig=old'],
+      media: [{ url: 'https://c.example.com/media/gen/a.png?exp=1&sig=old', r2_key: 'gen/a.png', expires_at: '2026-01-01T00:00:00.000Z' }],
+      bundle_url: 'https://c.example.com/media/gen/set-bundle.zip?exp=1&sig=old',
+      bundle: { url: 'https://c.example.com/media/gen/set-bundle.zip?exp=1&sig=old', r2_key: 'gen/set-bundle.zip', expires_at: '2026-01-01T00:00:00.000Z', files: ['a'] },
+    });
+    await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'bk' }, async () => recorded);
+    const replay = metaOf(await registry.dispatch({ toolName: 't', fingerprint: 'f', idempotencyKey: 'bk' }, async () => textResultOf({})));
+
+    expect(resign).toHaveBeenCalledWith('gen/set-bundle.zip');
+    expect(replay.bundle_url).toBe('https://c.example.com/media/gen/set-bundle.zip?exp=9&sig=new');
+    const bundle = replay.bundle as Record<string, unknown>;
+    expect(bundle.url).toBe(replay.bundle_url);
+    expect(bundle.expires_at).toBe('2026-08-07T00:00:00.000Z');
+    expect(bundle.files).toEqual(['a']); // untouched fields carry over
+    expect(String(bundle.curl_hint)).toContain('set-bundle.zip?exp=9&sig=new');
+  });
+});

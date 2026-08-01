@@ -178,26 +178,35 @@ describe('tool roster', () => {
   function registeredToolNames(): string[] {
     const names: string[] = [];
     const server = { registerTool: (name: string) => { names.push(name); } };
-    // Connector-shaped client: an object-storage sink, the runtime the real
-    // buildClient supplies. gemini_sign_media only registers against one.
-    const client = { mediaSink: { persistsFiles: false } } as never;
+    // Connector-shaped client: an object-storage sink, a library and an
+    // upload-URL minter — the runtime the real buildClient supplies.
+    // gemini_sign_media / the library tools / gemini_get_upload_url only
+    // register against one.
+    const client = { mediaSink: { persistsFiles: false }, library: {}, uploadUrls: {} } as never;
     for (const register of CONNECTOR_TOOLS) register(server as never, client);
     return names.sort();
   }
 
-  it('registers exactly the seven serverless-safe registrars', () => {
-    // Seven registrars, eleven tools — registerGenerateTools contributes two
-    // and registerFileTools four.
+  it('registers exactly the nine serverless-safe registrars', () => {
+    // Nine registrars, eighteen tools — registerGenerateTools contributes two,
+    // registerFileTools four, registerLibraryTools six.
     expect(registeredToolNames()).toEqual([
+      'gemini_delete_character',
       'gemini_delete_file',
+      'gemini_delete_style',
       'gemini_get_result',
+      'gemini_get_upload_url',
       'gemini_image_edit',
       'gemini_image_generate',
       'gemini_image_set',
       'gemini_interact',
+      'gemini_list_characters',
       'gemini_list_files',
       'gemini_list_models',
+      'gemini_list_styles',
       'gemini_music_generate',
+      'gemini_save_character',
+      'gemini_save_style',
       'gemini_sign_media',
       'gemini_upload_file',
     ]);
@@ -207,7 +216,16 @@ describe('tool roster', () => {
     // Video output is disk-only: MCP has no inline video content block, so
     // emitMedia always writes it to a filesystem the Worker does not have.
     expect(registeredToolNames()).not.toContain('gemini_video_generate');
-    expect(CONNECTOR_TOOLS).toHaveLength(7);
+    expect(CONNECTOR_TOOLS).toHaveLength(9);
+  });
+
+  it('the library and upload-url registrars self-gate: absent capability, absent tools', () => {
+    const names: string[] = [];
+    const server = { registerTool: (name: string) => { names.push(name); } };
+    const bare = { mediaSink: { persistsFiles: false } } as never;
+    for (const register of CONNECTOR_TOOLS) register(server as never, bare);
+    expect(names).not.toContain('gemini_save_character');
+    expect(names).not.toContain('gemini_get_upload_url');
   });
 
   it('serves the Files API tools — the way to send an image without base64', () => {

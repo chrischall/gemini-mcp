@@ -268,4 +268,69 @@ describe('createR2Sink', () => {
       await expect(sink.resign!('gen/swept.png')).resolves.toBeUndefined();
     });
   });
+
+  describe('readPrefixes — signed uploads and the library are readable, still tenant-gated', () => {
+    const signedOpts = {
+      signedBaseUrl: 'https://c.example.com/media',
+      sign: async () => 'sig',
+      urlTtlMs: 1000,
+    };
+
+    /** Simulate an object stored by another route (the /put endpoint). */
+    function seeded(key: string) {
+      const bucket = readableBucket();
+      bucket.puts.push({ key, bytes: new Uint8Array([1, 2, 3]), httpMetadata: { contentType: 'image/jpeg' } });
+      return bucket;
+    }
+
+    it('serves an up/<own-tenant>/ key when up is a configured read prefix', async () => {
+      const bucket = seeded('up/aaaaaaaaaaaa/2026-07-31/x-photo.jpg');
+      const sink = createR2Sink(bucket, { ...signedOpts, tenant: async () => 'aaaaaaaaaaaa', readPrefixes: ['up', 'lib'] });
+      const stored = await sink.read!('up/aaaaaaaaaaaa/2026-07-31/x-photo.jpg');
+      expect(stored?.mimeType).toBe('image/jpeg');
+    });
+
+    it('refuses the same up/ key for a DIFFERENT tenant', async () => {
+      const bucket = seeded('up/aaaaaaaaaaaa/2026-07-31/x-photo.jpg');
+      const sink = createR2Sink(bucket, { ...signedOpts, tenant: async () => 'bbbbbbbbbbbb', readPrefixes: ['up', 'lib'] });
+      await expect(sink.read!('up/aaaaaaaaaaaa/2026-07-31/x-photo.jpg')).resolves.toBeUndefined();
+    });
+
+    it('refuses up/ keys entirely when the prefix is not configured (pre-existing shape)', async () => {
+      const bucket = seeded('up/aaaaaaaaaaaa/2026-07-31/x-photo.jpg');
+      const sink = createR2Sink(bucket, { ...signedOpts, tenant: async () => 'aaaaaaaaaaaa' });
+      await expect(sink.read!('up/aaaaaaaaaaaa/2026-07-31/x-photo.jpg')).resolves.toBeUndefined();
+    });
+
+    it('still writes only under gen/', async () => {
+      const bucket = readableBucket();
+      await createR2Sink(bucket, { ...signedOpts, tenant: async () => 'aaaaaaaaaaaa', readPrefixes: ['up', 'lib'] }).persist([item('cat')], {});
+      expect(bucket.puts[0].key.startsWith('gen/aaaaaaaaaaaa/')).toBe(true);
+    });
+  });
+
+  describe('per-persist URL TTL override', () => {
+    const base = {
+      signedBaseUrl: 'https://c.example.com/media',
+      sign: async (_key: string, exp: number) => `sig-${exp}`,
+      urlTtlMs: 3600_000,
+      now: () => new Date('2026-07-30T12:00:00Z'),
+    };
+
+    it('honours PersistOpts.urlTtlMs for this persist only', async () => {
+      const sink = createR2Sink(fakeBucket(), base);
+      const week = 7 * 24 * 3600_000;
+      const persisted = await sink.persist([item('x')], { urlTtlMs: week });
+      expect(persisted[0].expiresAt).toBe('2026-08-06T12:00:00.000Z');
+      // No override ⇒ the configured default.
+      const plain = await sink.persist([item('y')], {});
+      expect(plain[0].expiresAt).toBe('2026-07-30T13:00:00.000Z');
+    });
+
+    it('clamps the override to maxUrlTtlMs so a link cannot outlive its object', async () => {
+      const sink = createR2Sink(fakeBucket(), { ...base, maxUrlTtlMs: 2 * 3600_000 });
+      const persisted = await sink.persist([item('x')], { urlTtlMs: 7 * 24 * 3600_000 });
+      expect(persisted[0].expiresAt).toBe('2026-07-30T14:00:00.000Z');
+    });
+  });
 });
