@@ -224,3 +224,31 @@ describe('signed links stay inside the store ceiling', () => {
     expect(exp - t0).toBeLessThanOrEqual(24 * 60 * 60 * 1000);
   });
 });
+
+describe('the default link life is the longest the store allows', () => {
+  it('mints at the 24h ceiling, not something arbitrarily shorter', async () => {
+    // The re-host cannot keep the old 48h default or the 7-day image_set
+    // window — the store refuses any signature over 24h — but it should give
+    // links the full life they can legally have rather than a fraction of it.
+    const { createR2Sink } = await import('../src/storage/media.js');
+    const { createBlobBucket } = await import('../src/blob-store.js');
+    const t0 = 1_000_000_000;
+    const bucket = createBlobBucket({
+      baseUrl: BASE,
+      signingKey: KEY,
+      fetchImpl: capturingFetch(() => new Response(null, { status: 201 })).impl,
+    });
+    const sink = createR2Sink(bucket, {
+      signedBaseUrl: BASE,
+      sign: bucket.signRead,
+      urlTtlMs: 24 * 60 * 60 * 1000,
+      maxUrlTtlMs: 24 * 60 * 60 * 1000,
+      now: () => new Date(t0),
+    });
+
+    // No per-persist override: this is the plain generate path.
+    const [ref] = await sink.persist([{ base: 'x', base64: 'AAA=', mimeType: 'image/png' }], {});
+    const exp = Number(new URL(ref!.ref).searchParams.get('exp'));
+    expect(exp - t0).toBe(24 * 60 * 60 * 1000);
+  });
+});
