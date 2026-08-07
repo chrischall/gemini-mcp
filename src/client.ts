@@ -1015,6 +1015,13 @@ function hostedStorage(): {
       signedBaseUrl: blob.baseUrl,
       sign: blob.signRead,
       urlTtlMs: MEDIA_URL_TTL_MS,
+      // Hard ceiling on any PER-PERSIST override. `gemini_image_set` asks for
+      // a 7-day link (SET_URL_TTL_MS) — reasonable against a bucket we own,
+      // but the blob store refuses any signature over 24h, so without this
+      // clamp every set URL and bundle_url would be minted already-invalid and
+      // 403 on first click. The sink clamps with Math.min, so this only ever
+      // shortens.
+      maxUrlTtlMs: BLOB_MAX_TTL_MS,
       // Signed uploads (`up/`) and the library (`lib/`) are readable by the
       // session that owns them; writes still go only under `gen/`.
       readPrefixes: ['up', 'lib'],
@@ -1025,8 +1032,16 @@ function hostedStorage(): {
   };
 }
 
-/** An hour, well inside the 24h ceiling the gateway enforces on any signature. */
+/** An hour, well inside the ceiling below. */
 const MEDIA_URL_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * The blob store's own limit on how far ahead a signature may expire
+ * (mcp-host docs/BLOB-STORE.md). Keep in step with it: signing past this is
+ * refused at the door, so a longer link is not a longer link — it is a broken
+ * one.
+ */
+const BLOB_MAX_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Module-level singleton shared by every tool module (deferred-config-error). */
 export const client = new GeminiClient(hostedStorage());

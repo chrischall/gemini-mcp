@@ -12,7 +12,7 @@
  *   DELETE <base>/<key>?exp=&sig=
  *   GET    <base>/?prefix=&cursor=&limit=&exp=&sig=
  *
- * where `<base>` is `MCP_BLOB_BASE_URL` (`https://host/b/<account>/<slug>`) and
+ * where `<base>` is `MCP_BLOB_BASE_URL` (`https://host/b/<registrationId>`) and
  * every signature is HMAC-SHA256 under `MCP_BLOB_SIGNING_KEY` — this
  * registration's own derived key, which can only ever produce signatures valid
  * under its own prefix.
@@ -23,7 +23,7 @@
  *
  * ## The signature covers the FULL key, not ours
  *
- * The gateway signs `<account>/<slug>/<key>`; we only ever think in `<key>`.
+ * The gateway signs `<registrationId>/<key>`; we only ever think in `<key>`.
  * The prefix is recovered from the base URL's own path (everything after
  * `/b/`), so there is exactly one place that knows the difference and the rest
  * of this repo keeps using relative keys.
@@ -68,8 +68,9 @@ async function hmac(secret: string, payload: string): Promise<string> {
 }
 
 /**
- * `<account>/<slug>` out of `https://host/b/<account>/<slug>` — the prefix the
- * gateway folds into every signature.
+ * The key-space prefix out of `https://host/b/<registrationId>` — what the
+ * gateway folds into every signature. Whatever follows `/b/`, so this does not
+ * care how many segments the host uses.
  */
 export function prefixFromBaseUrl(baseUrl: string): string {
   const path = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, '');

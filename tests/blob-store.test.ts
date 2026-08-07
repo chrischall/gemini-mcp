@@ -11,7 +11,8 @@ import { createBlobBucket, blobStoreFromEnv, prefixFromBaseUrl } from '../src/bl
  * byte-identical to `packages/gateway/src/blob-key.ts` in chrischall/mcp-host.
  */
 
-const BASE = 'https://gw.test/b/chris/gemini';
+// The host injects the immutable registration id, not <account>/<slug>.
+const BASE = 'https://gw.test/b/reg_9f2c1a7b';
 const KEY = 'test-signing-key';
 
 /** Independent restatement of the gateway's four shapes. */
@@ -46,8 +47,8 @@ function capturingFetch(response: () => Response) {
 
 describe('prefixFromBaseUrl', () => {
   it('recovers the account/slug the gateway folds into every signature', () => {
-    expect(prefixFromBaseUrl('https://gw.test/b/chris/gemini')).toBe('chris/gemini');
-    expect(prefixFromBaseUrl('https://gw.test/b/chris/gemini/')).toBe('chris/gemini');
+    expect(prefixFromBaseUrl('https://gw.test/b/reg_9f2c1a7b')).toBe('reg_9f2c1a7b');
+    expect(prefixFromBaseUrl('https://gw.test/b/reg_9f2c1a7b/')).toBe('reg_9f2c1a7b');
   });
 });
 
@@ -62,13 +63,13 @@ describe('blob bucket signatures match the gateway contract', () => {
 
     const call = calls[0]!;
     expect(call.method).toBe('PUT');
-    expect(call.url.pathname).toBe('/b/chris/gemini/gen/x.png');
+    expect(call.url.pathname).toBe('/b/reg_9f2c1a7b/gen/x.png');
     const exp = Number(call.url.searchParams.get('exp'));
     expect(exp).toBe(1_001_000);
     // The signature covers `chris/gemini/gen/x.png`, NOT `gen/x.png` — getting
     // this wrong is a 403 from the gateway on every write.
     expect(call.url.searchParams.get('sig')).toBe(
-      await expectedSig(shapes.write('chris/gemini/gen/x.png', 'image/png', exp)),
+      await expectedSig(shapes.write('reg_9f2c1a7b/gen/x.png', 'image/png', exp)),
     );
   });
 
@@ -86,7 +87,7 @@ describe('blob bucket signatures match the gateway contract', () => {
     expect(call.url.searchParams.get('retain')).toBe('permanent');
     const exp = Number(call.url.searchParams.get('exp'));
     expect(call.url.searchParams.get('sig')).toBe(
-      await expectedSig(shapes.writePermanent('chris/gemini/lib/t1/char.json', 'application/json', exp)),
+      await expectedSig(shapes.writePermanent('reg_9f2c1a7b/lib/t1/char.json', 'application/json', exp)),
     );
   });
 
@@ -108,11 +109,11 @@ describe('blob bucket signatures match the gateway contract', () => {
     const call = calls[0]!;
     const exp = Number(call.url.searchParams.get('exp'));
     expect(call.url.searchParams.get('sig')).toBe(
-      await expectedSig(shapes.read('chris/gemini/gen/x.png', exp)),
+      await expectedSig(shapes.read('reg_9f2c1a7b/gen/x.png', exp)),
     );
     // Distinct from the write signature for the same key and expiry.
     expect(call.url.searchParams.get('sig')).not.toBe(
-      await expectedSig(shapes.write('chris/gemini/gen/x.png', 'image/png', exp)),
+      await expectedSig(shapes.write('reg_9f2c1a7b/gen/x.png', 'image/png', exp)),
     );
   });
 
@@ -126,7 +127,7 @@ describe('blob bucket signatures match the gateway contract', () => {
     expect(call.method).toBe('DELETE');
     const exp = Number(call.url.searchParams.get('exp'));
     expect(call.url.searchParams.get('sig')).toBe(
-      await expectedSig(shapes.del('chris/gemini/lib/t/char.json', exp)),
+      await expectedSig(shapes.del('reg_9f2c1a7b/lib/t/char.json', exp)),
     );
   });
 
@@ -139,7 +140,7 @@ describe('blob bucket signatures match the gateway contract', () => {
     const out = await bucket.list({ prefix: 'lib/t/' });
 
     const call = calls[0]!;
-    expect(call.url.pathname).toBe('/b/chris/gemini/');
+    expect(call.url.pathname).toBe('/b/reg_9f2c1a7b/');
     const exp = Number(call.url.searchParams.get('exp'));
     // Relative — the gateway signs what the caller asked for, not what it
     // reconstructed, so prefixing here would never verify.
@@ -175,7 +176,7 @@ describe('blob bucket behaviour', () => {
     const { impl, calls } = capturingFetch(() => new Response('x', { status: 200 }));
     const bucket = createBlobBucket({ baseUrl: BASE, signingKey: KEY, fetchImpl: impl });
     await bucket.get('gen/a b/c+d.png');
-    expect(calls[0]!.url.pathname).toBe('/b/chris/gemini/gen/a%20b/c%2Bd.png');
+    expect(calls[0]!.url.pathname).toBe('/b/reg_9f2c1a7b/gen/a%20b/c%2Bd.png');
   });
 });
 
@@ -194,5 +195,32 @@ describe('blobStoreFromEnv', () => {
     expect(store?.baseUrl).toBe(BASE);
     expect(typeof store?.signRead).toBe('function');
     expect(typeof store?.signWrite).toBe('function');
+  });
+});
+
+describe('signed links stay inside the store ceiling', () => {
+  it('clamps a per-persist override to 24h, so a set URL is not born invalid', async () => {
+    // gemini_image_set asks for a 7-day link (SET_URL_TTL_MS). That is fine
+    // against a bucket we own; the blob store refuses anything over 24h, so
+    // without the clamp every set URL and bundle_url 403s on first click.
+    const { createR2Sink } = await import('../src/storage/media.js');
+    const { createBlobBucket } = await import('../src/blob-store.js');
+    const t0 = 1_000_000_000;
+    const bucket = createBlobBucket({ baseUrl: BASE, signingKey: KEY, fetchImpl: capturingFetch(() => new Response(null, { status: 201 })).impl });
+    const sink = createR2Sink(bucket, {
+      signedBaseUrl: BASE,
+      sign: bucket.signRead,
+      urlTtlMs: 60 * 60 * 1000,
+      maxUrlTtlMs: 24 * 60 * 60 * 1000,
+      now: () => new Date(t0),
+    });
+
+    const [ref] = await sink.persist(
+      [{ base: 'x', base64: 'AAA=', mimeType: 'image/png' }],
+      { urlTtlMs: 7 * 24 * 60 * 60 * 1000 },
+    );
+
+    const exp = Number(new URL(ref!.ref).searchParams.get('exp'));
+    expect(exp - t0).toBeLessThanOrEqual(24 * 60 * 60 * 1000);
   });
 });

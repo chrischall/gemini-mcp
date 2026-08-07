@@ -8,3 +8,7 @@ coverage/
 # Agent worktrees (.claude/worktrees/<name>/ is a full checkout of this repo)
 .claude/
 
+# Miniflare/wrangler local dev state — holds generated signing secrets.
+# Never commit, even after wrangler itself is gone from the repo.
+.wrangler/
+.dev.vars
