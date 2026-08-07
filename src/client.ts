@@ -1014,7 +1014,7 @@ function hostedStorage(): {
     mediaSink: createR2Sink(blob.bucket, {
       signedBaseUrl: blob.baseUrl,
       sign: blob.signRead,
-      urlTtlMs: MEDIA_URL_TTL_MS,
+      urlTtlMs: BLOB_URL_TTL_MS,
       // Hard ceiling on any PER-PERSIST override. `gemini_image_set` asks for
       // a 7-day link (SET_URL_TTL_MS) — reasonable against a bucket we own,
       // but the blob store refuses any signature over 24h, so without this
@@ -1032,14 +1032,28 @@ function hostedStorage(): {
   };
 }
 
-/** An hour, well inside the ceiling below. */
-const MEDIA_URL_TTL_MS = 60 * 60 * 1000;
+/**
+ * How long a freshly-minted media link lives.
+ *
+ * Named for the blob store, NOT `MEDIA_URL_TTL_MS` — `media-url.ts` already
+ * exports a constant by that name with a different value (48h, the retired
+ * connector's window), and having two of them in one repo is how a reader ends
+ * up reasoning about the wrong number.
+ *
+ * Set to the ceiling rather than something shorter, because the ceiling is not
+ * ours to raise: the store refuses any signature over 24h, so this is simply
+ * the longest a link can legally live. The re-host therefore shortens links
+ * — 48h defaults and the 7-day `gemini_image_set` window are both impossible
+ * now — and `gemini_sign_media` is the answer to an expired one, which is what
+ * it was built for.
+ */
+const BLOB_URL_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The blob store's own limit on how far ahead a signature may expire
  * (mcp-host docs/BLOB-STORE.md). Keep in step with it: signing past this is
  * refused at the door, so a longer link is not a longer link — it is a broken
- * one.
+ * one. Clamps any PER-PERSIST override, notably `gemini_image_set`'s 7 days.
  */
 const BLOB_MAX_TTL_MS = 24 * 60 * 60 * 1000;
 
