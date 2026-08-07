@@ -86,28 +86,28 @@ progress), two guards make re-issuing safe and unnecessary:
 | `gemini_upload_file` | Upload an image (or video/audio) to the Gemini Files API once — from a `url`, `data_base64`, or a local `path` — and get a reusable `files/<id>` reference |
 | `gemini_list_files` | List the files currently uploaded under this API key, with MIME types and expiry times |
 | `gemini_delete_file` | Delete an uploaded file before its ~48h expiry (confirm-gated) |
-| `gemini_sign_media` | *(hosted connector only)* Mint a fresh signed URL for generated media from its `r2_key` — an expired link is not a dead end |
-| `gemini_get_upload_url` | *(hosted connector only)* Mint a short-lived signed PUT URL so a shell can upload a reference image with no auth header; the PUT returns an `r2_key` usable in `images_r2_keys`, `gemini_save_character`, or `gemini_upload_file` |
-| `gemini_save_character` / `gemini_list_characters` / `gemini_delete_character` | *(hosted connector only)* Persistent per-account character library: save a reference image + description under a name, then pass `characters: ["name"]` on generation tools. No expiry |
-| `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | *(hosted connector only)* Persistent per-account style presets: a reusable prompt fragment (optionally with a reference image), applied by passing `style: "name"` on generation tools. No expiry |
+| `gemini_sign_media` | *(hosted deployments only)* Mint a fresh signed URL for generated media from its `r2_key` — an expired link is not a dead end |
+| `gemini_get_upload_url` | *(hosted deployments only)* Mint a short-lived signed PUT URL so a shell can upload a reference image with no auth header; the PUT returns an `r2_key` usable in `images_r2_keys`, `gemini_save_character`, or `gemini_upload_file` |
+| `gemini_save_character` / `gemini_list_characters` / `gemini_delete_character` | *(hosted deployments only)* Persistent per-account character library: save a reference image + description under a name, then pass `characters: ["name"]` on generation tools. No expiry |
+| `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | *(hosted deployments only)* Persistent per-account style presets: a reusable prompt fragment (optionally with a reference image), applied by passing `style: "name"` on generation tools. No expiry |
 
 Generation tools also share three throughput/latency controls: `async: true` (return a `job_id`
 immediately), `max_wait_ms` (wait up to a budget, then hand back the `job_id` — fast results stay
 in-band, slow batches never trip the host timeout), and `idempotency_key` (a retry returns the
-recorded result instead of re-billing). On the hosted connector, a `gemini_image_set` result with
+recorded result instead of re-billing). On a hosted deployment, a `gemini_image_set` result with
 more than one image also carries a **`bundle_url`** — one signed URL for a zip of every image in
 the set — and set links are signed for ~7 days instead of the default ~48h. (A set too large to
-zip safely in Worker memory skips the bundle and says so via `bundle_skipped`; the per-image
+zip safely in memory skips the bundle and says so via `bundle_skipped`; the per-image
 links are unaffected.)
 
-## Seeing your images (hosted connector)
+## Seeing your images (hosted)
 
-On the hosted connector there is no filesystem, so a generated image has to come back as
+On a hosted deployment there is no filesystem, so a generated image has to come back as
 something you can *open*. It does: **every result includes a URL**, with no configuration.
 
 ```jsonc
 {
-  "images": ["https://connector.example.com/media/gen/2026-07-29/ab12cd34-a-cat.png?exp=…&sig=…"],
+  "images": ["https://mcp.nullnet.app/b/<account>/gemini/gen/2026-07-29/ab12cd34-a-cat.png?exp=…&sig=…"],
   "media":  [{ "url": "https://…", "r2_key": "gen/2026-07-29/ab12cd34-a-cat.png",
                "expires_at": "2026-07-31T12:00:00.000Z",
                "curl_hint": "curl -sS -o a-cat.png \"https://…\"" }]
@@ -118,10 +118,10 @@ Those links need no auth header — the signature is in the URL — so they work
 `curl`, and in a chat message. They expire (48h by default) and the objects behind them are
 swept on a retention schedule. The `r2_key` is the durable handle for that window:
 
-- **`gemini_sign_media`** (hosted connector only) mints a fresh signed URL from an `r2_key`,
+- **`gemini_sign_media`** (hosted deployments only) mints a fresh signed URL from an `r2_key`,
   so an expired link never forces you to re-generate — and re-pay for — the image.
-- **`gemini_upload_file` with `r2_key`** turns media the connector generated into a Files API
-  reference (the connector reads its own bucket — no HTTP round trip, no signature needed), so
+- **`gemini_upload_file` with `r2_key`** turns media this server generated into a Files API
+  reference (the server reads it back with its own key — no signature for you to mint), so
   a generated image can become the reference image for the next generation in one cheap call.
 - Idempotent replays (`idempotency_key`) re-mint the URLs inside the recorded result before
   returning it, so a reused result never carries a dead link.
@@ -132,20 +132,14 @@ extract bytes back out of its own context to save them elsewhere. A generation c
 successfully and be invisible. A URL is the portable answer; `inline` remains available, but
 it is no longer the only way to receive media.
 
-### Three ways to serve the bytes
+### How the bytes are served
 
-| | setup | URL shape |
-|---|---|---|
-| **Worker route** (default) | none — works out of the box | `https://<worker-host>/media/<key>?exp=&sig=` |
-| **r2.dev public bucket** | enable public access on the bucket, set `MEDIA_PUBLIC_BASE_URL` | `https://pub-….r2.dev/<key>` |
-| **Custom domain** (best) | attach a domain to the bucket in Cloudflare, set `MEDIA_PUBLIC_BASE_URL` | `https://media.example.com/<key>` |
+The host stores each generated object and serves it back at a signed, expiring
+URL — `https://<host>/b/<account>/gemini/<key>?exp=&sig=`. No setup, and no auth
+header: the signature in the link is the authorization, so `curl` and a browser
+both work.
 
-The built-in Worker route is the zero-config path: the connector streams the object out of R2
-itself. The other two are worth setting up if you want plain, non-expiring URLs or want media
-traffic served by R2 rather than by the Worker — r2.dev is easiest but rate-limited and fine
-for personal use; a custom domain is the best of the three.
-
-**Auth on `/media` is a signed, expiring URL rather than an unlisted key.** Random keys would
+**Auth is a signed, expiring URL rather than an unlisted key.** Random keys would
 be simpler, but they never expire and never revoke: anything that ever logged or forwarded the
 link keeps working forever. A signature scopes access to one object with a deadline, and
 rotating `MEDIA_URL_SECRET` invalidates every outstanding link at once. The tradeoff is that
@@ -153,7 +147,7 @@ links are long and cannot be shortened by hand.
 
 ### For assistants relaying a result
 
-Show the user the URL. If your sandbox has network egress to the connector host, fetching it
+Show the user the URL. If your sandbox has network egress to the host, fetching it
 and attaching the bytes as a file gives the nicest result; otherwise present the link itself.
 Whether a given client renders `![](url)` markdown inline varies by client — a bare URL is the
 safe form, and a markdown link is a reasonable enhancement where you know it renders.
@@ -164,7 +158,6 @@ safe form, and a markdown link is a reasonable enhancement where you know it ren
 |---|---|---|
 | `MEDIA_TTL_DAYS` | `7` | Objects older than this are deleted by a daily cron — generated media (`gen/`, legacy `media/`) and signed uploads (`up/`). The character/style library (`lib/`) is exempt: saved entries never expire |
 | `MEDIA_URL_SECRET` | generated | HMAC key for `/media` links; rotate to revoke all outstanding URLs |
-| `MEDIA_PUBLIC_BASE_URL` | unset | Serve from R2 directly instead of the Worker route |
 
 Signed-URL lifetime is clamped to `MEDIA_TTL_DAYS`, so a link never outlives the object it
 points at.
@@ -179,9 +172,9 @@ Every tool that takes a reference image — `gemini_image_generate`, `gemini_ima
 |---|---|---|
 | `images_url` (`master_images_url`) | the **server** downloads the https URL | none |
 | `images_file_uris` (`master_images_file_uris`) | a `files/<id>` reference, already uploaded | none |
-| `images_r2_keys` (`master_images_r2_keys`) | the connector reads its **own store** (hosted connector only) | none |
+| `images_r2_keys` (`master_images_r2_keys`) | the server reads its **own store** (hosted deployments only) | none |
 | `images` | read off local disk (stdio builds only) | none |
-| `characters` / `style` | saved library entries, attached by name (hosted connector only) | none |
+| `characters` / `style` | saved library entries, attached by name (hosted deployments only) | none |
 | `images_base64` | **through the tool-call JSON** | **~14k tokens per JPEG** |
 
 `images_base64` is the fallback of last resort. It costs roughly 14k tokens per modest photo,
@@ -223,31 +216,12 @@ On stdio builds, a local `images` path that gets referenced **more than once in 
 uploaded to the Files API automatically (keyed on path + mtime + size), so repeated edits of
 the same photo stop re-sending the bytes. Editing the file invalidates the cached upload.
 
-### `POST /upload` — raw bytes, no base64 at all (hosted connector)
+### Signed upload URLs — no token at all (hosted)
 
-The hosted connector exposes an HTTP upload endpoint behind the **same OAuth token as
-`/mcp`**. This is the intended path for an agent with a shell: disk file → curl → `file_uri` →
-tool call, with the image never entering the conversation.
-
-```bash
-curl -X POST https://connector.gemini.nullnet.app/upload \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: image/jpeg" \
-  --data-binary @photo.jpg
-# → {"file_uri":"files/abc123","mime_type":"image/jpeg","expires":"...","...":"..."}
-```
-
-Then pass `"images_file_uris": ["files/abc123"]` to any image tool. The body is streamed
-straight to the Files API (nothing is buffered), so `Content-Length` is required — curl sets it
-automatically with `--data-binary @file`. Accepted content types are `image/*`, `video/*` and
-`audio/*`; an optional `?name=` or `X-Filename` header sets the display name.
-
-### Signed upload URLs — no token at all (hosted connector)
-
-`POST /upload` needs the MCP session's OAuth bearer token, which a sandboxed shell often does
-not have. `gemini_get_upload_url` closes that gap: the authenticated MCP session mints a
-short-lived (~10 min) signed **PUT** URL, and the shell uploads with zero auth headers — the
-signature in the URL is the authorization, mirroring how `/media` downloads work.
+This is the intended path for an agent with a shell: disk file → curl → `r2_key` → tool call,
+with the image never entering the conversation. `gemini_get_upload_url` mints a short-lived
+(~10 min) signed **PUT** URL, and the shell uploads with zero auth headers — the signature in
+the URL is the authorization, mirroring how the download links work.
 
 ```bash
 # 1. tool call: gemini_get_upload_url { filename: "photo.jpg", content_type: "image/jpeg" }
@@ -261,13 +235,13 @@ curl -sS -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_
 The signature covers one tenant-scoped object key, the declared content type and the expiry;
 uploads are capped at 15MB, enforced while reading the stream. Only **raster** image types are
 accepted (jpeg/png/webp/gif/avif/heic/heif/bmp/tiff) — SVG is deliberately refused, because an
-SVG is a scriptable document and `/media` serves from the connector's own origin. The returned
+SVG is a scriptable document and `/media` serves from the server's own origin. The returned
 `r2_key` is then usable three ways: directly as `images_r2_keys` on any generation tool (the
 server reads its own bucket — no bytes in the conversation), permanently via
 `gemini_save_character`, or as a ~48h Files API reference via `gemini_upload_file({ r2_key })`.
 Uploads themselves follow the media retention schedule (`up/` prefix, default 7 days).
 
-### Character & style library (hosted connector)
+### Character & style library (hosted)
 
 Recurring subjects and styles can be saved once, per account, with **no expiry** (the retention
 cron deliberately skips the library's `lib/` prefix):

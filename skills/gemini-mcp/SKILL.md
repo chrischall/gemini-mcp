@@ -126,11 +126,11 @@ not an error.
 | `gemini_list_files(page_size?)` | List current uploads with MIME types and expiry |
 | `gemini_delete_file(file_uri, confirm)` | Delete an upload before its ~48h expiry |
 
-On the **hosted connector** there is also `POST /upload`, behind the same OAuth token as
+On the **hosted hosted deployment** there is also `POST /upload`, behind the same OAuth token as
 `/mcp` — the zero-base64 path for an agent with a shell:
 
 ```bash
-curl -X POST https://<connector>/upload \
+curl -X POST https://<hosted deployment>/upload \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: image/jpeg" \
   --data-binary @photo.jpg
@@ -179,9 +179,9 @@ gemini_image_edit(prompt: "make the background blue", images_url: ["https://exam
 → the server fetches the URL itself; returns path to edited PNG
 ```
 
-**Reuse one photo across many generations (hosted connector, agent with a shell):**
+**Reuse one photo across many generations (hosted hosted deployment, agent with a shell):**
 ```
-$ curl -X POST https://<connector>/upload -H "Authorization: Bearer $TOKEN" \
+$ curl -X POST https://<hosted deployment>/upload -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: image/jpeg" --data-binary @photo.jpg
   → {"file_uri": "files/abc123"}
 

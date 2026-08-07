@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { textResult, McpToolError } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { downloadFilename } from './media-endpoint.js';
+import { downloadFilename } from './media-name.js';
 
 /**
  * In-memory job registry backing idempotency (#53) and the async job pattern

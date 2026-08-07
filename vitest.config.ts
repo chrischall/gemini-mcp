@@ -1,8 +1,5 @@
 import { defineConfig, configDefaults, coverageConfigDefaults } from 'vitest/config';
-
-// The NODE suite. Worker files import 'cloudflare:workers' / 'agents', which
 // only resolve inside workerd — they run under vitest.workers.config.ts
-// (`npm run worker:test`) instead, and are excluded here (and from coverage).
 export default defineConfig({
   test: {
     // Spread `configDefaults.exclude` rather than hand-listing node_modules/dist:
