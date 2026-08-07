@@ -36,8 +36,18 @@
 
 const READ = (key: string, exp: number) => `${key}\n${exp}`;
 const WRITE = (key: string, ct: string, exp: number) => `put\0${key}\0${ct}\0${exp}`;
+/**
+ * A write the host's retention prune must never reclaim. `lib/` only: a saved
+ * character or style outlives every signed URL and every upload, which is why
+ * saving COPIES the image bytes rather than pointing at `gen/`. The retired
+ * connector's own cleanup skipped this prefix for the same reason.
+ */
+const WRITE_PERMANENT = (key: string, ct: string, exp: number) => `putp\0${key}\0${ct}\0${exp}`;
 const DELETE = (key: string, exp: number) => `del\0${key}\0${exp}`;
 const LIST = (prefix: string, exp: number) => `list\0${prefix}\0${exp}`;
+
+/** The library's key prefix — the one thing written to outlive retention. */
+const PERMANENT_PREFIX = 'lib';
 
 /** Default life of a signed link. The gateway refuses anything over 24h. */
 const DEFAULT_TTL_MS = 60 * 60 * 1000;
@@ -111,7 +121,14 @@ export function createBlobBucket(opts: BlobStoreOptions) {
     ): Promise<unknown> {
       const contentType = options?.httpMetadata?.contentType ?? 'application/octet-stream';
       const exp = now() + ttl;
-      const url = await signedUrl(key, WRITE(full(key), contentType, exp), exp);
+      // The library is permanent; generated media and uploads are not. The
+      // prefix IS the distinction, and it is ours to know — the host has no
+      // idea what `lib/` means, it only enforces what was signed.
+      const permanent = key.startsWith(`${PERMANENT_PREFIX}/`);
+      const payload = permanent
+        ? WRITE_PERMANENT(full(key), contentType, exp)
+        : WRITE(full(key), contentType, exp);
+      const url = (await signedUrl(key, payload, exp)) + (permanent ? '&retain=permanent' : '');
       const body: BodyInit = typeof value === 'string' ? value : toArrayBuffer(value);
       const res = await doFetch(url, { method: 'PUT', headers: { 'content-type': contentType }, body });
       if (!res.ok) throw new Error(`blob put failed (${res.status}) for ${key}`);

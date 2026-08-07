@@ -20,6 +20,7 @@ const shapes = {
   write: (k: string, c: string, e: number) => `put\0${k}\0${c}\0${e}`,
   del: (k: string, e: number) => `del\0${k}\0${e}`,
   list: (p: string, e: number) => `list\0${p}\0${e}`,
+  writePermanent: (k: string, c: string, e: number) => `putp\0${k}\0${c}\0${e}`,
 };
 
 async function expectedSig(payload: string): Promise<string> {
@@ -69,6 +70,33 @@ describe('blob bucket signatures match the gateway contract', () => {
     expect(call.url.searchParams.get('sig')).toBe(
       await expectedSig(shapes.write('chris/gemini/gen/x.png', 'image/png', exp)),
     );
+  });
+
+  it('signs a `lib/` write as PERMANENT, so retention never reclaims the library', async () => {
+    // A saved character outlives every signed URL and every upload. The prefix
+    // is the distinction and it is ours to know — the host only enforces what
+    // was signed, so an ordinary write here would quietly expire someone's
+    // library a month later.
+    const { impl, calls } = capturingFetch(() => new Response(null, { status: 201 }));
+    const bucket = createBlobBucket({ baseUrl: BASE, signingKey: KEY, fetchImpl: impl, now, ttlMs: 1000 });
+
+    await bucket.put('lib/t1/char.json', '{}', { httpMetadata: { contentType: 'application/json' } });
+
+    const call = calls[0]!;
+    expect(call.url.searchParams.get('retain')).toBe('permanent');
+    const exp = Number(call.url.searchParams.get('exp'));
+    expect(call.url.searchParams.get('sig')).toBe(
+      await expectedSig(shapes.writePermanent('chris/gemini/lib/t1/char.json', 'application/json', exp)),
+    );
+  });
+
+  it('signs a `gen/` write as ordinary, so generated media still expires', async () => {
+    const { impl, calls } = capturingFetch(() => new Response(null, { status: 201 }));
+    const bucket = createBlobBucket({ baseUrl: BASE, signingKey: KEY, fetchImpl: impl, now, ttlMs: 1000 });
+
+    await bucket.put('gen/x.png', new Uint8Array([1]), { httpMetadata: { contentType: 'image/png' } });
+
+    expect(calls[0]!.url.searchParams.get('retain')).toBeNull();
   });
 
   it('signs a GET with the read shape, which the gateway will not accept as a write', async () => {
