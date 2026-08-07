@@ -6,7 +6,7 @@ import { resolveVideoPath, videoMimeType } from '../images.js';
 import { IMAGE_URL_MAX_BYTES, IMAGE_INLINE_MAX_BYTES } from '../fetch-image.js';
 import { bytesToBase64, base64ToBytes, wholeMb } from '../bytes.js';
 import { createDiskSink, type MediaSink } from '../storage/media.js';
-import { downloadFilename } from '../media-endpoint.js';
+import { downloadFilename } from '../media-name.js';
 import { buildZip } from '../zip.js';
 
 /**

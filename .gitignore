@@ -8,7 +8,3 @@ coverage/
 # Agent worktrees (.claude/worktrees/<name>/ is a full checkout of this repo)
 .claude/
 
-# Cloudflare Worker (connector) — see docs/DEPLOY-CONNECTOR.md
-.wrangler/
-.dev.vars
-!.dev.vars.example

@@ -5,7 +5,7 @@ import type { GeminiClient } from '../client.js';
 import { withProgressHeartbeat } from './shared.js';
 import { base64ToBytes, wholeMb } from '../bytes.js';
 import { fileNameFromUrl } from '../fetch-image.js';
-import { downloadFilename } from '../media-endpoint.js';
+import { downloadFilename } from '../media-name.js';
 import { previewUnlessConfirmed, previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 /**

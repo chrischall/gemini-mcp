@@ -1,9 +1,10 @@
 import { basename } from 'node:path';
 import { readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, DEFAULT_VIDEO_MODEL, DEFAULT_MUSIC_MODEL, type GeminiModel, type RawModel } from './models.js';
-import { createDiskSink, type MediaSink } from './storage/media.js';
-import type { CharacterLibrary } from './library.js';
-import type { UploadUrlMinter } from './upload-url.js';
+import { createDiskSink, createR2Sink, tenantIdFor, type MediaSink } from './storage/media.js';
+import { createR2Library, type CharacterLibrary } from './library.js';
+import { createUploadUrlMinter, type UploadUrlMinter } from './upload-url.js';
+import { blobStoreFromEnv } from './blob-store.js';
 import { SessionState } from './session.js';
 import { fetchRemoteImage, type FetchedImage } from './fetch-image.js';
 
@@ -981,5 +982,51 @@ export class GeminiClient {
   }
 }
 
+/**
+ * Everything that needs somewhere to put bytes, when the host offers a blob
+ * store (`MCP_BLOB_BASE_URL` / `MCP_BLOB_SIGNING_KEY`, injected by mcp-host).
+ *
+ * This is the hosted shape of what the retired Cloudflare Worker did with its
+ * own R2 bucket: generated media becomes signed URLs instead of local paths,
+ * `gemini_get_upload_url` can mint a signed PUT so a shell can push a reference
+ * photo without base64-ing it through the conversation, and the character/style
+ * library has somewhere permanent to live.
+ *
+ * Absent (every local stdio install), this returns `{}` and the client falls
+ * back to the disk sink with no library and no upload URLs — the tools gate on
+ * presence, so they simply do not register rather than half-working.
+ *
+ * Side-effect-free at module scope: reading two env vars and closing over them.
+ */
+function hostedStorage(): {
+  mediaSink?: MediaSink;
+  library?: CharacterLibrary;
+  uploadUrls?: UploadUrlMinter;
+} {
+  const blob = blobStoreFromEnv();
+  if (!blob) return {};
+  // Namespaced by API key like the connector was. One registration is one
+  // user here, so this is belt-and-braces rather than the tenancy boundary —
+  // that is the blob store's per-registration key. Lazy because the key is
+  // read at request time, not at construction (deferred-config-error).
+  const tenant = () => tenantIdFor(readEnvVar('GEMINI_API_KEY') ?? 'local');
+  return {
+    mediaSink: createR2Sink(blob.bucket, {
+      signedBaseUrl: blob.baseUrl,
+      sign: blob.signRead,
+      urlTtlMs: MEDIA_URL_TTL_MS,
+      // Signed uploads (`up/`) and the library (`lib/`) are readable by the
+      // session that owns them; writes still go only under `gen/`.
+      readPrefixes: ['up', 'lib'],
+      tenant,
+    }),
+    library: createR2Library(blob.bucket, { tenant }),
+    uploadUrls: createUploadUrlMinter({ baseUrl: blob.baseUrl, sign: blob.signWrite, tenant }),
+  };
+}
+
+/** An hour, well inside the 24h ceiling the gateway enforces on any signature. */
+const MEDIA_URL_TTL_MS = 60 * 60 * 1000;
+
 /** Module-level singleton shared by every tool module (deferred-config-error). */
-export const client = new GeminiClient();
+export const client = new GeminiClient(hostedStorage());

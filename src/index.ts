@@ -10,11 +10,13 @@ import { registerVideoTools } from './tools/video.js';
 import { registerMusicTools } from './tools/music.js';
 import { registerJobTools } from './tools/jobs.js';
 import { registerFileTools } from './tools/files.js';
+import { registerUploadUrlTools } from './tools/uploads.js';
+import { registerLibraryTools } from './tools/library.js';
 import { client } from './client.js';
 
-// Load `.env` here rather than in client.ts, which the Cloudflare Worker
-// imports: `import.meta.url` + async I/O at module scope crashes the isolate at
-// startup (see src/dotenv.ts, guarded by tests/connector-boot.test.ts).
+// Load `.env` here rather than in client.ts: `import.meta.url` + async I/O at
+// module scope is not safe in every runtime this module graph reaches (see
+// src/dotenv.ts).
 //
 // Ordering is deliberately NOT load-bearing: GeminiClient reads
 // $GEMINI_API_KEY at request time, so it does not matter that the `client`
@@ -33,6 +35,20 @@ await runMcp({
   name: 'gemini-mcp',
   version: VERSION,
   banner: '[gemini-mcp] This project was developed and is maintained by AI (Claude). Use at your own discretion.',
-  tools: [registerModelTools, registerGenerateTools, registerSetTools, registerInteractTools, registerVideoTools, registerMusicTools, registerJobTools, registerFileTools],
+  tools: [
+    registerModelTools,
+    registerGenerateTools,
+    registerSetTools,
+    registerInteractTools,
+    registerVideoTools,
+    registerMusicTools,
+    registerJobTools,
+    registerFileTools,
+    // Both gate on the client having somewhere to put bytes: hosted with a
+    // blob store they register, and on a local install they no-op rather than
+    // advertising a tool that cannot work.
+    registerUploadUrlTools,
+    registerLibraryTools,
+  ],
   deps: client,
 });
