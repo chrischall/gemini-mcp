@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/chrischall/gemini-mcp/compare/v1.6.0...v1.6.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **storage:** give links the full life the store allows, and stop shadowing a constant ([#140](https://github.com/chrischall/gemini-mcp/issues/140)) ([414830e](https://github.com/chrischall/gemini-mcp/commit/414830e2307e29783ad0214f3f9ed358a64d9404))
+
 ## [1.6.0](https://github.com/chrischall/gemini-mcp/compare/v1.5.1...v1.6.0) (2026-08-07)
 
 

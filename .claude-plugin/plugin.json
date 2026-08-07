@@ -1,7 +1,7 @@
 {
   "name": "gemini-mcp",
   "displayName": "Gemini Images",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "MCP server for Google Gemini image generation and editing — generate and edit images via the Gemini API",
   "author": {
     "name": "Chris Hall",
