@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/chrischall/gemini-mcp/compare/v1.5.1...v1.6.0) (2026-08-07)
+
+
+### Features
+
+* **storage:** back media, uploads and the library with mcp-host's blob store ([#137](https://github.com/chrischall/gemini-mcp/issues/137)) ([8e9d2d4](https://github.com/chrischall/gemini-mcp/commit/8e9d2d4e541416b29caab2fa2abd062cb3048b9d))
+
 ## [1.5.1](https://github.com/chrischall/gemini-mcp/compare/v1.5.0...v1.5.1) (2026-08-01)
 
 
