@@ -18,20 +18,25 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMo
 
 // A real timer, not setImmediate: finishing the job runs a dynamic import and
 // a disk write, and neither lands in the microtask/check phase. With
-// setImmediate the 50 iterations below could all elapse inside one busy tick,
-// which failed this test intermittently under a loaded parallel run.
+// setImmediate the loop below could exhaust every iteration inside one busy
+// tick, which failed this test intermittently under a loaded parallel run.
 const tick = () => new Promise((r) => setTimeout(r, 2));
+// And a DEADLINE, not an iteration count: how many polls fit before the work
+// lands is a property of the runner's load, so a count is a wall-clock budget
+// written in the wrong unit. Vitest's own timeout is the backstop above this.
+const POLL_DEADLINE_MS = 5_000;
 // The registry is a module-level singleton, so a job started on one harness is
 // visible to gemini_get_result on another. Poll until it leaves 'running'.
 // `args` must be Record<string, unknown> (not `unknown`) to accept a real
 // TestHarness — parameter types are checked contravariantly.
 async function pollResult(h: { callTool: (n: string, a?: Record<string, unknown>) => Promise<unknown> }, jobId: string) {
-  for (let i = 0; i < 50; i++) {
+  const giveUpAt = Date.now() + POLL_DEADLINE_MS;
+  do {
     const m = parseToolResult<{ status?: string; images?: string[] }>(await h.callTool('gemini_get_result', { job_id: jobId }) as never);
     if (m.status !== 'running') return m;
     await tick();
-  }
-  throw new Error('job never left running');
+  } while (Date.now() < giveUpAt);
+  throw new Error(`job never left running within ${POLL_DEADLINE_MS}ms`);
 }
 
 describe('gemini_get_result', () => {
