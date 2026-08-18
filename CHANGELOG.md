@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/chrischall/gemini-mcp/compare/v1.6.1...v1.6.2) (2026-08-18)
+
+
+### Bug Fixes
+
+* **uploads:** bind media and upload links to one base, and stop losing the real error ([#147](https://github.com/chrischall/gemini-mcp/issues/147)) ([d74463d](https://github.com/chrischall/gemini-mcp/commit/d74463d89a8b61b4899cc5fbefe3753ee5290314))
+
 ## [1.6.1](https://github.com/chrischall/gemini-mcp/compare/v1.6.0...v1.6.1) (2026-08-07)
 
 
