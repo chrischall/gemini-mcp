@@ -34,6 +34,8 @@
  * media links minted before the migration still resolve. Do not "tidy" them.
  */
 
+import { signedLinks, type SignedLinks } from './signed-url.js';
+
 const READ = (key: string, exp: number) => `${key}\n${exp}`;
 const WRITE = (key: string, ct: string, exp: number) => `put\0${key}\0${ct}\0${exp}`;
 /**
@@ -73,7 +75,23 @@ async function hmac(secret: string, payload: string): Promise<string> {
  * care how many segments the host uses.
  */
 export function prefixFromBaseUrl(baseUrl: string): string {
-  const path = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, '');
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    // This runs at module scope (client.ts builds its singleton eagerly), so a
+    // stale or half-substituted value does not fail a request — it stops the
+    // server booting. `TypeError: Invalid URL`, thrown from a stack with no
+    // mention of storage, is a miserable thing to debug from a host's logs;
+    // name the variable and the value instead. Still a throw: a store nobody
+    // can address is not something to degrade quietly around, because media,
+    // the library and signed uploads would all silently vanish.
+    throw new Error(
+      `MCP_BLOB_BASE_URL is not a valid URL (got ${JSON.stringify(baseUrl)}). ` +
+        'It should look like https://<host>/b/<registrationId> — check the deployment\'s environment.',
+    );
+  }
+  const path = parsed.pathname.replace(/^\/+|\/+$/g, '');
   const marker = path.startsWith('b/') ? path.slice(2) : path;
   return marker;
 }
@@ -205,6 +223,16 @@ export type BlobBucket = ReturnType<typeof createBlobBucket>;
 export interface BlobStore {
   bucket: BlobBucket;
   baseUrl: string;
+  /**
+   * Both link shapes for this store, bound to {@link baseUrl} once.
+   *
+   * Media GETs and upload PUTs are the same store reached two ways, and every
+   * consumer takes THIS rather than the base URL, so there is no longer a
+   * second place to update when the host moves. The re-host to mcp-host
+   * updated the media builder's base and left the upload builder holding its
+   * own — the split this exists to make impossible.
+   */
+  links: SignedLinks;
   signRead: (key: string, expiresAtMs: number) => Promise<string>;
   signWrite: (key: string, contentType: string, expiresAtMs: number) => Promise<string>;
 }
@@ -222,5 +250,5 @@ export function blobStoreFromEnv(
   const signingKey = overrides.signingKey ?? env.MCP_BLOB_SIGNING_KEY;
   if (!baseUrl || !signingKey) return undefined;
   const bucket = createBlobBucket({ ...overrides, baseUrl, signingKey });
-  return { bucket, baseUrl, signRead: bucket.signRead, signWrite: bucket.signWrite };
+  return { bucket, baseUrl, links: signedLinks(baseUrl), signRead: bucket.signRead, signWrite: bucket.signWrite };
 }

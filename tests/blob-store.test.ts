@@ -252,3 +252,17 @@ describe('the default link life is the longest the store allows', () => {
     expect(exp - t0).toBe(24 * 60 * 60 * 1000);
   });
 });
+
+describe('a stale or malformed base URL', () => {
+  it('names the variable and the value instead of dying as `Invalid URL`', () => {
+    // `blobStoreFromEnv` runs while client.ts builds its module-level
+    // singleton, so this failure stops the server booting rather than failing
+    // one request — and a bare TypeError from a stack that never mentions
+    // storage is close to undebuggable from a host's logs.
+    expect(() => prefixFromBaseUrl('${MCP_BLOB_BASE_URL}')).toThrow(/MCP_BLOB_BASE_URL is not a valid URL/);
+    expect(() => prefixFromBaseUrl('')).toThrow(/https:\/\/<host>\/b\/<registrationId>/);
+    expect(() =>
+      blobStoreFromEnv({ MCP_BLOB_BASE_URL: 'not-a-url', MCP_BLOB_SIGNING_KEY: KEY } as NodeJS.ProcessEnv),
+    ).toThrow(/MCP_BLOB_BASE_URL/);
+  });
+});

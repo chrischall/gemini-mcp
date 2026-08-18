@@ -33,6 +33,7 @@
  */
 
 import { base64UrlEncode, base64UrlDecode } from './media-url.js';
+import { signedLinks, type SignedLinks } from './signed-url.js';
 import { safeKeySegment } from './storage/media.js';
 
 /** How long a minted upload URL stays usable. Deliberately short — it exists to
@@ -96,10 +97,17 @@ export async function verifyUploadSignature(
   return { ok: true };
 }
 
-/** `<base>/<key>?ct=…&exp=…&sig=…` — the URL handed back by the mint tool. */
+/**
+ * `<base>/<key>?ct=…&exp=…&sig=…` — the URL handed back by the mint tool.
+ *
+ * Delegates to {@link signedLinks}, the single shape-owner it shares with
+ * `buildMediaUrl`. Prefer passing a {@link SignedLinks} into
+ * {@link createUploadUrlMinter} (`links`) over a bare `baseUrl`: a store handed
+ * to the sink and the minter as one object cannot be re-pointed for one and
+ * not the other, which is precisely how the re-host broke this flow.
+ */
 export function buildUploadUrl(baseUrl: string, key: string, contentType: string, expiresAtMs: number, signature: string): string {
-  const path = key.split('/').map(encodeURIComponent).join('/');
-  return `${baseUrl.replace(/\/+$/, '')}/${path}?ct=${encodeURIComponent(contentType.toLowerCase())}&exp=${expiresAtMs}&sig=${signature}`;
+  return signedLinks(baseUrl).upload(key, contentType, expiresAtMs, signature);
 }
 
 /** What `gemini_get_upload_url` hands back, ready to echo to the caller. */
@@ -121,9 +129,20 @@ export interface UploadUrlMinter {
 }
 
 export interface UploadUrlMinterOptions {
-  /** Base URL of the connector's signed PUT route (`https://host/put`). */
-  baseUrl: string;
-  /** Mints the signature — the Worker closes over `resolveSigningKey`. */
+  /**
+   * The store's link shapes, media GET and upload PUT together. Pass THIS in
+   * preference to {@link baseUrl}: one object bound to one base is what stops a
+   * re-host from moving the media links and leaving the upload links behind.
+   */
+  links?: SignedLinks;
+  /**
+   * Base URL of the signed PUT route, when the caller has only a string.
+   * Ignored when {@link links} is given. Exactly one of the two is required —
+   * neither, and the minter throws at CONSTRUCTION rather than handing back a
+   * `undefined/up/…` URL at mint time.
+   */
+  baseUrl?: string;
+  /** Mints the signature — hosted, this is the blob store's `signWrite`. */
   sign: (key: string, contentType: string, expiresAtMs: number) => Promise<string>;
   /** Per-account namespace, same value the media sink uses (`tenantIdFor`). */
   tenant: string | (() => Promise<string> | string);
@@ -161,6 +180,20 @@ export function acceptableUploadType(contentType: string): boolean {
  * session's own namespace, so a signed PUT cannot write into anyone else's.
  */
 export function createUploadUrlMinter(opts: UploadUrlMinterOptions): UploadUrlMinter {
+  // Fail at construction, not at mint. A minter built without somewhere to
+  // point is not a degraded minter, it is a broken one — and the symptom it
+  // used to produce (a URL reading `undefined/up/…`, or one pointing at a host
+  // that no longer exists) is unreadable from the client side. This is the
+  // "mint-with-missing-env fails loudly and atomically" guarantee: it throws
+  // before any key is derived and long before anything could be written, and
+  // the tool simply does not register.
+  const links = opts.links ?? (opts.baseUrl ? signedLinks(opts.baseUrl) : undefined);
+  if (!links) {
+    throw new Error(
+      'createUploadUrlMinter requires `links` (preferred) or `baseUrl`: there is nowhere to point a signed upload URL. ' +
+        'Hosted, both come from the blob store — check MCP_BLOB_BASE_URL is set on the deployment.',
+    );
+  }
   const now = opts.now ?? (() => new Date());
   const randomId = opts.randomId ?? (() => crypto.randomUUID().slice(0, 8));
   const ttlMs = opts.ttlMs ?? UPLOAD_URL_TTL_MS;
@@ -178,7 +211,7 @@ export function createUploadUrlMinter(opts: UploadUrlMinterOptions): UploadUrlMi
       const key = `${UPLOAD_KEY_PREFIX}/${tenant}/${day}/${randomId()}-${safeKeySegment(filename)}`;
       const expiresAtMs = now().getTime() + ttlMs;
       const signature = await opts.sign(key, ct, expiresAtMs);
-      return { url: buildUploadUrl(opts.baseUrl, key, ct, expiresAtMs, signature), key, contentType: ct, expiresAtMs };
+      return { url: links.upload(key, ct, expiresAtMs, signature), key, contentType: ct, expiresAtMs };
     },
   };
 }
