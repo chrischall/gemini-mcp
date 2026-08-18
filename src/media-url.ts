@@ -16,6 +16,8 @@
  * WebCrypto is the only primitive used, and it exists on both runtimes.
  */
 
+import { signedLinks } from './signed-url.js';
+
 /** How long a freshly minted media URL stays valid. Matches Files API retention. */
 export const MEDIA_URL_TTL_MS = 48 * 60 * 60 * 1000;
 
@@ -144,8 +146,14 @@ export async function verifyMediaSignature(
   return { ok: true };
 }
 
-/** `<base>/<key>?exp=…&sig=…` — the URL handed back to the caller. */
+/**
+ * `<base>/<key>?exp=…&sig=…` — the URL handed back to the caller.
+ *
+ * Delegates to {@link signedLinks} so this and `buildUploadUrl` cannot drift
+ * apart the way they did across the re-host. Prefer taking a {@link SignedLinks}
+ * over a base-URL string in new code; this wrapper exists for callers that
+ * already hold a base.
+ */
 export function buildMediaUrl(baseUrl: string, key: string, expiresAtMs: number, signature: string): string {
-  const path = key.split('/').map(encodeURIComponent).join('/');
-  return `${baseUrl.replace(/\/+$/, '')}/${path}?exp=${expiresAtMs}&sig=${signature}`;
+  return signedLinks(baseUrl).media(key, expiresAtMs, signature);
 }

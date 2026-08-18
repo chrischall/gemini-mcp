@@ -1012,7 +1012,11 @@ function hostedStorage(): {
   const tenant = () => tenantIdFor(readEnvVar('GEMINI_API_KEY') ?? 'local');
   return {
     mediaSink: createR2Sink(blob.bucket, {
-      signedBaseUrl: blob.baseUrl,
+      // The SAME `links` object the minter gets below. Media GETs and upload
+      // PUTs are one store reached two ways; handing each its own base URL is
+      // how the re-host moved the media links to /b/<registrationId>/ and left
+      // the upload links behind. One object, two shapes, no second edit.
+      links: blob.links,
       sign: blob.signRead,
       urlTtlMs: BLOB_URL_TTL_MS,
       // Hard ceiling on any PER-PERSIST override. `gemini_image_set` asks for
@@ -1028,7 +1032,7 @@ function hostedStorage(): {
       tenant,
     }),
     library: createR2Library(blob.bucket, { tenant }),
-    uploadUrls: createUploadUrlMinter({ baseUrl: blob.baseUrl, sign: blob.signWrite, tenant }),
+    uploadUrls: createUploadUrlMinter({ links: blob.links, sign: blob.signWrite, tenant }),
   };
 }
 

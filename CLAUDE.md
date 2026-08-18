@@ -91,12 +91,23 @@ src/
                   #   (stdio: resolveOutputDir + writeMedia, unchanged) and
                   #   createR2Sink() (hosted: object put → signed URL). `persistsFiles`
                   #   is the capability flag every disk-only feature gates on
+  signed-url.ts   # THE shape of a link into the object store — signedObjectUrl()
+                  #   + signedLinks(base) binding media GET and upload PUT to ONE
+                  #   base. buildMediaUrl/buildUploadUrl both delegate here; the
+                  #   blob store hands the same `links` object to the sink and
+                  #   the minter, so a re-host can't move one and not the other
   media-url.ts    # HMAC signing/verification for /media links + the zero-config
                   #   secret (MEDIA_URL_SECRET else generated once into OAUTH_KV)
   upload-url.ts   # signed PUT upload URLs: sign/verify (same secret as /media,
                   #   DIFFERENT payload shape so signatures can't cross
                   #   protocols) + createUploadUrlMinter (10-min TTL, keys
-                  #   up/<tenant>/…). Backs gemini_get_upload_url
+                  #   up/<tenant>/…). Backs gemini_get_upload_url. Throws at
+                  #   CONSTRUCTION with no links/baseUrl — mint is pure crypto,
+                  #   so a failure can never leave partial state
+  errors.ts       # describeError() (flattens the cause chain MCP drops), step()
+                  #   (labels the failing operation) and surfaceToolErrors()
+                  #   (wraps a server so every handler throw names the tool and
+                  #   the real error). index.ts applies it to every registrar
   library.ts      # per-account character/style library under lib/<tenant>/ in
                   #   R2 — records + copied image bytes, NO expiry (cleanup
                   #   skips lib/). createR2Library; gates the library tools
@@ -304,6 +315,19 @@ Two things to keep right:
 - **Signatures cover the FULL key** (`<account>/<slug>/<key>`), while this repo
   thinks in relative keys. `blob-store.ts` is the only place that knows the
   difference.
+- **One base URL builds both link shapes.** `blobStoreFromEnv` exposes `links`
+  (`src/signed-url.ts`), and `hostedStorage()` hands that same object to the
+  media sink and the upload-URL minter. Take `links`, never a base-URL string:
+  the re-host to mcp-host moved the media builder onto `/b/<registrationId>/`
+  and left the upload builder holding its own base, which is a class of bug the
+  shared object makes unrepresentable. `tests/upload-flow.test.ts` runs the whole
+  mint → PUT → r2_key → generation loop against a signature-verifying fake
+  gateway, and fails on exactly that split.
+- **The gateway's PUT answers a bare 2xx.** The retired Worker's `/put` returned
+  `201 { r2_key, size_bytes, … }`; the blob gateway does not. The `r2_key` a
+  caller keeps is the one `gemini_get_upload_url` minted, and the content type
+  is authenticated from the request **header** (`?ct=` is ours, and the gateway
+  ignores it) — so a PUT without the exact `Content-Type` is a 403.
 - **The four payload shapes must match mcp-host's `blob-key.ts` byte for byte.**
   `tests/blob-store.test.ts` restates them independently so a drift fails here
   rather than as a 403 in production. They are also the shapes the retired
@@ -332,7 +356,12 @@ Two things to keep right:
   rephrasing, safety filter"). HTTP error *bodies* are redacted and truncated for
   you — `createApiClient.fetchJson` runs `truncateErrorMessage` (Bearer/JWT
   redaction THEN length cap) on the response text before throwing. Don't hand-roll
-  body trimming.
+  body trimming. Put remediation in the **message**, not only `hint` — the host
+  shows the message and drops the hint (and drops `cause` too, which is why
+  `describeError` flattens the chain into the text). Wrap a distinct operation in
+  `step('what it was doing', …)` so a failure names it; `surfaceToolErrors`
+  (applied to every registrar in `index.ts`) adds the tool name and the flattened
+  chain on top, so nothing escapes as an unattributed throw.
 - **Result wrapper.** Use `emit()` / `textResult()`; don't hand-roll `content`
   arrays. `emit()` owns the inline-vs-disk branch.
 - **Binary-output-to-disk is NOT confirm-gated.** Writing a generated image is a

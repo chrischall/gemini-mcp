@@ -16,7 +16,11 @@ let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-jobs-')); });
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); client.session.reset(); });
 
-const tick = () => new Promise((r) => setImmediate(r));
+// A real timer, not setImmediate: finishing the job runs a dynamic import and
+// a disk write, and neither lands in the microtask/check phase. With
+// setImmediate the 50 iterations below could all elapse inside one busy tick,
+// which failed this test intermittently under a loaded parallel run.
+const tick = () => new Promise((r) => setTimeout(r, 2));
 // The registry is a module-level singleton, so a job started on one harness is
 // visible to gemini_get_result on another. Poll until it leaves 'running'.
 // `args` must be Record<string, unknown> (not `unknown`) to accept a real

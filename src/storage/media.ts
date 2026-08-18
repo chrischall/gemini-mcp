@@ -13,6 +13,7 @@
  */
 
 import { base64ToBytes } from '../bytes.js';
+import { signedLinks, type SignedLinks } from '../signed-url.js';
 
 /** One generated item to persist: raw base64 bytes plus the name to store it under. */
 export interface MediaItem {
@@ -156,8 +157,19 @@ export interface R2SinkOptions {
   /**
    * Base URL of the connector's own signed media route (`https://host/media`).
    * Used when `publicBaseUrl` is absent; requires {@link sign}.
+   *
+   * Prefer {@link links}: passing the store's bound link shapes instead of a
+   * bare base is what keeps this sink and the upload-URL minter pointed at the
+   * same host.
    */
   signedBaseUrl?: string;
+  /**
+   * The store's link shapes (media GET and upload PUT bound to one base).
+   * When present it — not {@link signedBaseUrl} — builds the URLs, and the
+   * minter is handed the very same object, so the two cannot be re-pointed
+   * independently by a re-host.
+   */
+  links?: SignedLinks;
   /** Mints the `?exp=&sig=` pair for {@link signedBaseUrl}. */
   sign?: (key: string, expiresAtMs: number) => Promise<string>;
   /** How long a signed URL stays valid; also reported as `expires_at`. */
@@ -228,7 +240,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
   const now = opts.now ?? (() => new Date());
   const randomId = opts.randomId ?? (() => crypto.randomUUID().slice(0, 8));
   const publicBase = opts.publicBaseUrl?.replace(/\/+$/, '');
-  const signedBase = opts.signedBaseUrl?.replace(/\/+$/, '');
+  const signedBase = opts.links?.base ?? opts.signedBaseUrl?.replace(/\/+$/, '');
   const ttlMs = opts.urlTtlMs ?? 0;
 
   const readPrefixes = [prefix, ...(opts.readPrefixes ?? [])];
@@ -307,9 +319,11 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
     // A bucket served directly (r2.dev or a custom domain) needs no signature.
     if (publicBase) return { ref: `${publicBase}/${key}`, key };
     if (signedBase && opts.sign) {
-      const { buildMediaUrl } = await import('../media-url.js');
       const signature = await opts.sign(key, expiresAtMs);
-      return { ref: buildMediaUrl(signedBase, key, expiresAtMs, signature), key, expiresAt: new Date(expiresAtMs).toISOString() };
+      // `signedLinks` is the ONE shape-owner shared with the upload-URL minter
+      // (src/signed-url.ts) — never hand-build the query here.
+      const link = (opts.links ?? signedLinks(signedBase)).media(key, expiresAtMs, signature);
+      return { ref: link, key, expiresAt: new Date(expiresAtMs).toISOString() };
     }
     // Neither configured. Unreachable in the Worker (which always passes its
     // own origin), so this is a misconfiguration rather than a mode — say so
