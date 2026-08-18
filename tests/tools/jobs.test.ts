@@ -23,8 +23,16 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMo
 const tick = () => new Promise((r) => setTimeout(r, 2));
 // And a DEADLINE, not an iteration count: how many polls fit before the work
 // lands is a property of the runner's load, so a count is a wall-clock budget
-// written in the wrong unit. Vitest's own timeout is the backstop above this.
+// written in the wrong unit.
+//
+// It must stay comfortably UNDER the test's own timeout, which is why that
+// timeout is set explicitly below rather than left at vitest's default —
+// measured at exactly 5000ms, the same number, and started earlier (at test
+// entry, before the two harnesses are built). Equal budgets meant the outer
+// clock won the race and replaced the message below with a generic "Test timed
+// out in 5000ms", which is the opposite of the point. Raised in review of #150.
 const POLL_DEADLINE_MS = 5_000;
+const TEST_TIMEOUT_MS = 20_000;
 // The registry is a module-level singleton, so a job started on one harness is
 // visible to gemini_get_result on another. Poll until it leaves 'running'.
 // `args` must be Record<string, unknown> (not `unknown`) to accept a real
@@ -61,7 +69,7 @@ describe('gemini_get_result', () => {
 
     await gen.close();
     await jobs.close();
-  });
+  }, TEST_TIMEOUT_MS);
 
   it('returns an error for an unknown/expired job id', async () => {
     const jobs = await createTestHarness((srv) => registerJobTools(srv, client));
