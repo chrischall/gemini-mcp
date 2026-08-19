@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/chrischall/gemini-mcp/compare/v1.6.2...v1.7.0) (2026-08-19)
+
+
+### Features
+
+* **jobs:** persist async jobs so a hosted generation survives the machine stopping ([#152](https://github.com/chrischall/gemini-mcp/issues/152)) ([8eb8100](https://github.com/chrischall/gemini-mcp/commit/8eb8100381e5cf0738465f013165fc7e7301403d))
+
 ## [1.6.2](https://github.com/chrischall/gemini-mcp/compare/v1.6.1...v1.6.2) (2026-08-18)
 
 
