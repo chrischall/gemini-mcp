@@ -195,7 +195,12 @@ describe('sidecars are gated on a real filesystem', () => {
     // It may *mention* the sidecar/output dir — but only to say there is none.
     expect(String(body.timeout_risk)).toMatch(/no output dir and no <image>\.json sidecar/i);
     expect(String(body.timeout_risk)).not.toMatch(/still written to disk|look in the output dir/i);
-    expect(String(body.timeout_risk)).toMatch(/async/i);
+    // …and it must offer the recovery route this runtime actually has. That is
+    // `max_wait_ms`, NOT `async: true`: an immediate hand-off releases the
+    // request, and the open request is the only thing keeping the executor
+    // alive here (src/job-store.ts). Recommending async recommended the bug.
+    expect(String(body.timeout_risk)).toMatch(/max_wait_ms/);
+    expect(String(body.timeout_risk)).not.toMatch(/`async: true`/);
   });
 });
 

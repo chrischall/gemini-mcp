@@ -288,6 +288,61 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
         });
       },
     );
+
+    // The recovery path for media whose RESULT was lost rather than never
+    // produced — a background job killed with its machine still wrote its
+    // images, but every reference to them went with the response. Without this
+    // the only way to see them again is to pay for the generation twice.
+    server.registerTool(
+      'gemini_list_recent_media',
+      {
+        description:
+          'List images/video/audio this connector recently generated for your account, newest first, with fresh openable URLs. ' +
+          'Use it when a result was lost — a generation whose response never arrived, or an async job whose id came back unknown — ' +
+          'to find what already exists BEFORE re-running (and re-paying for) it. Keywords: lost result, orphaned job, ' +
+          'missing image, what did I generate, recover, recent media.',
+        annotations: { readOnlyHint: true, openWorldHint: false },
+        inputSchema: {
+          limit: z.number().int().positive().max(100).optional().describe('How many to return (default 20, newest first)'),
+          since_day: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .optional()
+            .describe('Only media stored on or after this UTC day, e.g. "2026-08-18"'),
+        },
+      },
+      async (args) => {
+        const sink = client.mediaSink;
+        if (!sink?.listRecent) {
+          throw new McpToolError('This server writes generated files to disk — list the output directory instead.', {
+            hint: 'gemini_list_recent_media applies to the hosted connector only.',
+          });
+        }
+        const limit = args.limit ?? 20;
+        const page = sink.listRecentPage
+          ? await sink.listRecentPage({ limit, sinceDay: args.since_day })
+          : { media: await sink.listRecent({ limit, sinceDay: args.since_day }), truncated: false };
+        const found = page.media;
+        return textResult({
+          count: found.length,
+          // Never let a bounded walk pass for the whole picture: concluding an
+          // image is gone is what makes someone pay to generate it twice.
+          ...(page.truncated ? { truncated: true } : {}),
+          media: found.map((m) => ({
+            r2_key: m.key,
+            day: m.day,
+            name: m.name,
+            ...(m.sizeBytes !== undefined ? { size_bytes: m.sizeBytes } : {}),
+            ...(m.url ? { url: m.url, curl_hint: `curl -sS -o ${downloadFilename(m.key)} "${m.url}"` } : {}),
+            ...(m.expiresAt ? { expires_at: m.expiresAt } : {}),
+          })),
+          hint: found.length
+            ? 'Ordered by the day each object was stored (the store keeps no finer timestamp), newest first. Re-sign any expired link with gemini_sign_media.' +
+              (page.truncated ? ' More media exists than is listed here — narrow with since_day, or raise limit, before concluding something is missing.' : '')
+            : 'Nothing stored in that window. Media is swept on a retention schedule, so an older generation may already be gone.',
+        });
+      },
+    );
   }
 
   server.registerTool(

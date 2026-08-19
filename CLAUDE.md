@@ -118,6 +118,9 @@ src/
                   #   backs both chain recoveries in tools/interact.ts. Never throws
                   #   (missing dir / malformed JSON are skipped) — recovery is
                   #   best-effort and must not fail a recoverable call
+  job-store.ts    # DURABLE job records over the blob store (jobs/<tenant>/…) —
+                  #   what makes a job survive the hosted machine stopping.
+                  #   Heartbeat + executor-lost rule; best-effort, never throws
   jobs.ts         # JobRegistry — in-memory job store, ONE PER SESSION (never a
                   #   module global): dispatch() dedups in-flight/keyed identical
                   #   generation calls (idempotency #53) and backs async job
@@ -196,6 +199,7 @@ shared util, configured non-Bearer.
 | `gemini_list_files` | `tools/files.ts` | `GET /v1beta/files?pageSize=N` | read |
 | `gemini_delete_file` | `tools/files.ts` | `DELETE /v1beta/files/{id}` | write (confirm-gated) |
 | `gemini_sign_media` | `tools/files.ts` | none (re-signs an R2 key via `mediaSink.resign`) — **hosted deployments only**, not registered on disk sinks | read |
+| `gemini_list_recent_media` | `tools/files.ts` | none (lists `gen/<tenant>/` via `mediaSink.listRecent`) — **hosted only** | read |
 | `gemini_get_upload_url` | `tools/uploads.ts` | none (mints a signed `PUT /put/<key>` URL, ~10 min TTL) — **hosted only**, gated on `client.uploadUrls` | read |
 | `gemini_save_character` / `gemini_list_characters` / `gemini_delete_character` | `tools/library.ts` | R2 `lib/<tenant>/characters/…` (no expiry) — **hosted only**, gated on `client.library`; delete confirm-gated | write / read / write |
 | `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | `tools/library.ts` | R2 `lib/<tenant>/styles/…` (no expiry) — **hosted only** | write / read / write |
@@ -272,10 +276,20 @@ levels of dedup, chosen to never break intentional same-prompt *variations*:
 **in-flight** — a second identical request while the first is still running
 attaches to it (a host-timeout retry race, never a deliberate variation); and
 **recently-completed** — only unlocked by an explicit `idempotency_key`, returns
-the recorded result for `JOB_TTL_MS` (10 min). Either way the reused result is
-annotated `reused: true` + `reused_job_id`, and no second upstream (billable)
-call is made. Failed jobs are not reused. Registry is bounded (TTL + `JOB_MAX`);
-`client.session.reset()` clears it between tests.
+the recorded result for `JOB_TTL_MS` (10 min) in memory, or
+`DURABLE_JOB_REUSE_MS` (24h) from the durable store. Either way the reused
+result is annotated `reused: true` + `reused_job_id`, and no second upstream
+(billable) call is made. Failed jobs are not reused. Registry is bounded
+(TTL + `JOB_MAX`); `client.session.reset()` clears it between tests.
+
+**A durable replay is gated on the FINGERPRINT, not just the key.** The two
+windows differ because they are bounded by different things — the in-memory one
+by a process that no longer exists, the durable one only by storage retention
+(~30 days). An `idempotency_key` is a habit as often as a promise (`"1"`,
+`"test"`, `"retry"`), so replaying on the key alone would hand back a *different
+prompt's* image weeks later and label it a cache hit. `durableByKey` therefore
+requires `record.fingerprint === fingerprint` and an age inside
+`DURABLE_JOB_REUSE_MS`; anything else is a genuinely new generation.
 
 **The registry is per SESSION, not per process** — it lives at
 `client.session.jobs` (`src/session.ts`). Hosted, one
@@ -328,6 +342,23 @@ Two things to keep right:
   caller keeps is the one `gemini_get_upload_url` minted, and the content type
   is authenticated from the request **header** (`?ct=` is ours, and the gateway
   ignores it) — so a PUT without the exact `Content-Type` is a 403.
+- **The machine stops whenever no request is in flight, and that is a
+  correctness constraint, not a cost note.** The runner is a Fly machine with
+  `auto_stop_machines = "stop"` / `min_machines_running = 0`; mcp-host's own
+  docs put it as *"an open connection is exactly what stops the machine
+  stopping"*. So an open request is what keeps this server ALIVE, and anything
+  that answers immediately and keeps working in the background is racing a
+  shutdown it will lose. This is why `async: true` is served here as a bounded
+  in-band wait (`asyncWaitFallbackMs`, 4 min) rather than an immediate hand-off,
+  and why `max_wait_ms` is the advice in every hint. Don't "optimise" a
+  generation into a fire-and-forget background task.
+- **Job records therefore live in the blob store, not just memory**
+  (`src/job-store.ts`). A `running` record is heartbeated every 60s; a record
+  whose stamp is older than 3 beats is read as `failed: executor lost`, decided
+  at READ time so a machine that never comes back still resolves its jobs.
+  Durability buys the RECORD, never the EXECUTION — nothing resumes a killed
+  generation, because re-running it would re-bill it. What a dead job DID write
+  is still in `gen/`, which is what `gemini_list_recent_media` is for.
 - **The four payload shapes must match mcp-host's `blob-key.ts` byte for byte.**
   `tests/blob-store.test.ts` restates them independently so a drift fails here
   rather than as a 403 in production. They are also the shapes the retired
@@ -344,10 +375,10 @@ Two things to keep right:
   reachable from that script does not run in CI *at all*. It therefore chains:
   node typecheck (`tsconfig.test.json`, which covers `tests/` — `tsconfig.json`
   scopes `include` to `src` for the build, so tests are otherwise unchecked) →
-  `vitest run` (node pool) → `worker:test` (which itself chains `worker:typecheck`,
-  the only thing that typechecks `src/worker.ts` / `src/gemini-auth.ts`, and runs
-  the workers pool under workerd). **Add new gates here, not to the workflow
-  file** — a PR that edits `.github/workflows/*` can't be auto-reviewed (the
+  `vitest run` (node pool). There is no workers-pool stage any more: the
+  Cloudflare Worker connector was retired when this MCP moved to mcp-host, and
+  `src/worker.ts` / `src/gemini-auth.ts` no longer exist. **Add new gates here,
+  not to the workflow file** — a PR that edits `.github/workflows/*` can't be auto-reviewed (the
   Claude App validates the workflow against the default branch, so the review
   emits no verdict and the PR never arms), which turns a one-line CI change into
   a manual merge. `tests/ci-gates.test.ts` guards the chain.
@@ -579,7 +610,12 @@ write-verification, transport archetypes, testing traps) live in
 - **Don't register tools that can't be tested against a mocked `fetchImpl`** (and a
   mocked clipboard `Runner`). All network/shell access must be injectable.
 - **Don't bump versions speculatively.** release-please owns that.
-- **Don't add module-scope state, `import.meta.url`, top-level `await` or I/O to
-  anything `src/worker.ts` imports.** The first crashes the isolate on deploy
-  (invisible to the workers-pool suite); the second leaks state between
-  authenticated connector sessions. See Quirks.
+- **Don't add module-scope mutable state to `src/`.** One hosted child serves
+  every session of this registration at once, so a module-level `Map`/`let` is
+  shared by all of them. Put it in `SessionState` instead. (The `import.meta.url`
+  / top-level-`await` half of this rule was about the retired Worker; `client.ts`
+  still avoids them, but the failure mode is historical.) See Quirks.
+- **Don't reach for Cloudflare primitives in `src/`.** There is no Worker, no KV,
+  no Durable Object and no Queue in reach — the hosted child's environment is
+  allowlist-only. The only durable store it can address is mcp-host's blob store
+  (`src/blob-store.ts`), which is what `src/job-store.ts` uses.

@@ -69,7 +69,10 @@ export const asyncSchema = z
   .boolean()
   .optional()
   .describe(
-    'Run in the background and return a job_id immediately instead of the image, so a long (Pro/4K) generation cannot hit the host tools/call timeout (-32001). Poll gemini_get_result with the job_id to fetch the result (jobs are per-process and expire ~10 min after completion).',
+    'Run in the background and return a job_id immediately instead of the image, so a long (Pro/4K) generation cannot hit ' +
+      'the host tools/call timeout (-32001). Poll gemini_get_result with the job_id to fetch the result. ' +
+      'PREFER `max_wait_ms` on the hosted connector: it runs where the executor is only guaranteed to stay alive while the ' +
+      'request is open, so this option is served there as a bounded wait rather than an immediate hand-off.',
   );
 
 /**
@@ -444,11 +447,18 @@ export function timeoutRiskHint(opts: { model: string; imageSize?: string; count
     .join(' + ');
   const lead = `Slow config (${why}) can exceed a host's tools/call timeout (e.g. Claude Desktop ~30s, error -32001). `;
   if (opts.persistsFiles === false) {
+    // Deliberately NOT `async: true`. This connector runs on a machine that is
+    // stopped whenever no request is in flight, so an immediate hand-off is
+    // what gets a generation killed mid-flight; holding the request open is
+    // what keeps it alive. Recommending async here was recommending the
+    // failure mode (see src/job-store.ts).
     return (
       lead +
       `This connector has no filesystem, so a lost response cannot be recovered from disk — there is no output dir and no ` +
-      `<image>.json sidecar. Use \`async: true\` to get a job_id immediately and poll gemini_get_result, ` +
-      `or use a Flash model / drop image_size to 1K/2K for a faster in-band result.`
+      `<image>.json sidecar. Set \`max_wait_ms\` (e.g. 240000): keeping the request open is also what keeps the generation ` +
+      `running here, and a batch that outlives the budget hands back a job_id to poll with gemini_get_result. ` +
+      `For a faster in-band result use a Flash model or drop image_size to 1K/2K. If a result is ever lost, ` +
+      `list what was already generated with gemini_list_recent_media before paying for it again.`
     );
   }
   return (

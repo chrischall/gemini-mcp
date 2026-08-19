@@ -194,7 +194,9 @@ export function createBlobBucket(opts: BlobStoreOptions) {
       // Keys come back relative to this registration's space, which is exactly
       // the key space the library already thinks in.
       return (await res.json()) as {
-        objects: Array<{ key: string }>;
+        // `size` is what the gateway sends alongside each key; it surfaces as
+        // `media[].size_bytes` in gemini_list_recent_media.
+        objects: Array<{ key: string; size?: number }>;
         truncated: boolean;
         cursor?: string;
       };

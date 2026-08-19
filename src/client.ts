@@ -5,6 +5,7 @@ import { createDiskSink, createR2Sink, tenantIdFor, type MediaSink } from './sto
 import { createR2Library, type CharacterLibrary } from './library.js';
 import { createUploadUrlMinter, type UploadUrlMinter } from './upload-url.js';
 import { blobStoreFromEnv } from './blob-store.js';
+import { createBlobJobStore, type JobStore } from './job-store.js';
 import { SessionState } from './session.js';
 import { fetchRemoteImage, type FetchedImage } from './fetch-image.js';
 
@@ -335,6 +336,11 @@ export interface GeminiClientOptions {
    * `gemini_get_upload_url`.
    */
   uploadUrls?: UploadUrlMinter;
+  /**
+   * Durable job records. Supplied by the hosted deployment, absent on a local
+   * stdio install where the process outlives the work it starts.
+   */
+  jobStore?: JobStore;
 }
 
 export class GeminiClient {
@@ -377,6 +383,13 @@ export class GeminiClient {
     // A replayed idempotent result must not hand back an expired media URL, so
     // the job registry needs a way to re-sign from the stable r2_key.
     this.session.jobs.resigner = this.mediaSink;
+    // Durable job records, where the deployment has somewhere to keep them.
+    // Without this the hosted connector loses a job the moment its machine
+    // stops — which it does as soon as no request is in flight (job-store.ts).
+    this.session.jobs.store = opts.jobStore;
+    // And on that runtime, `async: true` is served by HOLDING the request:
+    // releasing it is what lets the executor be reclaimed mid-generation.
+    if (opts.jobStore) this.session.jobs.asyncWaitFallbackMs = HOSTED_ASYNC_WAIT_MS;
     this.explicitApiKey = opts.apiKey?.trim() || undefined;
     // Never store the global `fetch` raw on the instance: it would be invoked
     // as `this.fetchImpl(...)`, handing native fetch this GeminiClient as its
@@ -1002,6 +1015,7 @@ function hostedStorage(): {
   mediaSink?: MediaSink;
   library?: CharacterLibrary;
   uploadUrls?: UploadUrlMinter;
+  jobStore?: JobStore;
 } {
   const blob = blobStoreFromEnv();
   if (!blob) return {};
@@ -1033,8 +1047,25 @@ function hostedStorage(): {
     }),
     library: createR2Library(blob.bucket, { tenant }),
     uploadUrls: createUploadUrlMinter({ links: blob.links, sign: blob.signWrite, tenant }),
+    // Job records go in the same store as the media, for the same reason: this
+    // runtime's machine stops whenever no request is in flight, taking the
+    // child — and an in-memory registry — with it (src/job-store.ts).
+    jobStore: createBlobJobStore(blob.bucket, { tenant }),
   };
 }
+
+/**
+ * How long a hosted `async: true` call holds the request open before handing
+ * back a job id.
+ *
+ * Not a tuning knob so much as the shape of the platform: holding the request
+ * is what keeps the executor alive, so this is "how long we are willing to keep
+ * the machine up for one generation". Four minutes is the value observed to
+ * work in practice against claude.ai, and comfortably covers a Pro/4K image or
+ * a modest set; anything slower hands back a durable job id rather than
+ * silently dying, which is the behaviour this whole change is for.
+ */
+const HOSTED_ASYNC_WAIT_MS = 240_000;
 
 /**
  * How long a freshly-minted media link lives.

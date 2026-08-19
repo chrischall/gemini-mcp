@@ -233,10 +233,10 @@ describe('dispatch — async job handle', () => {
     const d = deferred<CallToolResult>();
     const start = await registry.dispatch({ toolName: 't', fingerprint: 'fp', async: true }, () => d.promise);
     const jobId = metaOf(start).job_id as string;
-    expect(metaOf(registry.getResult(jobId)).status).toBe('running');
+    expect(metaOf(await registry.getResult(jobId)).status).toBe('running');
     d.resolve(textResultOf({ images: ['a.png'], model: 'm' }));
     await settle();
-    expect(metaOf(registry.getResult(jobId)).images).toEqual(['a.png']);
+    expect(metaOf(await registry.getResult(jobId)).images).toEqual(['a.png']);
   });
 
   it('getJobResult throws with the recorded message for a failed job', async () => {
@@ -245,11 +245,11 @@ describe('dispatch — async job handle', () => {
     const jobId = metaOf(start).job_id as string;
     d.reject(new McpToolError('kaboom'));
     await settle();
-    expect(() => registry.getResult(jobId)).toThrow('kaboom');
+    await expect(registry.getResult(jobId)).rejects.toThrow('kaboom');
   });
 
-  it('getJobResult throws for an unknown/expired job id', () => {
-    expect(() => registry.getResult('nope')).toThrow();
+  it('getJobResult throws for an unknown/expired job id', async () => {
+    await expect(registry.getResult('nope')).rejects.toThrow();
   });
 
   it('an async call attaches to a matching running job by key (same job_id)', async () => {
@@ -290,7 +290,7 @@ describe('dispatch — waitMs budget (max_wait_ms)', () => {
 
     d.resolve(textResultOf({ images: ['late.png'] }));
     await new Promise((r) => setTimeout(r, 0));
-    expect(metaOf(registry.getResult(h.job_id as string)).images).toEqual(['late.png']);
+    expect(metaOf(await registry.getResult(h.job_id as string)).images).toEqual(['late.png']);
   });
 
   it('propagates a failure that lands within the budget', async () => {

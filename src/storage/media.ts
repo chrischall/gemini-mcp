@@ -97,6 +97,29 @@ export interface MediaSink {
    */
   resign?(key: string): Promise<PersistedMedia | undefined>;
   /**
+   * Recently generated objects belonging to THIS session, newest first.
+   *
+   * Object-storage sinks only — the disk sink has an output directory, which is
+   * already a better version of this.
+   *
+   * Exists for the case where a result was lost rather than never produced: a
+   * background job killed with its machine (see `src/job-store.ts`) still wrote
+   * its images, but every reference to them died with the response. Without a
+   * listing those bytes are unreachable and the only recourse is to pay for the
+   * generation again.
+   */
+  listRecent?(opts: { limit?: number; sinceDay?: string }): Promise<RecentMedia[]>;
+  /**
+   * As {@link listRecent}, but reporting whether the walk actually reached the
+   * end of the key space.
+   *
+   * The walk is bounded, so on a large bucket the answer is a SUBSET — and a
+   * subset presented as "your recent media, newest first" is exactly how
+   * someone concludes an image is gone and pays to generate it again. The tool
+   * surfaces this flag rather than letting a cap pass for completeness.
+   */
+  listRecentPage?(opts: { limit?: number; sinceDay?: string }): Promise<{ media: RecentMedia[]; truncated: boolean; scannedPages: number }>;
+  /**
    * One-line, honest description of where the refs point — echoed into the
    * result payload so the caller is never left guessing whether it got a path,
    * a fetchable URL, or an opaque object ref. `undefined` for the disk sink,
@@ -139,6 +162,25 @@ export interface MediaBucket {
   ): Promise<unknown>;
   /** Present on a real R2 binding; optional so tests can supply a put-only fake. */
   get?(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer>; httpMetadata?: { contentType?: string } } | null>;
+  /** Present on the blob store; backs {@link MediaSink.listRecent}. */
+  list?(options: { prefix?: string; cursor?: string; limit?: number }): Promise<{
+    objects: Array<{ key: string; size?: number }>;
+    truncated: boolean;
+    cursor?: string;
+  }>;
+}
+
+/** One stored object, as {@link MediaSink.listRecent} reports it. */
+export interface RecentMedia {
+  key: string;
+  /** The `YYYY-MM-DD` the object key was written under. */
+  day: string;
+  /** The human-meaningful part of the filename, without the random id or extension. */
+  name: string;
+  sizeBytes?: number;
+  /** A freshly-signed, openable link. */
+  url?: string;
+  expiresAt?: string;
 }
 
 export interface R2SinkOptions {
@@ -218,6 +260,31 @@ export async function tenantIdFor(secret: string): Promise<string> {
 // prefix would make every URL read `/media/media/…`.
 const KEY_PREFIX_DEFAULT = 'gen';
 
+/**
+ * How many listing pages one `listRecent` call will walk. A listing walk is
+ * unbounded work and this runs on a tool call, so it is capped — and the cap
+ * is REPORTED (see `listRecentPage`) rather than silently truncating.
+ */
+const MAX_LIST_PAGES = 10;
+
+/**
+ * Split a stored key back into the day it was written and the name it was asked
+ * for — the inverse of the key format `persist` builds.
+ *
+ * `undefined` for anything that is not a dated object key, so a stray object
+ * under the prefix is skipped rather than turned into a listing failure.
+ */
+function parseMediaKey(key: string, prefix: string): { day: string; name: string } | undefined {
+  const rest = key.slice(prefix.length);
+  const match = /^(\d{4}-\d{2}-\d{2})\/(.+)$/.exec(rest);
+  if (!match) return undefined;
+  // Drop the random id `persist` prepends and the extension, leaving the
+  // caller's own slug — which is what makes a listing recognisable to a human
+  // looking for "the summer camp ones".
+  const name = match[2].replace(/^[0-9a-f]{4,}-/i, '').replace(/\.[A-Za-z0-9]+$/, '');
+  return { day: match[1], name: name || match[2] };
+}
+
 /** Object-key-safe name: no slashes, no dot-segments, never empty. */
 export function safeKeySegment(base: string): string {
   const cleaned = base
@@ -276,6 +343,49 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
         bytes: new Uint8Array(await object.arrayBuffer()),
         mimeType: object.httpMetadata?.contentType ?? 'application/octet-stream',
       };
+    },
+    async listRecent(opts = {}) {
+      return (await this.listRecentPage!(opts)).media;
+    },
+    async listRecentPage({ limit = 20, sinceDay } = {}) {
+      if (!bucket.list) return { media: [], truncated: false, scannedPages: 0 };
+      // Scoped at the STORE, not filtered afterwards: asking only for our own
+      // prefix means another account's keys are never in hand to leak by a
+      // filtering mistake.
+      const prefix = await ownPrefix();
+      const found: RecentMedia[] = [];
+      let cursor: string | undefined;
+      let truncated = false;
+      let scannedPages = 0;
+      // Bounded: a listing walk is unbounded work, and this runs on a tool call.
+      for (let page = 0; page < MAX_LIST_PAGES; page++) {
+        scannedPages = page + 1;
+        const listed = await bucket.list({ prefix, cursor, limit: 1000 });
+        for (const obj of listed.objects) {
+          const parsed = parseMediaKey(obj.key, prefix);
+          if (!parsed) continue; // not a dated object key — skip, never throw
+          if (sinceDay && parsed.day < sinceDay) continue;
+          found.push({ ...parsed, key: obj.key, ...(obj.size !== undefined ? { sizeBytes: obj.size } : {}) });
+        }
+        if (!listed.truncated || !listed.cursor) break;
+        cursor = listed.cursor;
+        // Ran out of budget with more to read: the answer is a subset, and
+        // must say so rather than passing for the whole picture.
+        if (page === MAX_LIST_PAGES - 1) truncated = true;
+      }
+      // Keys sort lexicographically by day, and the id after it is random, so
+      // ordering is by day — which is the honest grain: the store records no
+      // per-object timestamp we could do better with.
+      found.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : a.key < b.key ? 1 : -1));
+      const page = found.slice(0, limit);
+      const expiresAtMs = now().getTime() + ttlMs;
+      const media = await Promise.all(
+        page.map(async (entry) => {
+          const link = await describe(entry.key, expiresAtMs);
+          return { ...entry, ...(link.unavailable ? {} : { url: link.ref, expiresAt: link.expiresAt }) };
+        }),
+      );
+      return { media, truncated: truncated || found.length > limit, scannedPages };
     },
     async resign(key) {
       if (!(await owned(key))) return undefined;
