@@ -110,6 +110,16 @@ export interface MediaSink {
    */
   listRecent?(opts: { limit?: number; sinceDay?: string }): Promise<RecentMedia[]>;
   /**
+   * As {@link listRecent}, but reporting whether the walk actually reached the
+   * end of the key space.
+   *
+   * The walk is bounded, so on a large bucket the answer is a SUBSET — and a
+   * subset presented as "your recent media, newest first" is exactly how
+   * someone concludes an image is gone and pays to generate it again. The tool
+   * surfaces this flag rather than letting a cap pass for completeness.
+   */
+  listRecentPage?(opts: { limit?: number; sinceDay?: string }): Promise<{ media: RecentMedia[]; truncated: boolean; scannedPages: number }>;
+  /**
    * One-line, honest description of where the refs point — echoed into the
    * result payload so the caller is never left guessing whether it got a path,
    * a fetchable URL, or an opaque object ref. `undefined` for the disk sink,
@@ -251,6 +261,13 @@ export async function tenantIdFor(secret: string): Promise<string> {
 const KEY_PREFIX_DEFAULT = 'gen';
 
 /**
+ * How many listing pages one `listRecent` call will walk. A listing walk is
+ * unbounded work and this runs on a tool call, so it is capped — and the cap
+ * is REPORTED (see `listRecentPage`) rather than silently truncating.
+ */
+const MAX_LIST_PAGES = 10;
+
+/**
  * Split a stored key back into the day it was written and the name it was asked
  * for — the inverse of the key format `persist` builds.
  *
@@ -327,16 +344,22 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
         mimeType: object.httpMetadata?.contentType ?? 'application/octet-stream',
       };
     },
-    async listRecent({ limit = 20, sinceDay } = {}) {
-      if (!bucket.list) return [];
+    async listRecent(opts = {}) {
+      return (await this.listRecentPage!(opts)).media;
+    },
+    async listRecentPage({ limit = 20, sinceDay } = {}) {
+      if (!bucket.list) return { media: [], truncated: false, scannedPages: 0 };
       // Scoped at the STORE, not filtered afterwards: asking only for our own
       // prefix means another account's keys are never in hand to leak by a
       // filtering mistake.
       const prefix = await ownPrefix();
       const found: RecentMedia[] = [];
       let cursor: string | undefined;
+      let truncated = false;
+      let scannedPages = 0;
       // Bounded: a listing walk is unbounded work, and this runs on a tool call.
-      for (let page = 0; page < 10; page++) {
+      for (let page = 0; page < MAX_LIST_PAGES; page++) {
+        scannedPages = page + 1;
         const listed = await bucket.list({ prefix, cursor, limit: 1000 });
         for (const obj of listed.objects) {
           const parsed = parseMediaKey(obj.key, prefix);
@@ -346,6 +369,9 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
         }
         if (!listed.truncated || !listed.cursor) break;
         cursor = listed.cursor;
+        // Ran out of budget with more to read: the answer is a subset, and
+        // must say so rather than passing for the whole picture.
+        if (page === MAX_LIST_PAGES - 1) truncated = true;
       }
       // Keys sort lexicographically by day, and the id after it is random, so
       // ordering is by day — which is the honest grain: the store records no
@@ -353,12 +379,13 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       found.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : a.key < b.key ? 1 : -1));
       const page = found.slice(0, limit);
       const expiresAtMs = now().getTime() + ttlMs;
-      return Promise.all(
+      const media = await Promise.all(
         page.map(async (entry) => {
           const link = await describe(entry.key, expiresAtMs);
           return { ...entry, ...(link.unavailable ? {} : { url: link.ref, expiresAt: link.expiresAt }) };
         }),
       );
+      return { media, truncated: truncated || found.length > limit, scannedPages };
     },
     async resign(key) {
       if (!(await owned(key))) return undefined;

@@ -109,3 +109,45 @@ describe('listRecent', () => {
     expect(createDiskSink().listRecent).toBeUndefined();
   });
 });
+
+describe('listRecent is honest about incomplete coverage', () => {
+  /**
+   * "No silent caps." The walk is bounded, so on a large bucket the listing is
+   * a subset — and a subset presented as "newest first" reads as the complete
+   * picture. That is the exact failure mode this tool exists to prevent: a
+   * caller concluding their image is gone and paying to make it again.
+   */
+  function pagedBucket(pages: number) {
+    let served = 0;
+    return {
+      async put() { return undefined; },
+      async get() { return { arrayBuffer: async () => new ArrayBuffer(0) }; },
+      async list() {
+        served += 1;
+        return {
+          objects: [{ key: `gen/${TENANT}/2026-08-1${served % 10}/${served}-thing.png`, size: 1 }],
+          truncated: served < pages,
+          cursor: `c${served}`,
+        };
+      },
+    } as never;
+  }
+
+  function pagedSink(pages: number) {
+    return createR2Sink(pagedBucket(pages), {
+      links: { base: 'https://host/b/reg', media: (k, e, s) => `https://host/b/reg/${k}?exp=${e}&sig=${s}`, upload: () => '' },
+      sign: async () => 'SIG',
+      urlTtlMs: 3600_000,
+      tenant: TENANT,
+      now: () => new Date('2026-08-19T12:00:00Z'),
+    });
+  }
+
+  it('reports complete coverage when the walk reached the end', async () => {
+    expect((await pagedSink(3).listRecentPage!({ limit: 50 })).truncated).toBe(false);
+  });
+
+  it('reports truncation when the page budget ran out first', async () => {
+    expect((await pagedSink(500).listRecentPage!({ limit: 50 })).truncated).toBe(true);
+  });
+});

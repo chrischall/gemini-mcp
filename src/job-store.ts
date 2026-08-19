@@ -90,7 +90,13 @@ export interface JobRecord {
   updatedAt: number;
   error?: { message: string; hint?: string };
   result?: CallToolResult;
-  resultOmitted?: boolean;
+  /**
+   * Why the result was not stored, when it was not. The two reasons need
+   * different remediation — "re-run without inline: true" is unactionable
+   * advice for a caller who never passed it — so the reason is recorded rather
+   * than inferred at read time.
+   */
+  resultOmitted?: 'inline' | 'too_large';
 }
 
 /**

@@ -51,10 +51,33 @@ interface JobEntry {
   error?: { message: string; hint?: string }; // set on 'failed'
   createdAt: number;
   settledAt?: number;
+  /**
+   * Serializes this job's durable writes. Two writers race for one record — the
+   * heartbeat and the settle handler — and the record they write is not
+   * commutative: `running` on top of `done` reads as an executor that vanished,
+   * turning a successful generation into a reported failure. Chaining makes the
+   * order of ISSUE the order of ARRIVAL.
+   */
+  writeChain?: Promise<unknown>;
 }
 
 /** Recently-completed jobs are reusable by key for this long, then evicted. */
 const JOB_TTL_MS = 600_000; // 10 min
+
+/**
+ * How long a DURABLE record stays reusable by idempotency key.
+ *
+ * Longer than {@link JOB_TTL_MS} on purpose: the in-memory window is bounded by
+ * a process that no longer exists, and the case this covers — a retry after the
+ * hosted machine went to sleep — can easily land further out than ten minutes.
+ * Still bounded, because a stored record survives for the blob store's ~30-day
+ * retention and silently replaying a month-old generation is a wrong answer
+ * that looks like a cache hit.
+ *
+ * 24h is also the longest a signed media link can live here, so a replay inside
+ * this window is one whose URLs can still be re-minted from their keys.
+ */
+const DURABLE_JOB_REUSE_MS = 24 * 60 * 60 * 1000;
 /** Hard cap on retained entries (oldest-settled evicted first). */
 const JOB_MAX = 64;
 
@@ -211,12 +234,12 @@ function jobHandle(jobId: string, status: JobStatus, durable = false): CallToolR
  */
 const MAX_PERSISTED_RESULT_BYTES = 64 * 1024;
 
-function persistableResult(result: CallToolResult): { result?: CallToolResult; resultOmitted?: boolean } {
-  if ((result.content ?? []).some((block) => block.type !== 'text')) return { resultOmitted: true };
+function persistableResult(result: CallToolResult): { result?: CallToolResult; resultOmitted?: 'inline' | 'too_large' } {
+  if ((result.content ?? []).some((block) => block.type !== 'text')) return { resultOmitted: 'inline' };
   try {
-    if (JSON.stringify(result).length > MAX_PERSISTED_RESULT_BYTES) return { resultOmitted: true };
+    if (JSON.stringify(result).length > MAX_PERSISTED_RESULT_BYTES) return { resultOmitted: 'too_large' };
   } catch {
-    return { resultOmitted: true };
+    return { resultOmitted: 'too_large' };
   }
   return { result };
 }
@@ -295,7 +318,15 @@ export class JobRegistry {
 
   /** Await outstanding durable writes. Tests only — handlers never need it. */
   async drain(): Promise<void> {
-    while (this.pending.size) await Promise.allSettled([...this.pending]);
+    // Yield a macrotask first so a settle handler that has already fired gets
+    // its write queued before we look. Deliberately flushes only what is
+    // ISSUABLE: a job still running has no terminal write to wait for, and
+    // blocking on one would hang any test that drains before finishing a job.
+    for (let round = 0; round < 50; round++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (!this.pending.size) return;
+      await Promise.allSettled([...this.pending]);
+    }
   }
 
   /**
@@ -308,12 +339,28 @@ export class JobRegistry {
    */
   async beat(): Promise<void> {
     if (!this.store) return;
-    const at = this.now();
     await Promise.allSettled(
       [...this.jobs.values()]
         .filter((e) => e.status === 'running')
-        .map((e) => this.store!.put(this.recordFor(e, at))),
+        // The status is re-read INSIDE the queued task, not sampled here: a job
+        // that finishes while this beat waits its turn must not have `running`
+        // written back over its terminal record.
+        .map((e) => this.writeRecord(e, { onlyWhileRunning: true })),
     );
+  }
+
+  /**
+   * Queue one durable write for `entry`, after any write already in flight for
+   * it. `onlyWhileRunning` drops the write if the job settled in the meantime —
+   * which is what makes a late heartbeat a no-op rather than a resurrection.
+   */
+  private writeRecord(entry: JobEntry, opts: { onlyWhileRunning?: boolean } = {}): Promise<unknown> {
+    const next = (entry.writeChain ?? Promise.resolve()).then(async () => {
+      if (opts.onlyWhileRunning && entry.status !== 'running') return;
+      await this.store!.put(this.recordFor(entry, this.now()));
+    }, () => undefined);
+    entry.writeChain = next;
+    return next;
   }
 
   private recordFor(entry: JobEntry, updatedAt: number): JobRecord {
@@ -415,7 +462,7 @@ export class JobRegistry {
     // an explicit key unlocks this — the same rule the in-memory path uses, so
     // a deliberate same-prompt variation is never silently deduplicated.
     if (!hit && idempotencyKey !== undefined && this.store) {
-      const durable = await this.durableByKey(idempotencyKey);
+      const durable = await this.durableByKey(idempotencyKey, fingerprint);
       if (durable) return durable;
     }
 
@@ -443,7 +490,7 @@ export class JobRegistry {
     // appeared on completion would be missing for exactly the window this whole
     // mechanism exists to cover.
     if (this.store) {
-      this.track(this.store.put(this.recordFor(entry, now)));
+      this.track(this.writeRecord(entry));
       if (idempotencyKey !== undefined) this.track(this.store.putKey(idempotencyKey, jobId));
       this.startHeartbeat();
     }
@@ -458,7 +505,7 @@ export class JobRegistry {
     ).finally(() => {
       if (this.runningByFingerprint.get(fingerprint) === jobId) this.runningByFingerprint.delete(fingerprint);
     });
-    if (this.store) this.track(settle.then(() => this.store!.put(this.recordFor(entry, this.now()))));
+    if (this.store) void settle.then(() => this.track(this.writeRecord(entry)));
 
     if (async) return jobHandle(jobId, 'running', this.store !== undefined);
     if (waitMs !== undefined) {
@@ -480,11 +527,20 @@ export class JobRegistry {
    * running belongs to an executor this process cannot await, so the caller gets
    * the handle back rather than a promise that would never settle.
    */
-  private async durableByKey(idempotencyKey: string): Promise<CallToolResult | undefined> {
+  private async durableByKey(idempotencyKey: string, fingerprint: string): Promise<CallToolResult | undefined> {
     const id = await this.store!.jobIdForKey(idempotencyKey);
     if (!id) return undefined;
     const record = await this.store!.get(id);
     if (!record) return undefined;
+    // An idempotency key is a habit as often as it is a promise — "1", "test",
+    // "retry". In memory that was survivable because the entry expired in ten
+    // minutes; a durable record lives for the store's retention, so replaying
+    // on the key ALONE would hand back a different prompt's image, weeks later,
+    // and label it a cache hit. The fingerprint is what makes this idempotency
+    // rather than a name lookup: same key + different request is a genuinely
+    // new generation.
+    if (record.fingerprint !== fingerprint) return undefined;
+    if (this.now() - record.updatedAt > DURABLE_JOB_REUSE_MS) return undefined;
     if (record.status === 'running') return jobHandle(id, 'running', true);
     if (record.status !== 'done' || !record.result) return undefined;
     return annotateReused(await refreshMedia(record.result, this.resigner), id);
@@ -541,10 +597,14 @@ export class JobRegistry {
       throw new McpToolError(record.error?.message ?? 'Job failed.', record.error?.hint ? { hint: record.error.hint } : undefined);
     }
     if (record.resultOmitted) {
+      // Both reasons mean "the generation happened, the payload is not here",
+      // but only one of them is the caller's to change.
       throw new McpToolError(
-        `Job "${record.jobId}" finished, but its result was returned inline (base64 image data) and inline results are not stored, so there is nothing to replay.`,
+        record.resultOmitted === 'inline'
+          ? `Job "${record.jobId}" finished, but its result was returned inline (base64 image data) and inline results are not stored, so there is nothing to replay. Re-run without \`inline: true\` so the media is stored and returned as URLs, which a poll can replay.`
+          : `Job "${record.jobId}" finished, but its result was too large to store (over ${Math.round(MAX_PERSISTED_RESULT_BYTES / 1024)} KB), so there is nothing to replay.`,
         {
-          hint: 'Re-run without `inline: true` so the images are stored and returned as URLs, which a poll can replay. Images already generated are listed by gemini_list_recent_media.',
+          hint: 'The generation itself completed — list what it produced with gemini_list_recent_media rather than paying for it again.',
         },
       );
     }

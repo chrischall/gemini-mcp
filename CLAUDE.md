@@ -276,10 +276,20 @@ levels of dedup, chosen to never break intentional same-prompt *variations*:
 **in-flight** — a second identical request while the first is still running
 attaches to it (a host-timeout retry race, never a deliberate variation); and
 **recently-completed** — only unlocked by an explicit `idempotency_key`, returns
-the recorded result for `JOB_TTL_MS` (10 min). Either way the reused result is
-annotated `reused: true` + `reused_job_id`, and no second upstream (billable)
-call is made. Failed jobs are not reused. Registry is bounded (TTL + `JOB_MAX`);
-`client.session.reset()` clears it between tests.
+the recorded result for `JOB_TTL_MS` (10 min) in memory, or
+`DURABLE_JOB_REUSE_MS` (24h) from the durable store. Either way the reused
+result is annotated `reused: true` + `reused_job_id`, and no second upstream
+(billable) call is made. Failed jobs are not reused. Registry is bounded
+(TTL + `JOB_MAX`); `client.session.reset()` clears it between tests.
+
+**A durable replay is gated on the FINGERPRINT, not just the key.** The two
+windows differ because they are bounded by different things — the in-memory one
+by a process that no longer exists, the durable one only by storage retention
+(~30 days). An `idempotency_key` is a habit as often as a promise (`"1"`,
+`"test"`, `"retry"`), so replaying on the key alone would hand back a *different
+prompt's* image weeks later and label it a cache hit. `durableByKey` therefore
+requires `record.fingerprint === fingerprint` and an age inside
+`DURABLE_JOB_REUSE_MS`; anything else is a genuinely new generation.
 
 **The registry is per SESSION, not per process** — it lives at
 `client.session.jobs` (`src/session.ts`). Hosted, one

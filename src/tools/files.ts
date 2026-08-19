@@ -318,9 +318,16 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
             hint: 'gemini_list_recent_media applies to the hosted connector only.',
           });
         }
-        const found = await sink.listRecent({ limit: args.limit ?? 20, sinceDay: args.since_day });
+        const limit = args.limit ?? 20;
+        const page = sink.listRecentPage
+          ? await sink.listRecentPage({ limit, sinceDay: args.since_day })
+          : { media: await sink.listRecent({ limit, sinceDay: args.since_day }), truncated: false };
+        const found = page.media;
         return textResult({
           count: found.length,
+          // Never let a bounded walk pass for the whole picture: concluding an
+          // image is gone is what makes someone pay to generate it twice.
+          ...(page.truncated ? { truncated: true } : {}),
           media: found.map((m) => ({
             r2_key: m.key,
             day: m.day,
@@ -330,7 +337,8 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
             ...(m.expiresAt ? { expires_at: m.expiresAt } : {}),
           })),
           hint: found.length
-            ? 'Ordered by the day each object was stored (the store keeps no finer timestamp), newest first. Re-sign any expired link with gemini_sign_media.'
+            ? 'Ordered by the day each object was stored (the store keeps no finer timestamp), newest first. Re-sign any expired link with gemini_sign_media.' +
+              (page.truncated ? ' More media exists than is listed here — narrow with since_day, or raise limit, before concluding something is missing.' : '')
             : 'Nothing stored in that window. Media is swept on a retention schedule, so an older generation may already be gone.',
         });
       },
