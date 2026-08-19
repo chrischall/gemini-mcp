@@ -6,16 +6,17 @@ import { JobRegistry } from './jobs.js';
  * All of this used to be module-level (`jobs`/`byKey`/`runningByFingerprint` in
  * jobs.ts, `lastInteractionId`/`writtenOutputs` in tools/interact.ts). That is
  * correct for stdio, where a process serves exactly one user — and a
- * cross-tenant leak on the hosted connector, where Cloudflare shares ONE Worker
- * isolate across many Durable Object instances. Module state there is shared by
- * every authenticated claude.ai session in the isolate: the per-session
+ * cross-tenant leak on the hosted connector, where ONE child process serves
+ * every session of this registration at once (mcp-host runs the stdio server as
+ * a supervised child). Module state there is shared by
+ * every authenticated claude.ai session on that child: the per-session
  * `GeminiClient` isolated the API key but not the memory around it, so a
  * colliding `idempotency_key` replayed another user's result, an identical
  * prompt attached to another user's in-flight (billable) job, and
  * `continue_last: true` resumed another user's interaction under your key.
  *
  * So session memory hangs off the `GeminiClient` — the one object the connector
- * already builds per authenticated session (`buildClient` in src/worker.ts) and
+ * already builds per authenticated session and
  * threads into every registrar. Handlers reach it as `client.session`.
  *
  * The rule this encodes: **`src/` must hold no module-level mutable state.**

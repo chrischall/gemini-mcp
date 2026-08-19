@@ -17,7 +17,11 @@ export function registerJobTools(server: McpServer, client: GeminiClient): void 
     'gemini_get_result',
     {
       description:
-        'Retrieve an async generation started with `async: true`. Pass the returned `job_id`: while running it reports status "running"; on completion it returns the normal result (image paths / inline images + meta); on failure it raises the recorded error. Jobs belong to your session and expire ~10 min after completion — if a job id is unknown, check the output dir / <image>.json sidecar.',
+        'Retrieve a generation started with `async: true` or handed off by `max_wait_ms`. Pass the returned `job_id`: ' +
+        'while running it reports status "running"; on completion it returns the normal result (image URLs/paths + meta); ' +
+        'on failure it raises the recorded error, including the case where the generation was killed before it finished. ' +
+        'On the hosted connector job records are stored durably and survive a restart; on a local stdio server they live ' +
+        'with the process and expire ~10 min after completion, where the output dir / <image>.json sidecar is the fallback.',
       annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: {
         job_id: z.string().min(1).describe('The job_id returned by a generation tool called with async: true'),

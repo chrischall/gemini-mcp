@@ -408,3 +408,68 @@ describe('gemini_delete_file', () => {
     expect(body.deleted).toBe('files/a1');
   });
 });
+
+/**
+ * `gemini_list_recent_media` — the way back to media whose RESULT was lost.
+ *
+ * A background job killed with its machine (see src/job-store.ts) still wrote
+ * its images, but every reference to them died with the response. Before this
+ * tool those bytes were unreachable and the only recourse was to pay for the
+ * generation a second time.
+ */
+describe('gemini_list_recent_media', () => {
+  const KEYS = [
+    'gen/tenant1/2026-08-18/aaaa1111-summer-camp-adventure.png',
+    'gen/tenant1/2026-08-19/bbbb2222-summer-camp-adventure-2.png',
+  ];
+
+  function hostedSink() {
+    return createR2Sink(
+      {
+        put: async () => ({}),
+        get: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }),
+        list: async ({ prefix }: { prefix?: string }) => ({
+          objects: KEYS.filter((k) => !prefix || k.startsWith(prefix)).map((key) => ({ key, size: 2048 })),
+          truncated: false,
+        }),
+      } as never,
+      {
+        signedBaseUrl: 'https://host/b/reg',
+        sign: async () => 'SIG',
+        urlTtlMs: 3600_000,
+        tenant: 'tenant1',
+      },
+    );
+  }
+
+  it('is not registered on a disk-backed server', async () => {
+    const h = await createTestHarness((s) => registerFileTools(s, stub({}, true)));
+    const names = (await h.listTools()).map((t: { name: string }) => t.name);
+    await h.close();
+    expect(names).not.toContain('gemini_list_recent_media');
+  });
+
+  it('lists this account\'s recent media with openable URLs, newest first', async () => {
+    const client = { mediaSink: hostedSink(), session: new SessionState() } as unknown as GeminiClient;
+    const h = await createTestHarness((s) => registerFileTools(s, client));
+    const body = parseToolResult(await h.callTool('gemini_list_recent_media', {})) as Record<string, unknown>;
+    await h.close();
+
+    const media = body.media as Array<Record<string, unknown>>;
+    expect(body.count).toBe(2);
+    expect(media[0].name).toBe('summer-camp-adventure-2');
+    expect(media[0].day).toBe('2026-08-19');
+    expect(String(media[0].url)).toMatch(/^https:\/\/host\/b\/reg\//);
+    expect(media[0].size_bytes).toBe(2048);
+    // A one-curl route back to the bytes, same as every other media result.
+    expect(String(media[0].curl_hint)).toMatch(/^curl -sS -o /);
+  });
+
+  it('filters to a day window, so "what did I make that night" is answerable', async () => {
+    const client = { mediaSink: hostedSink(), session: new SessionState() } as unknown as GeminiClient;
+    const h = await createTestHarness((s) => registerFileTools(s, client));
+    const body = parseToolResult(await h.callTool('gemini_list_recent_media', { since_day: '2026-08-19' })) as Record<string, unknown>;
+    await h.close();
+    expect((body.media as unknown[]).length).toBe(1);
+  });
+});
