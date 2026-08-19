@@ -204,6 +204,14 @@ shared util, configured non-Bearer.
 | `gemini_save_character` / `gemini_list_characters` / `gemini_delete_character` | `tools/library.ts` | R2 `lib/<tenant>/characters/…` (no expiry) — **hosted only**, gated on `client.library`; delete confirm-gated | write / read / write |
 | `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | `tools/library.ts` | R2 `lib/<tenant>/styles/…` (no expiry) — **hosted only** | write / read / write |
 
+**The signed upload URL assumes a shell.** `gemini_get_upload_url` hands back a
+curl line, which is no use to a Claude *mobile* user — and MCP has no
+client→server file channel to fall back on (form elicitation is primitive-typed
+only; an attached photo reaches the model as vision tokens, not bytes it can
+re-emit). `docs/MOBILE-UPLOADS.md` records what was ruled out and on what
+evidence, and the routes that are open. Nothing there is implemented — read it
+before re-deriving it.
+
 **Video & music reuse the interact plumbing.** `gemini_video_generate` (omni) and
 `gemini_music_generate` (Lyria) ride the **same `/v1beta/interactions` endpoint**
 as `gemini_interact`. `client.generateVideo()` / `generateMusic()` build their own
