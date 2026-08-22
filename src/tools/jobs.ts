@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { McpToolError } from '@chrischall/mcp-utils';
+import { McpToolError, textResult } from '@chrischall/mcp-utils';
 import { TERMINAL_INTERACTION_STATUSES, type GeminiClient } from '../client.js';
 import { emitMedia, type NamedMedia } from './shared.js';
 import { slugify } from '../images.js';
@@ -111,27 +111,46 @@ async function recoverFromInteraction(
     media: m,
     base: media.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
   }));
-  return emitMedia(named, kind, { output_dir: outputDir, sink: client.mediaSink }, {
+  const result = await emitMedia(named, kind, { output_dir: outputDir, sink: client.mediaSink }, {
     job_id: jobId,
     recovered_from_interaction: interactionId,
-    note: 'The executor that started this job was reclaimed before it could return. The generation finished upstream and its output was recovered — it was not re-run, and you were not billed twice.',
+    note: recoveryNote(record.error?.message),
     ...(found.text ? { text: found.text } : {}),
   });
+  // Settle the job with what we just recovered. Otherwise it stays `failed`
+  // and the next poll re-fetches the interaction, re-downloads the media and
+  // writes another copy — the ordinary done path is idempotent, so this one
+  // has to be too.
+  await client.session.jobs.adoptResult(jobId, record.toolName, result, interactionId);
+  return result;
+}
+
+/**
+ * Why this job needed recovering — only claimed when it is known.
+ *
+ * Recovery fires for any failed job that got as far as an interaction id, and
+ * that is broader than "the machine stopped": a backgrounded call whose own
+ * wait expired, or a sync call that failed after the POST returned, both land
+ * here with a perfectly healthy executor. `job-store.ts` is the only thing that
+ * writes the executor-lost message, so it is the only thing that licenses the
+ * executor-lost sentence. The two facts that hold on every path — not re-run,
+ * not billed twice — are stated either way.
+ */
+function recoveryNote(recordedError: string | undefined): string {
+  const cause = /was lost:/.test(recordedError ?? '')
+    ? 'The executor that started this job was reclaimed before it could return.'
+    : 'This job failed here before it could return its output.';
+  return `${cause} The generation had already completed upstream and its output was recovered — it was not re-run, and you were not billed twice.`;
 }
 
 /** The generation outlived its executor and is not finished yet. */
 function stillRunning(jobId: string, interactionId: string): CallToolResult {
-  return {
-    content: [{
-      type: 'text' as const,
-      text: JSON.stringify({
-        job_id: jobId,
-        status: 'running',
-        interaction_id: interactionId,
-        note: 'The executor that started this job is gone, but the generation is still running upstream. Poll again — it has not been lost, and re-running it would bill a second time.',
-      }, null, 2),
-    }],
-  };
+  return textResult({
+    job_id: jobId,
+    status: 'running',
+    interaction_id: interactionId,
+    note: 'The executor that started this job is gone, but the generation is still running upstream. Poll again — it has not been lost, and re-running it would bill a second time.',
+  });
 }
 
 /**

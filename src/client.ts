@@ -137,7 +137,7 @@ export class ChainedRequest404Error extends McpToolError {
       `Gemini returned HTTP 404 for a chained request (previous_interaction_id: "${previousInteractionId}"), retried ${retries.attempts}× over ~${Math.round(retries.waitedMs / 1000)}s for store lag. Upstream said: ${upstreamMessage}. ` +
         (verdict ??
           'This does not necessarily mean the interaction expired — an unknown model id or an expired files/… uri returns the same generic 404. ') +
-        ' (For reference: interactions are retained 55 days on the paid tier, 1 day on the free tier, and are scoped to the API key that created them.)',
+        '(For reference: interactions are retained 55 days on the paid tier, 1 day on the free tier, and are scoped to the API key that created them.)',
       opts,
     );
   }

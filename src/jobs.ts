@@ -600,6 +600,41 @@ export class JobRegistry {
     return this.store ? await this.store.get(jobId) : undefined;
   }
 
+  /**
+   * Adopt a result produced OUTSIDE this registry — recovery reading a lost
+   * job's output back off the upstream interaction (`tools/jobs.ts`).
+   *
+   * Without this the job stays `failed` and every later poll re-enters
+   * recovery: another interaction fetch, another media download, and another
+   * copy on disk (`…-2.mp4`, `…-3.mp4`) or in R2, with nothing telling the
+   * caller they are duplicates. The ordinary done path is idempotent, so this
+   * one has to be too.
+   */
+  async adoptResult(jobId: string, toolName: string, result: CallToolResult, interactionId?: string): Promise<void> {
+    const now = this.now();
+    let entry = this.jobs.get(jobId);
+    if (!entry) {
+      // A different child ran the job, so there is nothing in memory to update.
+      // The synthetic entry exists only to render the record and to answer the
+      // next poll from this session; its fingerprint is namespaced so it can
+      // never collide with (or dedup against) a real request identity.
+      entry = {
+        jobId,
+        toolName,
+        fingerprint: `recovered:${jobId}`,
+        status: 'done',
+        promise: Promise.resolve(result),
+        createdAt: now,
+      };
+      this.jobs.set(jobId, entry);
+    }
+    entry.status = 'done';
+    entry.result = result;
+    entry.settledAt = now;
+    if (interactionId !== undefined) entry.interactionId = interactionId;
+    if (this.store) await this.writeRecord(entry);
+  }
+
   async getResult(jobId: string): Promise<CallToolResult> {
     const entry = this.jobs.get(jobId);
     if (!entry) {

@@ -201,8 +201,48 @@ describe('gemini_get_result recovers a lost generation from its interaction id',
     const data = parseToolResult<{ videos: string[]; recovered_from_interaction: string }>(res);
 
     expect(data.recovered_from_interaction).toBe('v1_survivor');
+    // The job really was executor-lost here, so the note may say so.
+    expect(JSON.stringify(res.content)).toMatch(/reclaimed/i);
     expect(data.videos).toHaveLength(1);
     expect(existsSync(data.videos[0])).toBe(true);
+    await h.close();
+    release();
+  });
+
+  it('settles the job so a second poll replays instead of re-downloading', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    dir = mkdtempSync(join(tmpdir(), 'gemini-recover-twice-'));
+    const bucket = fakeBucket();
+    const submitter = hostedRegistry(bucket);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const handle = parseToolResult<{ job_id: string }>(
+      await submitter.dispatch({ toolName: 'gemini_video_generate', fingerprint: 'f', async: true }, async (ctx) => {
+        ctx.reportInteraction('v1_twice');
+        await gate;
+        return textResult({});
+      }),
+    );
+    await submitter.drain();
+
+    const later = () => T0 + EXECUTOR_LOST_AFTER_MS + 60_000;
+    client.session.jobs.store = createBlobJobStore(bucket, { tenant: 't', now: later });
+    client.session.jobs.now = later;
+    const fetchSpy = vi.spyOn(client, 'fetchInteractionMedia').mockResolvedValue({
+      status: 'completed', images: [], videos: [{ base64: MP4_B64, mimeType: 'video/mp4' }], audios: [],
+    });
+
+    const h = await createTestHarness((srv) => registerJobTools(srv, client));
+    const first = parseToolResult<{ videos: string[] }>(await h.callTool('gemini_get_result', { job_id: handle.job_id, output_dir: dir }));
+    const second = parseToolResult<{ videos: string[] }>(await h.callTool('gemini_get_result', { job_id: handle.job_id, output_dir: dir }));
+
+    // Recovery has to settle the job, or every poll re-fetches the interaction
+    // and writes another copy (`recovered-…-2.mp4`, `-3`, …) with nothing to
+    // tell the caller they are duplicates.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(second.videos).toEqual(first.videos);
+    await client.session.jobs.drain();
+    expect(recordIn(bucket, handle.job_id).status).toBe('done');
     await h.close();
     release();
   });
@@ -299,6 +339,38 @@ describe('gemini_get_result recovers a lost generation from its interaction id',
     expect(data.interaction_id).toBe('v1_inflight');
     await h.close();
     release();
+  });
+
+  it('does not blame the executor when the job merely timed out waiting', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    dir = mkdtempSync(join(tmpdir(), 'gemini-recover-timeout-'));
+    const bucket = fakeBucket();
+    const submitter = hostedRegistry(bucket);
+    // A backgrounded job whose own wait expired: the executor was alive and
+    // well, it just stopped waiting. Recovery fires for this too, so the note
+    // must not assert a reclamation that never happened.
+    await submitter.dispatch({ toolName: 'gemini_video_generate', fingerprint: 'f' }, async (ctx) => {
+      ctx.reportInteraction('v1_timedout');
+      throw new Error('Gemini interaction v1_timedout is still running after 30s.');
+    }).catch(() => undefined);
+    await submitter.drain();
+    const jobId = [...bucket.objects.keys()]
+      .map((k) => JSON.parse(bucket.objects.get(k)!))
+      .find((r) => r.interactionId === 'v1_timedout')!.jobId as string;
+
+    client.session.jobs.store = createBlobJobStore(bucket, { tenant: 't', now: () => T0 });
+    client.session.jobs.now = () => T0;
+    vi.spyOn(client, 'fetchInteractionMedia').mockResolvedValue({
+      status: 'completed', images: [], videos: [{ base64: MP4_B64, mimeType: 'video/mp4' }], audios: [],
+    });
+
+    const h = await createTestHarness((srv) => registerJobTools(srv, client));
+    const res = await h.callTool('gemini_get_result', { job_id: jobId, output_dir: dir });
+    const text = JSON.stringify(res.content);
+    expect(text).not.toMatch(/reclaimed/i);
+    // The two facts that are true on every path must survive.
+    expect(text).toMatch(/not re-run|not billed twice/i);
+    await h.close();
   });
 
   it('does not report a failed upstream interaction as still running', async () => {

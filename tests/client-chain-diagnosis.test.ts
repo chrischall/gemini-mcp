@@ -133,6 +133,26 @@ describe('chained 404 diagnosis via GET /interactions/{id}', () => {
     expect(err.message).toContain('v1_stale');
   });
 
+  it('reads as one paragraph — no double spaces at the sentence seams', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    // The message is the whole user-facing surface (MCP drops `hint` and
+    // `cause`), and it is assembled from three literals, so the seams are
+    // exactly where stray whitespace hides.
+    for (const probe of [
+      { ok: true, status: 200, body: { id: 'v1_x', status: 'completed' } },
+      { ok: false, status: 404, body: { error: { message: 'Requested entity was not found.' } } },
+      { ok: false, status: 400, body: { error: { message: 'Invalid interaction name: interactions/v1_x' } } },
+      { ok: false, status: 500, body: { error: { message: 'boom' } } },
+    ]) {
+      const cap = chainFetch(probe);
+      const c = new GeminiClient({ fetchImpl: cap.fn, sleep: noSleep() });
+      const err = (await c
+        .interact({ input: 'x', previousInteractionId: 'v1_x' })
+        .then(() => { throw new Error('expected rejection'); }, (e: unknown) => e)) as Error;
+      expect(err.message).not.toMatch(/ {2}/);
+    }
+  });
+
   it('does not probe when no previous_interaction_id was sent', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = chainFetch({ ok: true, status: 200, body: {} });
