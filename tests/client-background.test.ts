@@ -172,6 +172,27 @@ describe('polling through the API being unhelpful', () => {
   });
 });
 
+describe('the delivery fallback is scoped to the POST', () => {
+  it('never re-issues a generation because a POLL mentioned delivery', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    // Once the POST succeeds the generation is running and billable. A 400
+    // arriving from the poll must surface, never trigger the "that 400 cost
+    // nothing" retry — which would pay for the clip twice.
+    let posts = 0;
+    const fetchImpl = (async (url: string, init: RequestInit = {}) => {
+      if ((init.method ?? 'GET').toUpperCase() === 'POST') {
+        posts++;
+        return jsonOk({ id: 'v1_bg', status: 'in_progress' });
+      }
+      const body = { error: { message: "Video delivery mode is not supported.", code: 'invalid_request' } };
+      return { ok: false, status: 400, json: async () => body, text: async () => JSON.stringify(body) };
+    }) as unknown as typeof fetch;
+    const c = new GeminiClient({ fetchImpl, sleep: vi.fn().mockResolvedValue(undefined) });
+    await expect(c.generateVideo({ input: 'x', background: true })).rejects.toThrow(/delivery/i);
+    expect(posts).toBe(1);
+  });
+});
+
 describe('background execution — music', () => {
   it('sends background: true and polls to completion', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
