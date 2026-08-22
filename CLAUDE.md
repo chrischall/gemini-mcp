@@ -198,7 +198,7 @@ shared util, configured non-Bearer.
 | `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (GA since 2026-07) | write (binary-out) |
 | `gemini_video_generate` | `tools/video.ts` | `POST /v1beta/interactions` (omni, `response_format: video`, preview) | write (binary-out, MP4→disk) |
 | `gemini_music_generate` | `tools/music.ts` | `POST /v1beta/interactions` (Lyria, `response_format: audio`, preview) | write (binary-out, MP3/WAV) |
-| `gemini_get_result` | `tools/jobs.ts` | none (reads the in-memory job registry) | read |
+| `gemini_get_result` | `tools/jobs.ts` | none, until a killed job needs recovering — then `GET /v1beta/interactions/{id}` + a media download | read (writes recovered media) |
 | `gemini_upload_file` | `tools/files.ts` | `POST /upload/v1beta/files` (resumable) | write |
 | `gemini_list_files` | `tools/files.ts` | `GET /v1beta/files?pageSize=N` | read |
 | `gemini_delete_file` | `tools/files.ts` | `DELETE /v1beta/files/{id}` | write (confirm-gated) |

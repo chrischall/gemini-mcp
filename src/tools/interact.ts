@@ -224,6 +224,14 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
             return await client.interact({ ...callOpts, images: inputs.length ? inputs : undefined, previousInteractionId });
           } catch (err) {
             if (!(err instanceof ChainedRequest404Error)) throw err;
+            // The client already asked: if the interaction is ALIVE, the 404 was
+            // about something else (the model id, an expired files/… uri), and
+            // re-anchoring would bill a second generation to answer a question
+            // that is already answered — while silently dropping the
+            // conversation context, returning a plausible image the model built
+            // without the prior turn. Only probe when the chain is gone or the
+            // probe itself could not be completed.
+            if (err.chainExists === true) throw err;
             // Re-anchoring needs the prior output image, which only the sidecar
             // index can locate — and that index lives on disk.
             if (!onDisk) throw err;

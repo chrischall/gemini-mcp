@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { McpToolError } from '@chrischall/mcp-utils';
-import type { GeminiClient } from '../client.js';
+import { TERMINAL_INTERACTION_STATUSES, type GeminiClient } from '../client.js';
 import { emitMedia, type NamedMedia } from './shared.js';
 import { slugify } from '../images.js';
 
@@ -27,7 +27,9 @@ export function registerJobTools(server: McpServer, client: GeminiClient): void 
         'On the hosted connector job records are stored durably and survive a restart; on a local stdio server they live ' +
         'with the process and expire ~10 min after completion, where the output dir / <image>.json sidecar is the fallback. ' +
         'A killed video/music job started with `background: true` is recovered from its upstream interaction when it finished there.',
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      // NOT read-only any more: recovering a killed job writes the media it
+      // pulls back, exactly as the generation tool would have.
+      annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
         job_id: z.string().min(1).describe('The job_id returned by a generation tool called with async: true'),
         output_dir: z.string().optional().describe('Where to write media recovered from a killed job (default: $GEMINI_OUTPUT_DIR or cwd)'),
@@ -96,8 +98,11 @@ async function recoverFromInteraction(
 
   if (media.length === 0) {
     // Still running upstream is a genuinely different answer from lost: the
-    // caller should poll again, not re-pay.
-    if (found.status && found.status !== 'completed') return stillRunning(jobId, interactionId);
+    // caller should poll again, not re-pay. But a TERMINAL status with no media
+    // (failed, cancelled, …) is not that — telling someone to poll again would
+    // loop them forever on a generation that is never going to arrive, so the
+    // real error stands.
+    if (found.status && !TERMINAL_INTERACTION_STATUSES.has(found.status)) return stillRunning(jobId, interactionId);
     return undefined;
   }
 

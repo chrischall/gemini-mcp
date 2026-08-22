@@ -27,12 +27,20 @@ import { textResult } from '@chrischall/mcp-utils';
 
 const ORIG_KEY = process.env.GEMINI_API_KEY;
 let dir: string;
+// `SessionState.reset()` clears the registry's JOBS, not the `store`/`now` a
+// test grafts onto it — so these are restored by hand. Without this, a later
+// test in this file inherits a blob store and a clock set minutes into the
+// future, which is the sort of leak that fails somewhere else entirely.
+const ORIG_STORE = client.session.jobs.store;
+const ORIG_NOW = client.session.jobs.now;
 afterEach(() => {
   if (ORIG_KEY === undefined) delete process.env.GEMINI_API_KEY;
   else process.env.GEMINI_API_KEY = ORIG_KEY;
   if (dir) rmSync(dir, { recursive: true, force: true });
   vi.restoreAllMocks();
   client.session.reset();
+  client.session.jobs.store = ORIG_STORE;
+  client.session.jobs.now = ORIG_NOW;
 });
 
 const T0 = 1_700_000_000_000;
@@ -289,6 +297,36 @@ describe('gemini_get_result recovers a lost generation from its interaction id',
     const data = parseToolResult<{ status: string; interaction_id: string }>(res);
     expect(data.status).toBe('running');
     expect(data.interaction_id).toBe('v1_inflight');
+    await h.close();
+    release();
+  });
+
+  it('does not report a failed upstream interaction as still running', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const bucket = fakeBucket();
+    const submitter = hostedRegistry(bucket);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const handle = parseToolResult<{ job_id: string }>(
+      await submitter.dispatch({ toolName: 'gemini_video_generate', fingerprint: 'f', async: true }, async (ctx) => {
+        ctx.reportInteraction('v1_failed');
+        await gate;
+        return textResult({});
+      }),
+    );
+    await submitter.drain();
+
+    const later = () => T0 + EXECUTOR_LOST_AFTER_MS + 60_000;
+    client.session.jobs.store = createBlobJobStore(bucket, { tenant: 't', now: later });
+    client.session.jobs.now = later;
+    // Terminal upstream, no media. Telling the caller to "poll again" would
+    // loop them forever on a generation that is never going to arrive.
+    vi.spyOn(client, 'fetchInteractionMedia').mockResolvedValue({ status: 'failed', images: [], videos: [], audios: [] });
+
+    const h = await createTestHarness((srv) => registerJobTools(srv, client));
+    const res = await h.callTool('gemini_get_result', { job_id: handle.job_id });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/was lost/i);
     await h.close();
     release();
   });

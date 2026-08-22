@@ -64,7 +64,9 @@ const FILE_POLL_MAX_ATTEMPTS = 150;
 const INTERACTION_POLL_INTERVAL_MS = 3_000;
 // Statuses that mean the work is over. Anything else — including no status
 // field at all, which two consecutive live polls returned — means keep waiting.
-const TERMINAL_INTERACTION_STATUSES = new Set(['completed', 'failed', 'cancelled', 'incomplete', 'budget_exceeded']);
+export const TERMINAL_INTERACTION_STATUSES: ReadonlySet<string> = new Set([
+  'completed', 'failed', 'cancelled', 'incomplete', 'budget_exceeded',
+]);
 // Generated media comes back as a Files API link on this host and no other. The
 // uri is API-supplied, but it addresses a fetch we make with the API key
 // attached, so it is validated like any other outbound URL in this repo.
@@ -925,10 +927,15 @@ export class GeminiClient {
   }
 
   /**
-   * Generate video via the omni model (Interactions API, inline delivery). Same
-   * plumbing as {@link interact} — text/image input parts, a `video`
-   * response_format, optional `video_config.task`, and `previous_interaction_id`
-   * for edits. Preview model: shapes are docs-derived; parsing stays tolerant.
+   * Generate video via the omni model (Interactions API). Same plumbing as
+   * {@link interact} — text/image input parts, a `video` response_format,
+   * optional `video_config.task`, and `previous_interaction_id` for edits.
+   *
+   * Delivered by uri unless the caller says otherwise, so the clip is not
+   * capped by the ~4MB inline limit; the bytes are downloaded here either way.
+   * Verified live 2026-08-22 end to end (a real MP4 off the wire), which is
+   * why this path no longer carries the "docs-derived" caveat that music
+   * still does.
    */
   async generateVideo(opts: VideoOpts): Promise<VideoResult> {
     const model = opts.model ?? DEFAULT_VIDEO_MODEL;
