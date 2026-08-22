@@ -121,7 +121,9 @@ src/
                   #   best-effort and must not fail a recoverable call
   job-store.ts    # DURABLE job records over the blob store (jobs/<tenant>/…) —
                   #   what makes a job survive the hosted machine stopping.
-                  #   Heartbeat + executor-lost rule; best-effort, never throws
+                  #   Heartbeat + executor-lost rule; best-effort, never throws.
+                  #   Carries `interactionId` — the one field that buys back the
+                  #   OUTPUT of a killed generation (see Recovery below)
   jobs.ts         # JobRegistry — in-memory job store, ONE PER SESSION (never a
                   #   module global): dispatch() dedups in-flight/keyed identical
                   #   generation calls (idempotency #53) and backs async job
@@ -137,7 +139,8 @@ src/
     interact.ts   # gemini_interact                           (registerInteractTools)
     video.ts      # gemini_video_generate (omni, Interactions) (registerVideoTools)
     music.ts      # gemini_music_generate (Lyria, Interactions) (registerMusicTools)
-    jobs.ts       # gemini_get_result (async poll)            (registerJobTools)
+    jobs.ts       # gemini_get_result (async poll + interaction (registerJobTools)
+                  #   recovery for a job whose executor was lost)
     files.ts      # gemini_upload_file / _list_files / _delete_file (registerFileTools)
     library.ts    # gemini_save/list/delete_character + _style (registerLibraryTools)
                   #   — self-gates on client.library (hosted only)
@@ -330,6 +333,22 @@ requires `record.fingerprint === fingerprint` and an age inside
 isolate serves many authenticated sessions, so a module-level registry let user
 B replay user A's result via a colliding `idempotency_key` ("1", "test") and
 attach to A's in-flight billable job via `fingerprintRequest`. See Quirks.
+
+**Recovery: durability buys the record, and now the OUTPUT — never the
+execution.** A generation started with `background: true` (video/music only,
+opt-in) reports its interaction id through `JobContext.reportInteraction` the
+moment the API returns it — *not* when the job settles, because on a machine
+that stops mid-generation the settle never happens. `JobRegistry.dispatch`
+folds that id into the job's FIRST durable write (a report arriving
+synchronously, before the entry exists, is held and merged rather than
+dropped — that ordering was a real bug, caught by a test). When
+`gemini_get_result` then finds a job whose executor was lost, it fetches that
+interaction (`client.fetchInteractionMedia`) and re-hosts the media through
+`emitMedia`, annotated `recovered_from_interaction`. Nothing is re-run and
+nothing is re-billed. Two rules hold the honesty: a job with no id never
+attempts recovery, and an interaction that cannot be read keeps the accurate
+"was lost" error with the probe's failure appended — recovery must never turn
+a real loss into a false success.
 
 **Async job handle** (`jobs.ts`, issue #52). The same registry backs an async
 escape hatch for hosts whose tools/call timeout can't be tamed (Claude Desktop).

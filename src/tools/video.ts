@@ -53,6 +53,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
           .optional()
           .describe(`Model id override (default: ${DEFAULT_VIDEO_MODEL})`),
         delivery: z.enum(VIDEO_DELIVERY).optional().describe('How the clip comes back: "uri" (default — a Files API link the server downloads, no size ceiling) or "inline" (base64, capped ~4MB)'),
+        background: z.boolean().optional().describe('Run the generation on Google\'s side and poll it, so a killed job can be recovered by gemini_get_result. Trade-off: retrieving a backgrounded interaction is unreliable today (some become permanently unreadable), so the default is off'),
         previous_interaction_id: z.string().optional().describe('Interaction id to edit/continue (with task: "edit")'),
         continue_last: z.boolean().optional().describe('Continue from the most recent video interaction this server created (explicit previous_interaction_id wins)'),
         timeout_ms: timeoutMsSchema,
@@ -84,7 +85,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         images_url: args.images_url, images_file_uris: args.images_file_uris,
         previous_interaction_id: previousInteractionId,
       });
-      return client.session.jobs.dispatch({ toolName: 'gemini_video_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_video_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async (ctx) => {
         const { inputs, report } = await resolveImageInputs(args, client);
         const r = await withProgressHeartbeat(extra, `Generating video (${model})`, () =>
           client.generateVideo({
@@ -96,6 +97,11 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
             previousInteractionId,
             timeoutMs: args.timeout_ms,
             delivery: args.delivery,
+            background: args.background,
+            // Hand the id to the job record the moment it exists: if this
+            // machine stops mid-generation, that id is the only route back to
+            // an output that finishes upstream anyway.
+            onInteractionStarted: ctx.reportInteraction,
           }));
         client.session.lastVideoInteractionId = r.id;
 

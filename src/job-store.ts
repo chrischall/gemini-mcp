@@ -97,6 +97,16 @@ export interface JobRecord {
    * than inferred at read time.
    */
   resultOmitted?: 'inline' | 'too_large';
+  /**
+   * The upstream interaction this job is generating, when it is known before
+   * the job settles (i.e. `background: true`).
+   *
+   * This is the one field that can outlive the executor usefully: the
+   * generation continues on Google's side after this machine stops, and a
+   * completed interaction still serves its media by id. Durability buys the
+   * RECORD; this buys back the OUTPUT — still never the execution.
+   */
+  interactionId?: string;
 }
 
 /**

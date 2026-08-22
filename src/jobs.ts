@@ -40,6 +40,17 @@ import { HEARTBEAT_MS, type JobRecord, type JobStore } from './job-store.js';
 
 type JobStatus = 'running' | 'done' | 'failed';
 
+/**
+ * What a running job can tell the registry about itself.
+ *
+ * Only one thing so far, and it is the thing that survives: the upstream
+ * interaction id. Reported as soon as the API hands it over — not when the
+ * work finishes, which is exactly the moment that may never come.
+ */
+export interface JobContext {
+  reportInteraction(interactionId: string): void;
+}
+
 interface JobEntry {
   jobId: string;
   toolName: string;
@@ -51,6 +62,8 @@ interface JobEntry {
   error?: { message: string; hint?: string }; // set on 'failed'
   createdAt: number;
   settledAt?: number;
+  /** Reported by the work while it runs; see JobRecord.interactionId. */
+  interactionId?: string;
   /**
    * Serializes this job's durable writes. Two writers race for one record — the
    * heartbeat and the settle handler — and the record they write is not
@@ -372,6 +385,7 @@ export class JobRegistry {
       status: entry.status,
       createdAt: entry.createdAt,
       updatedAt,
+      ...(entry.interactionId !== undefined ? { interactionId: entry.interactionId } : {}),
       ...(entry.error ? { error: entry.error } : {}),
       ...(entry.status === 'done' && entry.result ? persistableResult(entry.result) : {}),
     };
@@ -438,7 +452,7 @@ export class JobRegistry {
    * colliding `idempotency_key` or an identical prompt from another user is a
    * different registry and therefore a genuinely separate generation.
    */
-  async dispatch(opts: DispatchOpts, work: () => Promise<CallToolResult>): Promise<CallToolResult> {
+  async dispatch(opts: DispatchOpts, work: (ctx: JobContext) => Promise<CallToolResult>): Promise<CallToolResult> {
     const { toolName, fingerprint, idempotencyKey } = opts;
     // Hosted, an immediate hand-off is what gets the executor reclaimed, so
     // `async` is honoured by HOLDING the request rather than releasing it.
@@ -480,8 +494,29 @@ export class JobRegistry {
 
     const jobId = randomUUID();
     this.evict(now);
-    const promise = work();
-    const entry: JobEntry = { jobId, toolName, fingerprint, idempotencyKey, status: 'running', promise, createdAt: now };
+    // The work starts before `entry` can exist (the entry holds its promise),
+    // yet a well-behaved job reports its interaction id in its very first
+    // `await` — synchronously, from here's point of view. Dropping that report
+    // would lose exactly the ids that arrive fastest, so it is held until the
+    // entry is there and folded into the record's first write.
+    let entry: JobEntry | undefined;
+    let earlyInteractionId: string | undefined;
+    const ctx: JobContext = {
+      reportInteraction: (interactionId: string) => {
+        if (!entry) {
+          earlyInteractionId = interactionId;
+          return;
+        }
+        if (entry.interactionId === interactionId) return;
+        entry.interactionId = interactionId;
+        if (this.store) this.track(this.writeRecord(entry));
+      },
+    };
+    const promise = work(ctx);
+    entry = {
+      jobId, toolName, fingerprint, idempotencyKey, status: 'running', promise, createdAt: now,
+      ...(earlyInteractionId !== undefined ? { interactionId: earlyInteractionId } : {}),
+    };
     this.jobs.set(jobId, entry);
     if (idempotencyKey !== undefined) this.byKey.set(idempotencyKey, jobId);
     this.runningByFingerprint.set(fingerprint, jobId);
@@ -555,6 +590,16 @@ export class JobRegistry {
    * the unknown-id path — the poll tool cannot be used to read another user's
    * result even if they know the uuid.
    */
+  /**
+   * The durable record for `jobId`, if there is one — including the
+   * executor-lost rewrite. Read-only view for a caller that wants to act on a
+   * record's contents (see `tools/jobs.ts` recovering an interaction id) rather
+   * than just render it.
+   */
+  async peekRecord(jobId: string): Promise<JobRecord | undefined> {
+    return this.store ? await this.store.get(jobId) : undefined;
+  }
+
   async getResult(jobId: string): Promise<CallToolResult> {
     const entry = this.jobs.get(jobId);
     if (!entry) {

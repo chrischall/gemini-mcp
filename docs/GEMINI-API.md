@@ -428,16 +428,21 @@ poll 2: HTTP 400  invalid_request    "Request contains an invalid argument."
 poll 3-9: HTTP 400 …                 (unchanged minutes later)
 ```
 
-The 403 is transient — a poll of *in-flight* work returns it, and the same id
-on the same key GETs fine once the work completes. The 400 is not: of three
-backgrounded video interactions, **one completed and returned its clip, and two
-settled into a permanent `400` and were never retrievable at all** — billed,
-and unreachable. Nothing in the request distinguished them.
+The 403 is transient and precisely meaningful: it is what a poll of *in-flight*
+work returns. Measured on one interaction — `t+20s` 403, `t+40s` `completed`
+with its clip. The 400 is not transient: across **five** backgrounded video
+interactions, **three completed and served their media** (one of them recovered
+after the caller abandoned it) and **two settled into a permanent `400` and
+were never retrievable at all** — billed, and unreachable. Nothing in the
+request distinguished them.
 
-So background execution here is a coin flip on a paid generation, while the
-synchronous path returns the same clip in ~31s. **This repo therefore treats
-`background` as opt-in and never the default** (`VideoOpts.background`), and
-keeps the polling implementation ready for the day it becomes dependable.
+So background execution is not dependable enough to be the default, while the
+synchronous path returns the same clip in ~31s. **This repo treats `background`
+as opt-in** (`VideoOpts.background`, and a `background` param on
+`gemini_video_generate` / `gemini_music_generate`). What it buys when you do opt
+in is real: the interaction id lands in the durable job record immediately, so a
+generation whose executor is reclaimed can be recovered rather than re-paid for
+(see below).
 
 Lifecycle verbs, as observed:
 
@@ -486,6 +491,16 @@ Lifecycle verbs, as observed:
   fails, `chainExists` stays `undefined` — "unknown" must not read as "gone".
 - **A timed-out background generation names its interaction id**, because the
   work continues upstream and an error that drops the id throws it away.
+- **A killed background job is recovered from that id.** `JobRecord` carries an
+  `interactionId`, written the moment the API returns it rather than when the
+  job settles — the whole point is that the settle may never happen. When
+  `gemini_get_result` finds a job whose executor was lost, it fetches that
+  interaction and re-hosts the media instead of reporting the work destroyed.
+  Verified live: a 2.67 MB MP4 was pulled back from nothing but an interaction
+  id, ~40 minutes after the request that created it. Durability buys the RECORD
+  and, where an id exists, the OUTPUT — still never the EXECUTION, and an
+  interaction that cannot be read keeps the honest "was lost" error rather than
+  being papered over.
 
 ### The `@google/genai` `.d.ts` as a spec source
 
@@ -541,14 +556,6 @@ per-session key isolation — are things it would replace.
   `webhook_config`** — documented create fields we never send. `store: false`
   disables `previous_interaction_id` chaining *and* background execution.
   `webhook_config` is unusable here: the hosted child has no HTTP surface.
-- **Durable background recovery.** `background: true` means a generation
-  survives *our* process dying — but only if the interaction id outlived it,
-  and today it does not: video/music write no sidecar, and `JobRecord`
-  (`src/job-store.ts`) has no field for it. Persisting the id there, and
-  teaching `gemini_get_result` to poll it, is what would turn "the work
-  continues upstream" from a true sentence in an error message into an actual
-  recovery. Deliberately not built yet — it needs a design pass on
-  re-hosting the media at read time.
 - **Veo 3.1** (`veo-3.1-generate-preview`, `-fast-`, `-lite-`) — native audio,
   4/6/8s, 720p/1080p/4k, first+last-frame interpolation, up to 3 reference
   images, +7s extension up to 20×. A different API (`predictLongRunning` with

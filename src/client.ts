@@ -340,6 +340,12 @@ export interface VideoOpts {
    * make this the default until polling is dependable.
    */
   background?: boolean;
+  /**
+   * Called with the interaction id the moment the API returns it — before the
+   * generation finishes. The id is what can outlive this process (see
+   * `JobRecord.interactionId`), so it has to escape early or not at all.
+   */
+  onInteractionStarted?: (interactionId: string) => void;
 }
 export interface VideoResult { id: string; videos: GeneratedMedia[]; text?: string; }
 
@@ -353,6 +359,8 @@ export interface MusicOpts {
   timeoutMs?: number;
   /** Run server-side and poll. Opt-in — see {@link VideoOpts.background}. */
   background?: boolean;
+  /** See {@link VideoOpts.onInteractionStarted}. */
+  onInteractionStarted?: (interactionId: string) => void;
 }
 export interface MusicResult { id: string; audios: GeneratedMedia[]; text?: string; }
 
@@ -997,10 +1005,18 @@ export class GeminiClient {
    */
   private async postInteraction(
     body: Record<string, unknown>,
-    opts: { timeoutMs?: number; imageSize?: string; previousInteractionId?: string },
+    opts: {
+      timeoutMs?: number;
+      imageSize?: string;
+      previousInteractionId?: string;
+      onInteractionStarted?: (interactionId: string) => void;
+    },
   ): Promise<{ id: string; status?: string; steps?: Step[] }> {
     const timeoutMs = resolveTimeoutMs(opts.timeoutMs, opts.imageSize);
     const started = await this.postInteractionOnce(body, opts, timeoutMs);
+    // Announce the id before waiting on anything: a caller that persists it can
+    // recover the output even if this process never sees the result.
+    if (started.id) opts.onInteractionStarted?.(started.id);
     // Polling only happens for a request we backgrounded. A synchronous POST
     // already carries its output, and some responses legitimately arrive with
     // no `status` at all — polling those would hang on a finished generation.
@@ -1169,6 +1185,32 @@ export class GeminiClient {
     }
     const { interactionsApi } = this.apisFor(resolveTimeoutMs(undefined));
     return await interactionsApi.fetchJson<{ id: string; status?: string; steps?: Step[] }>('GET', `/interactions/${id}`);
+  }
+
+  /**
+   * Fetch a stored interaction and resolve its media to bytes.
+   *
+   * The recovery read: a generation whose executor died is still retrievable
+   * by id for as long as the interaction is retained (55 days paid, 1 day
+   * free). Returns the status alongside the media so a caller can tell "still
+   * running" from "finished with nothing".
+   */
+  async fetchInteractionMedia(id: string): Promise<{
+    status?: string;
+    images: GeneratedMedia[];
+    videos: GeneratedMedia[];
+    audios: GeneratedMedia[];
+    text?: string;
+  }> {
+    const data = await this.getInteraction(id);
+    const { images, videos, audios, text } = this.extractInteraction(data);
+    return {
+      status: data.status,
+      images: await this.downloadAll(images),
+      videos: await this.downloadAll(videos),
+      audios: await this.downloadAll(audios),
+      text,
+    };
   }
 
   /**

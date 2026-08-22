@@ -44,6 +44,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         inline: z.boolean().optional().describe('Return base64 audio inline instead of writing to disk'),
         previous_interaction_id: z.string().optional().describe('Interaction id to continue from'),
         continue_last: z.boolean().optional().describe('Continue from the most recent music interaction this server created (explicit previous_interaction_id wins)'),
+        background: z.boolean().optional().describe('Run the generation on Google\'s side and poll it, so a killed job can be recovered by gemini_get_result. Off by default — see gemini_video_generate'),
         timeout_ms: timeoutMsSchema,
         idempotency_key: idempotencyKeySchema,
         async: asyncSchema,
@@ -76,7 +77,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         images_url: args.images_url, images_file_uris: args.images_file_uris,
         previous_interaction_id: previousInteractionId,
       });
-      return client.session.jobs.dispatch({ toolName: 'gemini_music_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async () => {
+      return client.session.jobs.dispatch({ toolName: 'gemini_music_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async (ctx) => {
         const { inputs, report } = await resolveImageInputs(args, client);
         const r = await withProgressHeartbeat(extra, `Generating music (${model})`, () =>
           client.generateMusic({
@@ -86,6 +87,9 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
             audioFormat: args.audio_format,
             previousInteractionId,
             timeoutMs: args.timeout_ms,
+            background: args.background,
+            // See gemini_video_generate: the id is what survives the executor.
+            onInteractionStarted: ctx.reportInteraction,
           }));
         client.session.lastMusicInteractionId = r.id;
 
