@@ -66,9 +66,10 @@ src/
   client.ts       # GeminiClient — module-level singleton `client`; builds two
                   #   createApiClient instances (generateContent + Interactions);
                   #   exposes call(), listModels(), generate(), interact(),
-                  #   generateVideo(), generateMusic() — the last three share
-                  #   postInteraction() (POST + 404-retry) + extractInteraction()
-                  #   (steps→image/video/audio media)
+                  #   generateVideo(), generateMusic(), getInteraction() — the
+                  #   media three share postInteraction() (POST + 404-retry +
+                  #   diagnosis + background poll) + extractInteraction()
+                  #   (steps→image/video/audio media, inline OR Files-API uri)
   models.ts       # DEFAULT_IMAGE_MODEL, resolveModel() (per-call → env → default),
                   #   filterImageModels() (keep *image* models, drop imagen-*)
   images.ts       # disk I/O + decoding primitives: readImageAsInline,
@@ -220,9 +221,29 @@ chained-404 retry) and `extractInteraction()` (steps → image/video/audio media
 snake/camel-tolerant). Output goes through `emitMedia()` (in `tools/shared.ts`) →
 `writeMedia()` (MIME→extension); **video is disk-only** (MCP has no video content
 block, so an `inline` request is downgraded + noted), audio supports inline
-(`type:'audio'`). Both models are **preview** (funded account required) and their
-shapes are docs-derived, not live-verified — hence the tolerant parsing. Realtime
-Lyria (WebSocket) is intentionally out (see `docs/superpowers/specs/…-video-music-tools-design.md`).
+(`type:'audio'`). Both models are **preview** (funded account required). The
+**video** path was verified live 2026-08-22 (omni generated a 10s MP4; the
+`delivery: 'inline'` we send is a real enum value, and `uri` delivery works too);
+the **music** shapes are still docs-derived — hence the tolerant parsing stays.
+Realtime Lyria (WebSocket) is intentionally out (see `docs/superpowers/specs/…-video-music-tools-design.md`).
+
+**What that probe settled, and what now ships** (details in
+`docs/GEMINI-API.md`): `delivery` is schema-valid for image/audio/video but
+**implemented for video only** — don't add a `delivery` param to the image or
+music tools, even though the `@google/genai` type definitions declare one.
+`generateVideo` therefore sends `delivery: 'uri'` by default and downloads the
+bytes itself: the link needs `x-goog-api-key` (403 without), so a uri result is
+NOT shareable — it only lifts the ~4MB inline ceiling. A model that rejects
+`delivery` gets one free re-issue without the field (that 400 generated
+nothing). `background: true` is accepted by **omni and Lyria but NOT by image
+models** — and accepting it is not the same as being able to collect the
+result: polling answers `403` while the work is in flight, and two of three
+backgrounded video interactions then settled into a permanent `400` and were
+never retrievable (billed, unreachable). So it is **opt-in and never the
+default**; the poll runs **in band**, bounded by the caller's timeout — the
+machine-stops rule below still forbids answering early and working on — treats
+403/404 polls as "keep waiting", and **names the interaction id** if the wait
+runs out, because the generation continues (and bills) upstream regardless.
 
 **Binary output.** The image generation tools return images either written to disk
 (default) or inline base64. `emit()` (in `tools/shared.ts`) decides: with
@@ -252,7 +273,12 @@ and hid the real one. `ChainedRequest404Error` (client.ts) is named for what is
 actually known — a chained request returned 404 — and carries `upstreamMessage`
 in its *message*, not just a `hint`. **Don't reintroduce a confident verdict
 here, and don't put remediation only in `hint`** — the host shows the message and
-drops the hint.
+drops the hint. What the client *may* now assert is what it asked: once the
+store-lag budget is spent, `diagnoseChain()` GETs the id and records
+`chainExists` — `false` (gone, or a malformed name), `true` (alive, so the
+cause is the model id or a `files/…` uri), or **`undefined` when the probe
+itself failed**. Keep those three distinct: "unknown" must never be rendered as
+"gone".
 
 **Recovery doubles as the probe that settles it.** Sidecars are an on-disk index
 of the chain (`sidecar.ts`), so `gemini_interact` catches the

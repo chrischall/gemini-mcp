@@ -12,6 +12,11 @@ import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js'
 /** omni's own aspect-ratio enum — NOT the image tools' ASPECT_RATIOS. */
 const VIDEO_ASPECT_RATIOS = ['16:9', '9:16'] as const;
 const VIDEO_TASKS = ['text_to_video', 'image_to_video', 'reference_to_video', 'edit'] as const;
+// `delivery` is transport, not content: uri hands back a Files API link the
+// client downloads with the api key, inline returns base64 capped at ~4MB.
+// Left unset here so the client's verified default (uri) applies; this is an
+// escape hatch for a video model that rejects delivery outright.
+const VIDEO_DELIVERY = ['inline', 'uri'] as const;
 
 // The most-recent video interaction id (for continue_last) lives on
 // `client.session`, NOT at module scope — one Cloudflare isolate serves many
@@ -47,6 +52,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
           .regex(/^[\w.-]+$/, 'must be a bare model id (letters, digits, ".", "_", "-")')
           .optional()
           .describe(`Model id override (default: ${DEFAULT_VIDEO_MODEL})`),
+        delivery: z.enum(VIDEO_DELIVERY).optional().describe('How the clip comes back: "uri" (default — a Files API link the server downloads, no size ceiling) or "inline" (base64, capped ~4MB)'),
         previous_interaction_id: z.string().optional().describe('Interaction id to edit/continue (with task: "edit")'),
         continue_last: z.boolean().optional().describe('Continue from the most recent video interaction this server created (explicit previous_interaction_id wins)'),
         timeout_ms: timeoutMsSchema,
@@ -89,6 +95,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
             task: args.task,
             previousInteractionId,
             timeoutMs: args.timeout_ms,
+            delivery: args.delivery,
           }));
         client.session.lastVideoInteractionId = r.id;
 

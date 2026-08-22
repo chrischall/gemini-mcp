@@ -396,7 +396,7 @@ function makeVideoFixture(id = 'vid-1'): unknown {
 }
 
 describe('generateVideo', () => {
-  it('POSTs to /interactions with a video response_format, inline delivery, and the omni default model', async () => {
+  it('POSTs to /interactions with a video response_format, uri delivery, and the omni default model', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = capturingFetch(makeVideoFixture());
     const c = new GeminiClient({ fetchImpl: cap.fn });
@@ -405,7 +405,10 @@ describe('generateVideo', () => {
     const sent = JSON.parse(cap.calls[0].init.body as string);
     expect(sent.model).toBe('gemini-omni-flash-preview');
     expect(sent.response_format.type).toBe('video');
-    expect(sent.response_format.delivery).toBe('inline');
+    // uri delivery by default: the inline path caps at ~4MB and a 10s 720p clip
+    // is already 2.6MB (verified live 2026-08-22). The bytes are downloaded by
+    // the client either way — see tests/client-video-delivery.test.ts.
+    expect(sent.response_format.delivery).toBe('uri');
     expect(sent.response_format.aspect_ratio).toBe('9:16');
     expect(sent.generation_config.video_config.task).toBe('text_to_video');
     expect(r.id).toBe('vid-1');
@@ -771,9 +774,10 @@ describe('interact', () => {
     const err = await c
       .interact({ input: 'make it blue', previousInteractionId: 'v1_stale' })
       .then(() => { throw new Error('expected rejection'); }, (e: unknown) => e as Error & { hint?: string });
-    // 8 calls: backoff 2,4,8,16,30,30,30 exhausts the default 120s budget.
-    // (Was 3 — a 6s budget against a lag measured in minutes.)
-    expect(calls).toBe(8);
+    // 8 POSTs: backoff 2,4,8,16,30,30,30 exhausts the default 120s budget.
+    // (Was 3 — a 6s budget against a lag measured in minutes.) The 9th call is
+    // the GET probe that diagnoses the 404 — free, since neither generates.
+    expect(calls).toBe(9);
     expect(err.message).toMatch(/404 for a chained request/i);
     expect(err.message).toContain('v1_stale');
     expect(err.message).toMatch(/55 days|1 day/);

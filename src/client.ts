@@ -8,6 +8,7 @@ import { blobStoreFromEnv } from './blob-store.js';
 import { createBlobJobStore, type JobStore } from './job-store.js';
 import { SessionState } from './session.js';
 import { fetchRemoteImage, type FetchedImage } from './fetch-image.js';
+import { bytesToBase64 } from './bytes.js';
 
 // NOTE: this module must stay SIDE-EFFECT-FREE at module scope — no I/O, no
 // top-level await, no `import.meta.url`. `src/worker.ts` imports it, so every
@@ -49,6 +50,28 @@ const FILE_MAX_BYTES = 2 * 1024 ** 3;
 // in ~1s (verified); longer videos take proportionally longer to process.
 const FILE_POLL_INTERVAL_MS = 2_000;
 const FILE_POLL_MAX_ATTEMPTS = 150;
+
+// Background execution (verified live 2026-08-22): `background: true` returns
+// `in_progress` immediately and the work continues server-side, polled via
+// `GET /interactions/{id}`. Supported by omni (video) and Lyria (music) and
+// NOT by the image models, which 400 with "does not support background
+// interactions" — so only generateVideo/generateMusic send it.
+//
+// The poll stays IN BAND, bounded by the caller's own timeout: on mcp-host the
+// machine stops whenever no request is in flight, so answering early and
+// polling in the background would race a shutdown it loses. Background buys a
+// short-lived upstream socket and an id that outlives us, not a fire-and-forget.
+const INTERACTION_POLL_INTERVAL_MS = 3_000;
+// Statuses that mean the work is over. Anything else — including no status
+// field at all, which two consecutive live polls returned — means keep waiting.
+const TERMINAL_INTERACTION_STATUSES = new Set(['completed', 'failed', 'cancelled', 'incomplete', 'budget_exceeded']);
+// Generated media comes back as a Files API link on this host and no other. The
+// uri is API-supplied, but it addresses a fetch we make with the API key
+// attached, so it is validated like any other outbound URL in this repo.
+const MEDIA_URI_HOST = 'generativelanguage.googleapis.com';
+// A well-formed interaction id (`v1_Chd…`). Interpolated into the URL path, so
+// it is guarded the same way the model id and file name are.
+const INTERACTION_ID_RE = /^[\w-]+$/;
 
 // The interactions store is eventually consistent: a freshly returned id can
 // 404 while the SAME id + key resolves fine *minutes* later (observed live
@@ -97,11 +120,22 @@ export class ChainedRequest404Error extends McpToolError {
     /** How hard we waited out the store lag before giving up. */
     readonly retries: { attempts: number; waitedMs: number },
     opts: { hint: string; cause?: unknown },
+    /**
+     * What `GET /interactions/{id}` said afterwards: `false` the interaction is
+     * gone (or was never a valid id), `true` it is alive so the 404 was about
+     * something else, `undefined` the probe itself could not be completed.
+     * Undefined is deliberately distinct from false — "we don't know" must not
+     * read as "it's gone".
+     */
+    readonly chainExists?: boolean,
+    /** The one sentence the probe earned us; appended to the message. */
+    verdict?: string,
   ) {
     super(
       `Gemini returned HTTP 404 for a chained request (previous_interaction_id: "${previousInteractionId}"), retried ${retries.attempts}× over ~${Math.round(retries.waitedMs / 1000)}s for store lag. Upstream said: ${upstreamMessage}. ` +
-        'This does not necessarily mean the interaction expired — an unknown model id or an expired files/… uri returns the same generic 404. ' +
-        '(For reference: interactions are retained 55 days on the paid tier, 1 day on the free tier, and are scoped to the API key that created them.)',
+        (verdict ??
+          'This does not necessarily mean the interaction expired — an unknown model id or an expired files/… uri returns the same generic 404. ') +
+        ' (For reference: interactions are retained 55 days on the paid tier, 1 day on the free tier, and are scoped to the API key that created them.)',
       opts,
     );
   }
@@ -260,11 +294,19 @@ interface Step {
   arguments?: { queries?: string[] } | null;
   result?: Array<{ search_suggestions?: string }>;
 }
+/**
+ * One `model_output` medium as it left the API: inline bytes, or a Files API
+ * uri when `delivery: 'uri'` was requested. Exactly one is set. The uri form
+ * never escapes the client — {@link GeminiClient.downloadMedia} resolves it to
+ * bytes before any result is returned.
+ */
+interface ExtractedMedia { base64?: string; uri?: string; mimeType: string }
+
 /** Everything the `model_output` (+ grounding) steps yield, by media type. */
 interface ExtractedInteraction {
-  images: GeneratedMedia[];
-  videos: GeneratedMedia[];
-  audios: GeneratedMedia[];
+  images: ExtractedMedia[];
+  videos: ExtractedMedia[];
+  audios: ExtractedMedia[];
   text?: string;
   grounding?: GroundingResult;
 }
@@ -278,6 +320,26 @@ export interface VideoOpts {
   task?: 'text_to_video' | 'image_to_video' | 'reference_to_video' | 'edit';
   previousInteractionId?: string;
   timeoutMs?: number;
+  /**
+   * `uri` (default) delivers the clip as a Files API link instead of inline
+   * base64, which is the only way past the ~4MB inline ceiling — a 10s 720p
+   * clip already measures 2.6MB. The bytes are downloaded here either way; the
+   * link needs the api key, so it is not something a caller could use.
+   */
+  delivery?: 'inline' | 'uri';
+  /**
+   * Run server-side and poll `GET /interactions/{id}` instead of holding the
+   * generation open. **Opt-in, and deliberately not the default.**
+   *
+   * omni accepts `background: true` (200, `in_progress`), but retrieving the
+   * result is a coin flip on a paid key (verified live 2026-08-22): a poll of
+   * in-flight work answers `403 permission_denied`, then some interactions
+   * settle into a permanent `400 "Request contains an invalid argument."` and
+   * never become retrievable at all — the generation is billed and the output
+   * unreachable. The synchronous path returns the same clip in ~31s. Don't
+   * make this the default until polling is dependable.
+   */
+  background?: boolean;
 }
 export interface VideoResult { id: string; videos: GeneratedMedia[]; text?: string; }
 
@@ -289,6 +351,8 @@ export interface MusicOpts {
   audioFormat?: 'mp3' | 'wav';
   previousInteractionId?: string;
   timeoutMs?: number;
+  /** Run server-side and poll. Opt-in — see {@link VideoOpts.background}. */
+  background?: boolean;
 }
 export interface MusicResult { id: string; audios: GeneratedMedia[]; text?: string; }
 
@@ -849,7 +913,7 @@ export class GeminiClient {
         hint: 'The request may have been blocked by safety filters — try rephrasing the prompt.',
       });
     }
-    return { id: data.id, images, text, grounding };
+    return { id: data.id, images: await this.downloadAll(images), text, grounding };
   }
 
   /**
@@ -863,21 +927,40 @@ export class GeminiClient {
     const inputParts: unknown[] = [{ type: 'text', text: opts.input }];
     for (const img of opts.images ?? []) inputParts.push(interactPart(img));
 
-    const responseFormat: Record<string, unknown> = { type: 'video', delivery: 'inline' };
-    if (opts.aspectRatio) responseFormat.aspect_ratio = opts.aspectRatio;
+    const delivery = opts.delivery ?? 'uri';
+    const buildBody = (withDelivery: boolean): Record<string, unknown> => {
+      const responseFormat: Record<string, unknown> = { type: 'video' };
+      if (withDelivery) responseFormat.delivery = delivery;
+      if (opts.aspectRatio) responseFormat.aspect_ratio = opts.aspectRatio;
+      const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
+      if (opts.task) body.generation_config = { video_config: { task: opts.task } };
+      if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
+      // OPT-IN, not the default — see the background note on MusicOpts and
+      // docs/GEMINI-API.md: omni accepts `background: true`, but polling the
+      // resulting interaction is unreliable enough to lose a paid generation.
+      if (opts.background === true) body.background = true;
+      return body;
+    };
 
-    const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
-    if (opts.task) body.generation_config = { video_config: { task: opts.task } };
-    if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
+    let data: { id: string; steps?: Step[] };
+    try {
+      data = await this.postInteraction(buildBody(true), opts);
+    } catch (err) {
+      // `delivery` is model-implemented, not just schema-valid: omni takes it,
+      // another video model may answer "<Media> delivery mode is not
+      // supported." That 400 generated nothing, so re-issuing without the field
+      // is free — and better than failing a generation over an optimisation.
+      if (!isDeliveryUnsupported(err)) throw err;
+      data = await this.postInteraction(buildBody(false), opts);
+    }
 
-    const data = await this.postInteraction(body, opts);
     const { videos, text } = this.extractInteraction(data);
     if (videos.length === 0) {
       throw new McpToolError('Gemini returned no video', {
-        hint: 'The request may have been blocked by a safety filter, or the clip exceeded the ~4MB inline limit — try a shorter/simpler prompt or a different aspect ratio.',
+        hint: 'The request may have been blocked by a safety filter — try a shorter/simpler prompt or a different aspect ratio.',
       });
     }
-    return { id: data.id, videos, text };
+    return { id: data.id, videos: await this.downloadAll(videos), text };
   }
 
   /**
@@ -894,6 +977,8 @@ export class GeminiClient {
 
     const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
     if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
+    // Opt-in for the same reason video's is (see VideoOpts.background).
+    if (opts.background === true) body.background = true;
 
     const data = await this.postInteraction(body, opts);
     const { audios, text } = this.extractInteraction(data);
@@ -902,29 +987,46 @@ export class GeminiClient {
         hint: 'The request may have been blocked by a safety filter — try rephrasing the prompt.',
       });
     }
-    return { id: data.id, audios, text };
+    return { id: data.id, audios: await this.downloadAll(audios), text };
   }
 
-  /** POST `/interactions` with the chained-404 retry. Shared by all media. */
+  /**
+   * POST `/interactions`, wait out the store lag on a chained 404, and — when
+   * the request was backgrounded — poll until the interaction reaches a
+   * terminal state. Shared by all media.
+   */
   private async postInteraction(
     body: Record<string, unknown>,
     opts: { timeoutMs?: number; imageSize?: string; previousInteractionId?: string },
-  ): Promise<{ id: string; steps?: Step[] }> {
-    const { interactionsApi } = this.apisFor(resolveTimeoutMs(opts.timeoutMs, opts.imageSize));
+  ): Promise<{ id: string; status?: string; steps?: Step[] }> {
+    const timeoutMs = resolveTimeoutMs(opts.timeoutMs, opts.imageSize);
+    const started = await this.postInteractionOnce(body, opts, timeoutMs);
+    // Polling only happens for a request we backgrounded. A synchronous POST
+    // already carries its output, and some responses legitimately arrive with
+    // no `status` at all — polling those would hang on a finished generation.
+    if (body.background !== true) return started;
+    return await this.awaitInteraction(started, timeoutMs);
+  }
+
+  /** The POST itself, with the chained-404 retry + diagnosis. */
+  private async postInteractionOnce(
+    body: Record<string, unknown>,
+    opts: { previousInteractionId?: string },
+    timeoutMs: number,
+  ): Promise<{ id: string; status?: string; steps?: Step[] }> {
+    const { interactionsApi } = this.apisFor(timeoutMs);
     const budgetMs = resolveChainRetryBudgetMs();
     let waitedMs = 0;
     for (let attempt = 0; ; attempt++) {
       try {
-        return await interactionsApi.fetchJson<{ id: string; steps?: Step[] }>('POST', '/interactions', { body });
+        return await interactionsApi.fetchJson<{ id: string; status?: string; steps?: Step[] }>('POST', '/interactions', { body });
       } catch (err) {
         // A 404 on a chained call is worth retrying: the interactions store is
         // eventually consistent, so a freshly returned id can 404 briefly.
         //
         // What it is NOT is a diagnosis. We only know the status; the body is
         // generic ("Requested entity was not found.") and covers a bad model id
-        // and an expired files/… uri just as well as a dead interaction. So the
-        // error carries the upstream text and says what it doesn't know — the
-        // caller (tools/interact.ts) probes to find out which it was.
+        // and an expired files/… uri just as well as a dead interaction.
         if (!(opts.previousInteractionId && err instanceof ApiError && err.status === 404)) throw err;
         // Exponential backoff until the budget is spent. Sized against the
         // observed lag (minutes), not against how long a human likes to wait —
@@ -936,12 +1038,181 @@ export class GeminiClient {
           await this.sleep(delay);
           continue;
         }
-        throw new ChainedRequest404Error(opts.previousInteractionId, err.message, { attempts: attempt, waitedMs }, {
-          hint: 'Re-issue the request WITHOUT previous_interaction_id (re-attaching the prior output image if you were editing). If that also 404s, the interaction id is not the cause — check the model id and any files/… uri (they expire ~48h). gemini_interact does this probe automatically.',
-          cause: err,
-        });
+        // The budget is spent, so now ASK about the one entity we can ask
+        // about. The probe is free (a 404'd POST generated nothing, and a GET
+        // generates nothing), and it turns the guess into a fact — or into an
+        // explicit "unknown", which is not the same as "gone".
+        const { chainExists, verdict } = await this.diagnoseChain(opts.previousInteractionId);
+        throw new ChainedRequest404Error(
+          opts.previousInteractionId,
+          err.message,
+          { attempts: attempt, waitedMs },
+          {
+            hint:
+              chainExists === true
+                ? 'The chain is alive, so re-issuing without previous_interaction_id would re-bill and still fail. Check the model id and any files/… uri instead.'
+                : 'Re-issue the request WITHOUT previous_interaction_id (re-attaching the prior output image if you were editing). If that also 404s, the interaction id is not the cause — check the model id and any files/… uri (they expire ~48h). gemini_interact does this probe automatically.',
+            cause: err,
+          },
+          chainExists,
+          verdict,
+        );
       }
     }
+  }
+
+  /**
+   * Ask the API whether the chained interaction is actually gone.
+   *
+   * Three answers, three remediations — and a fourth state that matters just as
+   * much: if the probe itself cannot be completed we return `undefined`, so the
+   * caller says "unknown" rather than inventing "gone".
+   */
+  private async diagnoseChain(id: string): Promise<{ chainExists?: boolean; verdict?: string }> {
+    try {
+      await this.getInteraction(id);
+      return {
+        chainExists: true,
+        verdict:
+          `That interaction still exists (GET /interactions/${id} returned it), so the chain is NOT the cause — ` +
+          'a generic 404 also covers an unknown model id and an expired files/… uri (~48h). Check those. ',
+      };
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        return {
+          chainExists: false,
+          verdict:
+            `That interaction no longer exists (GET /interactions/${id} returned 404 too) — it expired or was deleted, so re-anchor on the image it produced. ` +
+            'That does not necessarily mean it was the cause, though: an unknown model id or an expired files/… uri returns the same generic 404, so read the upstream text above. ',
+        };
+      }
+      if (err instanceof ApiError && err.status === 400) {
+        return {
+          chainExists: false,
+          verdict: `"${id}" is not a valid interaction id — the API rejected the name as malformed, so it was never a live chain. Check how the id was captured. `,
+        };
+      }
+      return {};
+    }
+  }
+
+  /**
+   * Poll a backgrounded interaction to a terminal state.
+   *
+   * ⚠️ **A poll of work that is still in flight answers `403
+   * permission_denied`** — "There was a problem processing your request. You
+   * will not be charged." (verified live 2026-08-22, against a paid key that
+   * GETs the very same interaction fine once it completes). It is a transient
+   * state dressed as an authorization failure, and taking it at face value
+   * fails every backgrounded generation a few seconds in. A 404 is transient
+   * here too — the same store lag the chained POST retries.
+   *
+   * Neither is distinguishable from the real thing, so the caller's timeout is
+   * what bounds it, and the last poll error rides along in the timeout message
+   * so a genuine permission problem is not invisible.
+   *
+   * A body with no `status` field is likewise treated as "still running"
+   * unless a `model_output` step is already present.
+   */
+  private async awaitInteraction(
+    started: { id: string; status?: string; steps?: Step[] },
+    budgetMs: number,
+  ): Promise<{ id: string; status?: string; steps?: Step[] }> {
+    let current = started;
+    let waitedMs = 0;
+    let lastPollError: string | undefined;
+    for (;;) {
+      const status = current.status;
+      // Absent status means "still running" ONLY while nothing has been
+      // produced. A body carrying a model_output step is finished whatever it
+      // says about status — polling that forever would hang on a done job.
+      if (!status && (current.steps ?? []).some((step) => step.type === 'model_output')) return current;
+      if (status && TERMINAL_INTERACTION_STATUSES.has(status)) {
+        if (status === 'completed') return current;
+        throw new McpToolError(
+          `${SERVICE} interaction ${current.id} ${status} (background execution).`,
+          { hint: 'A safety filter or an unsupported prompt is the usual cause — rephrase and retry. The interaction id above can be inspected while it is retained.' },
+        );
+      }
+      if (waitedMs + INTERACTION_POLL_INTERVAL_MS > budgetMs) {
+        // The generation did NOT stop when we did: it is still running and
+        // still billable upstream, so an error that drops the id throws the
+        // work away.
+        throw new McpToolError(
+          `${SERVICE} interaction ${current.id} is still running after ${Math.round(waitedMs / 1000)}s. It continues on Google's side — the work is not lost.` +
+            (lastPollError ? ` Last poll said: ${lastPollError}` : ''),
+          { hint: 'Raise timeout_ms (or max_wait_ms) and retry, or keep the interaction id: the generation completes upstream regardless of this request.' },
+        );
+      }
+      await this.sleep(INTERACTION_POLL_INTERVAL_MS);
+      waitedMs += INTERACTION_POLL_INTERVAL_MS;
+      try {
+        current = await this.getInteraction(current.id);
+        lastPollError = undefined;
+      } catch (err) {
+        if (!isTransientPoll(err)) throw err;
+        lastPollError = err instanceof Error ? err.message : String(err);
+        // Keep the last known interaction (its id is all the next poll needs).
+      }
+    }
+  }
+
+  /**
+   * Fetch one interaction. Backs the background poll and the chained-404
+   * diagnosis; also the honest answer to "is that id still alive?".
+   */
+  async getInteraction(id: string): Promise<{ id: string; status?: string; steps?: Step[] }> {
+    if (!INTERACTION_ID_RE.test(id)) {
+      throw new McpToolError(`Not a valid interaction id: "${id}"`, {
+        hint: 'An interaction id is the opaque `id` from a previous response (e.g. v1_Chd…), with no slashes or query string.',
+      });
+    }
+    const { interactionsApi } = this.apisFor(resolveTimeoutMs(undefined));
+    return await interactionsApi.fetchJson<{ id: string; status?: string; steps?: Step[] }>('GET', `/interactions/${id}`);
+  }
+
+  /**
+   * Resolve one extracted medium to bytes.
+   *
+   * `delivery: 'uri'` hands back a Files API link, and that link **needs the
+   * api key** (verified: 403 without it), so it is not something a caller could
+   * use — the bytes have to arrive here exactly as inline delivery would. The
+   * uri is API-supplied but addresses a request we make with credentials
+   * attached, so the host is checked before it is fetched.
+   */
+  private async downloadMedia(media: ExtractedMedia): Promise<GeneratedMedia> {
+    if (media.base64) return { base64: media.base64, mimeType: media.mimeType };
+    const uri = media.uri ?? '';
+    let parsed: URL;
+    try {
+      parsed = new URL(uri);
+    } catch {
+      throw new McpToolError(`${SERVICE} returned a media reference that is not a URL: ${uri || '(empty)'}`);
+    }
+    if (parsed.protocol !== 'https:' || parsed.hostname !== MEDIA_URI_HOST) {
+      throw new McpToolError(
+        `${SERVICE} returned a media uri on an unexpected host (${parsed.hostname || uri}); expected ${MEDIA_URI_HOST}`,
+        { hint: 'Generated media is served from the Files API on that host only. Report this if it reproduces — it should not happen.' },
+      );
+    }
+    // Local alias so the call carries NO receiver (see uploadToFilesApi).
+    const doFetch = this.fetchImpl;
+    const res = await doFetch(uri, { headers: { 'x-goog-api-key': this.requireKey() } });
+    if (!res.ok) {
+      throw new McpToolError(
+        `${SERVICE} media download failed (HTTP ${res.status}) for ${uri}`,
+        { hint: 'Generated files live in the Files API for ~48h and the download requires the api key that created them.' },
+      );
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return { base64: bytesToBase64(bytes), mimeType: media.mimeType || res.headers?.get('content-type') || 'application/octet-stream' };
+  }
+
+  /** {@link downloadMedia} over a list, preserving order. */
+  private async downloadAll(media: ExtractedMedia[]): Promise<GeneratedMedia[]> {
+    const out: GeneratedMedia[] = [];
+    for (const m of media) out.push(await this.downloadMedia(m));
+    return out;
   }
 
   /**
@@ -951,9 +1222,9 @@ export class GeminiClient {
    * can't leak into text or pollute the outputs. Tolerant of snake/camel MIME.
    */
   private extractInteraction(data: { steps?: Step[] }, searchTypes?: SearchType[]): ExtractedInteraction {
-    const images: GeneratedMedia[] = [];
-    const videos: GeneratedMedia[] = [];
-    const audios: GeneratedMedia[] = [];
+    const images: ExtractedMedia[] = [];
+    const videos: ExtractedMedia[] = [];
+    const audios: ExtractedMedia[] = [];
     const textParts: string[] = [];
     const searchQueries: string[] = [];
     const searchSuggestions = new Set<string>();
@@ -975,10 +1246,13 @@ export class GeminiClient {
       for (const parts of [step.content ?? [], step.summary ?? []]) {
         for (const part of parts) {
           const mime = part.mime_type ?? part.mimeType;
-          if (part.data) {
-            if (part.type === 'image') images.push({ base64: part.data, mimeType: mime ?? 'image/jpeg' });
-            else if (part.type === 'video') videos.push({ base64: part.data, mimeType: mime ?? 'video/mp4' });
-            else if (part.type === 'audio') audios.push({ base64: part.data, mimeType: mime ?? 'audio/mpeg' });
+          if (part.data || part.uri) {
+            // `delivery: 'uri'` replaces `data` with a Files API link — the part
+            // carries one or the other, never both. downloadMedia() resolves it.
+            const carrier = part.data ? { base64: part.data } : { uri: part.uri };
+            if (part.type === 'image') images.push({ ...carrier, mimeType: mime ?? 'image/jpeg' });
+            else if (part.type === 'video') videos.push({ ...carrier, mimeType: mime ?? 'video/mp4' });
+            else if (part.type === 'audio') audios.push({ ...carrier, mimeType: mime ?? 'audio/mpeg' });
           } else if (part.type === 'text' && part.text?.trim()) {
             textParts.push(part.text);
           }
@@ -993,6 +1267,29 @@ export class GeminiClient {
     }
     return { images, videos, audios, text: textParts.join('\n') || undefined, grounding };
   }
+}
+
+/**
+ * A 400 that means "this model does not implement response_format.delivery".
+ * Verified live 2026-08-22: image and audio answer "<Media> delivery mode is
+ * not supported."; a value outside the enum answers "…not supported for
+ * 'response_format.delivery'". Both are cheap to recover from — the request
+ * never reached generation.
+ */
+/**
+ * Is this poll failure the API being unhelpful about work in progress?
+ *
+ * `403 permission_denied` is what a GET of an in-flight background interaction
+ * returns (verified live), and `404` is the same eventual-consistency lag the
+ * chained POST already waits out. Both resolve on their own; a real 403 simply
+ * runs out the caller's clock and is reported with its text.
+ */
+function isTransientPoll(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 403 || err.status === 404);
+}
+
+function isDeliveryUnsupported(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 400 && /delivery/i.test(err.message);
 }
 
 /**
