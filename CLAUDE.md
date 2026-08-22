@@ -66,9 +66,10 @@ src/
   client.ts       # GeminiClient — module-level singleton `client`; builds two
                   #   createApiClient instances (generateContent + Interactions);
                   #   exposes call(), listModels(), generate(), interact(),
-                  #   generateVideo(), generateMusic() — the last three share
-                  #   postInteraction() (POST + 404-retry) + extractInteraction()
-                  #   (steps→image/video/audio media)
+                  #   generateVideo(), generateMusic(), getInteraction() — the
+                  #   media three share postInteraction() (POST + 404-retry +
+                  #   diagnosis + background poll) + extractInteraction()
+                  #   (steps→image/video/audio media, inline OR Files-API uri)
   models.ts       # DEFAULT_IMAGE_MODEL, resolveModel() (per-call → env → default),
                   #   filterImageModels() (keep *image* models, drop imagen-*)
   images.ts       # disk I/O + decoding primitives: readImageAsInline,
@@ -120,7 +121,9 @@ src/
                   #   best-effort and must not fail a recoverable call
   job-store.ts    # DURABLE job records over the blob store (jobs/<tenant>/…) —
                   #   what makes a job survive the hosted machine stopping.
-                  #   Heartbeat + executor-lost rule; best-effort, never throws
+                  #   Heartbeat + executor-lost rule; best-effort, never throws.
+                  #   Carries `interactionId` — the one field that buys back the
+                  #   OUTPUT of a killed generation (see Recovery below)
   jobs.ts         # JobRegistry — in-memory job store, ONE PER SESSION (never a
                   #   module global): dispatch() dedups in-flight/keyed identical
                   #   generation calls (idempotency #53) and backs async job
@@ -136,7 +139,8 @@ src/
     interact.ts   # gemini_interact                           (registerInteractTools)
     video.ts      # gemini_video_generate (omni, Interactions) (registerVideoTools)
     music.ts      # gemini_music_generate (Lyria, Interactions) (registerMusicTools)
-    jobs.ts       # gemini_get_result (async poll)            (registerJobTools)
+    jobs.ts       # gemini_get_result (async poll + interaction (registerJobTools)
+                  #   recovery for a job whose executor was lost)
     files.ts      # gemini_upload_file / _list_files / _delete_file (registerFileTools)
     library.ts    # gemini_save/list/delete_character + _style (registerLibraryTools)
                   #   — self-gates on client.library (hosted only)
@@ -194,7 +198,7 @@ shared util, configured non-Bearer.
 | `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (GA since 2026-07) | write (binary-out) |
 | `gemini_video_generate` | `tools/video.ts` | `POST /v1beta/interactions` (omni, `response_format: video`, preview) | write (binary-out, MP4→disk) |
 | `gemini_music_generate` | `tools/music.ts` | `POST /v1beta/interactions` (Lyria, `response_format: audio`, preview) | write (binary-out, MP3/WAV) |
-| `gemini_get_result` | `tools/jobs.ts` | none (reads the in-memory job registry) | read |
+| `gemini_get_result` | `tools/jobs.ts` | none, until a killed job needs recovering — then `GET /v1beta/interactions/{id}` + a media download | read (writes recovered media) |
 | `gemini_upload_file` | `tools/files.ts` | `POST /upload/v1beta/files` (resumable) | write |
 | `gemini_list_files` | `tools/files.ts` | `GET /v1beta/files?pageSize=N` | read |
 | `gemini_delete_file` | `tools/files.ts` | `DELETE /v1beta/files/{id}` | write (confirm-gated) |
@@ -220,9 +224,29 @@ chained-404 retry) and `extractInteraction()` (steps → image/video/audio media
 snake/camel-tolerant). Output goes through `emitMedia()` (in `tools/shared.ts`) →
 `writeMedia()` (MIME→extension); **video is disk-only** (MCP has no video content
 block, so an `inline` request is downgraded + noted), audio supports inline
-(`type:'audio'`). Both models are **preview** (funded account required) and their
-shapes are docs-derived, not live-verified — hence the tolerant parsing. Realtime
-Lyria (WebSocket) is intentionally out (see `docs/superpowers/specs/…-video-music-tools-design.md`).
+(`type:'audio'`). Both models are **preview** (funded account required). The
+**video** path was verified live 2026-08-22 (omni generated a 10s MP4; the
+`delivery: 'inline'` we send is a real enum value, and `uri` delivery works too);
+the **music** shapes are still docs-derived — hence the tolerant parsing stays.
+Realtime Lyria (WebSocket) is intentionally out (see `docs/superpowers/specs/…-video-music-tools-design.md`).
+
+**What that probe settled, and what now ships** (details in
+`docs/GEMINI-API.md`): `delivery` is schema-valid for image/audio/video but
+**implemented for video only** — don't add a `delivery` param to the image or
+music tools, even though the `@google/genai` type definitions declare one.
+`generateVideo` therefore sends `delivery: 'uri'` by default and downloads the
+bytes itself: the link needs `x-goog-api-key` (403 without), so a uri result is
+NOT shareable — it only lifts the ~4MB inline ceiling. A model that rejects
+`delivery` gets one free re-issue without the field (that 400 generated
+nothing). `background: true` is accepted by **omni and Lyria but NOT by image
+models** — and accepting it is not the same as being able to collect the
+result: polling answers `403` while the work is in flight, and two of three
+backgrounded video interactions then settled into a permanent `400` and were
+never retrievable (billed, unreachable). So it is **opt-in and never the
+default**; the poll runs **in band**, bounded by the caller's timeout — the
+machine-stops rule below still forbids answering early and working on — treats
+403/404 polls as "keep waiting", and **names the interaction id** if the wait
+runs out, because the generation continues (and bills) upstream regardless.
 
 **Binary output.** The image generation tools return images either written to disk
 (default) or inline base64. `emit()` (in `tools/shared.ts`) decides: with
@@ -252,7 +276,12 @@ and hid the real one. `ChainedRequest404Error` (client.ts) is named for what is
 actually known — a chained request returned 404 — and carries `upstreamMessage`
 in its *message*, not just a `hint`. **Don't reintroduce a confident verdict
 here, and don't put remediation only in `hint`** — the host shows the message and
-drops the hint.
+drops the hint. What the client *may* now assert is what it asked: once the
+store-lag budget is spent, `diagnoseChain()` GETs the id and records
+`chainExists` — `false` (gone, or a malformed name), `true` (alive, so the
+cause is the model id or a `files/…` uri), or **`undefined` when the probe
+itself failed**. Keep those three distinct: "unknown" must never be rendered as
+"gone".
 
 **Recovery doubles as the probe that settles it.** Sidecars are an on-disk index
 of the chain (`sidecar.ts`), so `gemini_interact` catches the
@@ -304,6 +333,22 @@ requires `record.fingerprint === fingerprint` and an age inside
 isolate serves many authenticated sessions, so a module-level registry let user
 B replay user A's result via a colliding `idempotency_key` ("1", "test") and
 attach to A's in-flight billable job via `fingerprintRequest`. See Quirks.
+
+**Recovery: durability buys the record, and now the OUTPUT — never the
+execution.** A generation started with `background: true` (video/music only,
+opt-in) reports its interaction id through `JobContext.reportInteraction` the
+moment the API returns it — *not* when the job settles, because on a machine
+that stops mid-generation the settle never happens. `JobRegistry.dispatch`
+folds that id into the job's FIRST durable write (a report arriving
+synchronously, before the entry exists, is held and merged rather than
+dropped — that ordering was a real bug, caught by a test). When
+`gemini_get_result` then finds a job whose executor was lost, it fetches that
+interaction (`client.fetchInteractionMedia`) and re-hosts the media through
+`emitMedia`, annotated `recovered_from_interaction`. Nothing is re-run and
+nothing is re-billed. Two rules hold the honesty: a job with no id never
+attempts recovery, and an interaction that cannot be read keeps the accurate
+"was lost" error with the probe's failure appended — recovery must never turn
+a real loss into a false success.
 
 **Async job handle** (`jobs.ts`, issue #52). The same registry backs an async
 escape hatch for hosts whose tools/call timeout can't be tamed (Claude Desktop).

@@ -155,4 +155,28 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     await h.close();
   });
+
+  it('does not re-anchor when the probe already proved the chain is alive', async () => {
+    // chainExists === true means the GET found the interaction: the 404 was
+    // about the model id or a files/… uri, not the chain. Re-anchoring would
+    // bill a second generation AND silently drop the conversation context —
+    // returning a plausible image the model built without the prior turn.
+    const spy = vi
+      .spyOn(client, 'interact')
+      .mockRejectedValue(
+        new ChainedRequest404Error(
+          'id-alive',
+          'Gemini Interactions error 404: Model not found.',
+          { attempts: 7, waitedMs: 120_000 },
+          { hint: 'x' },
+          true,
+        ),
+      );
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
+    const res = await h.callTool('gemini_interact', { input: 'edit', previous_interaction_id: 'id-alive', output_dir: dir });
+    expect(res.isError).toBe(true);
+    // One call: the original. No probe, no second billable generation.
+    expect(spy).toHaveBeenCalledTimes(1);
+    await h.close();
+  });
 });

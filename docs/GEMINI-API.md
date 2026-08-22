@@ -22,15 +22,24 @@ in this file or the fixtures (a models list and a redacted 1×1 image).
 | `gemini-2.5-flash-image` | fast/cheap. ⚠️ Shutdown 2026-10-02 per the deprecations page (replacement: `gemini-3.1-flash-image-preview`). |
 | `nano-banana-pro-preview` | alias of gemini-3-pro-image |
 
-**Model currency check (2026-07-30, changelog/deprecations pages — docs-derived,
+**Model currency check (2026-08-22, changelog/deprecations pages — docs-derived,
 not live-verified):** everything this server defaults to or recommends is alive
 with no announced shutdown (`gemini-3.1-flash-image`, `gemini-3-pro-image`,
 `gemini-omni-flash-preview`, `lyria-3-clip-preview`, `lyria-3-pro-preview`).
 `imagen-4.0-*` shut down 2026-08-17 — already excluded by `filterImageModels`.
 `gemini-3.1-flash-lite-image` (Nano Banana 2 Lite) went GA 2026-06-30 and shows
-up in the filtered list automatically. The Files API gained pre-signed-URL
-sources and a 100MB per-file limit on 2026-07-08 (unverified; our upload caps
-are runtime-memory caps, not API caps, so they are unaffected).
+up in the filtered list automatically. `gemini-3.7-flash` went GA 2026-08-13 —
+a text model, not our surface. Sampling params (`temperature`, `top_p`,
+`top_k`) were deprecated across the latest models on 2026-07-21; this server
+sends none of them.
+
+⚠️ **Correction to the 2026-07-30 entry:** it claimed "the Files API gained
+pre-signed-URL sources and a 100MB per-file limit on 2026-07-08". Both halves
+are wrong. The current docs show no pre-signed-URL source at all, and the
+limits are unchanged at **2 GB per file / 20 GB per project / 48h TTL** — the
+100 MB figure is the *total request size* above which you must use the Files
+API rather than inline bytes (50 MB for PDFs). Nothing about our upload caps
+changes; the note itself was the error.
 
 `imagen-4.0-*` also appear in the list but use a **different `:predict` API** — NOT
 generateContent — so `filterImageModels` excludes anything matching `/imagen/i`.
@@ -313,6 +322,222 @@ Verified response behavior (butterfly prompt, both types):
 - The docs also mention `url_citation` annotations on text content blocks for
   grounded responses — not parsed yet (no text-annotation surface in our meta).
 
+### Delivery modes — `inline` vs `uri` (verified live 2026-08-22)
+
+`response_format.delivery` is **schema-valid for image, audio and video** and
+**implemented for video only**. Sending a bogus value makes the API enumerate
+the schema enum for any of the three:
+
+```
+"The value 'bogus' is not supported for 'response_format.delivery'.
+ Supported values: 'inline', 'uri'."
+```
+
+…but a *valid* value on the wrong media type is rejected by the model layer:
+
+| `response_format.type` | `delivery: "inline"` | `delivery: "uri"` |
+|---|---|---|
+| `image` | 400 `Image delivery mode is not supported.` | 400 (same) |
+| `audio` | 400 `Audio delivery mode is not supported.` | 400 (same) |
+| `video` | ✅ accepted (what `generateVideo` sends) | ✅ accepted, verified end-to-end |
+
+Two consequences worth keeping straight:
+
+1. **`delivery: 'inline'` in `client.ts` is correct.** It is a real enum value,
+   not a guess that happens to be tolerated. Do not "fix" it to `base64` — the
+   prose docs describe the default as base64 bytes but never name that as a
+   value, and `base64` is not in the enum.
+2. **Do not add a `delivery` param to the image or music tools.** The SDK's
+   type definitions declare `delivery` on `ImageResponseFormat` and
+   `AudioResponseFormat`, so the types promise a capability the API refuses.
+   The types are a superset of the Gemini API (they also serve Vertex) — see
+   the `.d.ts` section below.
+
+**Video `uri` delivery, verified end-to-end** (`gemini-omni-flash-preview`,
+default aspect/resolution, 31s wall clock):
+
+```jsonc
+// request
+{ "model": "gemini-omni-flash-preview",
+  "input": [{ "type": "text", "text": "…" }],
+  "response_format": { "type": "video", "delivery": "uri" } }
+
+// model_output step content — note NO `data` key at all
+{ "type": "video", "mime_type": "video/mp4",
+  "uri": "https://generativelanguage.googleapis.com/v1beta/files/<id>:download?alt=media" }
+```
+
+The uri is a **Files API object**, and everything that implies is load-bearing:
+
+- `GET /v1beta/files/<id>` showed `state: "ACTIVE"` on the first poll (no
+  `PROCESSING` wait was needed for a 10s/2.6MB clip), `source: "GENERATED"` (a
+  new value — uploads report `UPLOADED`), `videoMetadata.videoDuration: "10s"`,
+  and the usual **48h** `expirationTime`.
+- **The download requires `x-goog-api-key`.** Fetching the uri without the
+  header returns **403**. So a uri-delivered video is *not* a link that can be
+  handed to a user or embedded — the server must download the bytes and
+  re-host them (disk sink / R2) exactly as it does for inline delivery. `uri`
+  buys us the >4MB ceiling, not a shareable link.
+
+### Video `response_format` — fields we don't send (verified live 2026-08-22)
+
+Confirmed against `gemini-omni-flash-preview` by the bogus-enum trick, paired
+with a model-invalid `thinking_level` so the request fails validation *before*
+billing a generation:
+
+- **`resolution`** — `'360p'`, `'720p'`, `'1080p'`, `'4k'` (enumerated by the
+  API; defaults to 720p). Schema-accepted by omni. Whether omni honours 1080p/4k
+  in the output is NOT verified — that needs a real generation.
+- **`duration`** — a duration string (`"6s"`, `"12s"` accepted; `"bogus"` →
+  `Invalid input at 'response_format'`). Schema-accepted; output length not
+  verified.
+- **`aspect_ratio`** — `'16:9'`, `'9:16'` only, which is what
+  `VIDEO_ASPECT_RATIOS` already enforces. `1:1` is rejected.
+- **`gcs_uri`** — Vertex-only (required there when delivery is uri). Not ours.
+- **omni's `thinking_level` has two layers.** The schema enum is
+  `'minimal' | 'low' | 'medium' | 'high'`, but the model rejects two of them:
+  `'minimal' is not a supported thinking level for this model. Allowed values
+  are: low, high.` A schema-valid value is not a supported value.
+
+### Background execution + the interaction lifecycle (verified live 2026-08-22)
+
+`background: true` returns immediately with `status: "in_progress"` and an id
+the caller polls — the work continues server-side. **Support is per-model, and
+the split is the opposite of what our tools need most:**
+
+| model | `background: true` |
+|---|---|
+| `gemini-3.1-flash-image` | ❌ 400 `Model 'gemini-3.1-flash-image' does not support background interactions.` |
+| `gemini-omni-flash-preview` (video) | ✅ `200 { status: "in_progress" }` |
+| `lyria-3-clip-preview` (music) | ✅ `200 { status: "in_progress" }` |
+
+So the *image* path — the one this server spends most of its wall clock on —
+cannot be handed off upstream, and `jobs.ts` / `job-store.ts` remain the only
+answer there. Video and music, the two slowest tools, *can* be: a background
+video interaction polled to `completed` in ~24s and its `model_output` step
+carried the same uri content as a synchronous call.
+
+⚠️ **But accepting `background: true` is not the same as being able to collect
+the result, and this is where it falls down.** Polling a backgrounded omni
+interaction, on a paid key, in the same session that created it:
+
+```
+poll 1: HTTP 403  permission_denied  "There was a problem processing your
+                                      request. You will not be charged."
+poll 2: HTTP 400  invalid_request    "Request contains an invalid argument."
+poll 3-9: HTTP 400 …                 (unchanged minutes later)
+```
+
+The 403 is transient and precisely meaningful: it is what a poll of *in-flight*
+work returns. Measured on one interaction — `t+20s` 403, `t+40s` `completed`
+with its clip. The 400 is not transient: across **five** backgrounded video
+interactions, **three completed and served their media** (one of them recovered
+after the caller abandoned it) and **two settled into a permanent `400` and
+were never retrievable at all** — billed, and unreachable. Nothing in the
+request distinguished them.
+
+So background execution is not dependable enough to be the default, while the
+synchronous path returns the same clip in ~31s. **This repo treats `background`
+as opt-in** (`VideoOpts.background`, and a `background` param on
+`gemini_video_generate` / `gemini_music_generate`). What it buys when you do opt
+in is real: the interaction id lands in the durable job record immediately, so a
+generation whose executor is reclaimed can be recovered rather than re-paid for
+(see below).
+
+Lifecycle verbs, as observed:
+
+- **Poll** — `GET /v1beta/interactions/{id}`. Returns the full interaction
+  including a `user_input` step (a `create` response omits it). A poll of work
+  still in flight answers `403` (above), so a poll loop must treat 403 — and
+  404, the same store lag the chained POST waits out — as "keep waiting", and
+  let the caller's timeout bound it.
+
+  *(An earlier draft of this file reported that in-flight polls return a body
+  with no `status` field. That was wrong: those were 403 error bodies read
+  through `jq '.status'`, which yields `null`. The client still treats a
+  status-less body with no output as unfinished, but as a defensive rule, not
+  as an observed shape.)*
+- **Delete** — `DELETE /v1beta/interactions/{id}` → `200 {}`. A subsequent GET
+  returns **404 `Requested entity was not found.`** — byte-identical to the
+  expired-chain and unknown-model 404s. More evidence for the
+  `ChainedRequest404Error` rule: a 404 body never names the entity.
+- **A malformed id is a 400, not a 404** — `GET …/interactions/v1_bogus` →
+  `400 Invalid interaction name: interactions/v1_bogus`. Useful signal: 400
+  means the id was never well-formed (a truncation/typo bug on our side), 404
+  means a well-formed id is gone (expired, deleted, or another project's).
+- **Cancel** — `POST /v1beta/interactions/{id}/cancel` is documented, but on
+  this paid key it returned **403** with the generic
+  `There was a problem processing your request. You will not be charged.`
+  Not available to us today; don't build on it without re-probing.
+
+### What this repo does with the above (implemented 2026-08-22)
+
+- **`generateVideo` requests `delivery: 'uri'` by default** and downloads the
+  bytes itself (host-checked, api-key attached) before handing them to the
+  sink, so the ~4MB inline ceiling stops being a failure mode. `delivery:
+  'inline'` remains available per call. If a model answers "…delivery mode is
+  not supported", the client re-issues once WITHOUT the field — that 400
+  generated nothing, so the recovery is free.
+- **`generateVideo` / `generateMusic` accept `background: true` as an opt-in**
+  (never the default — see the coin-flip above) and then poll
+  `GET /interactions/{id}` in band, bounded by the caller's own `timeout_ms`,
+  treating 403/404 polls as "keep waiting" and reporting the last poll error if
+  the wait runs out. `interact` and `generate` never send `background` — the
+  image models reject it outright.
+- **A chained 404 is now diagnosed, not guessed.** After the store-lag budget
+  is spent, `diagnoseChain()` GETs the id: gone → re-anchor (while still saying
+  the 404 may have had another cause); alive → the chain is NOT the cause, so
+  check the model id / `files/…` uri; malformed → say so. If the probe itself
+  fails, `chainExists` stays `undefined` — "unknown" must not read as "gone".
+- **A timed-out background generation names its interaction id**, because the
+  work continues upstream and an error that drops the id throws it away.
+- **A killed background job is recovered from that id.** `JobRecord` carries an
+  `interactionId`, written the moment the API returns it rather than when the
+  job settles — the whole point is that the settle may never happen. When
+  `gemini_get_result` finds a job whose executor was lost, it fetches that
+  interaction and re-hosts the media instead of reporting the work destroyed.
+  Verified live: a 2.67 MB MP4 was pulled back from nothing but an interaction
+  id, ~40 minutes after the request that created it. Durability buys the RECORD
+  and, where an id exists, the OUTPUT — still never the EXECUTION, and an
+  interaction that cannot be read keeps the honest "was lost" error rather than
+  being papered over.
+
+### The `@google/genai` `.d.ts` as a spec source
+
+The official JS SDK (`@google/genai`, v2.18.0 at the time of writing) ships a
+16k-line `dist/genai.d.ts` that is a far better reference than the prose docs —
+it enumerates `response_format` variants, delivery modes, aspect ratios, sizes,
+step types and the `status` enum as literal unions, and it carries the full
+`interactions.create/get/delete/cancel` surface. Read it with:
+
+```bash
+npm pack @google/genai && tar xzf google-genai-*.tgz   # package/dist/genai.d.ts
+```
+
+**It is a reference, not a dependency, and not an oracle.** Three limits, all
+of which bit during the 2026-08-22 pass:
+
+1. **Every union ends in `(string & {})`** — e.g.
+   `"inline" | "uri" | (string & {})`. Any string is assignable, so a
+   compile-time conformance check against these types would catch nothing.
+   They are documentation, not a guard.
+2. **The types are a superset of the Gemini API** (they also describe Vertex
+   and Managed Agents). `ImageResponseFormat.delivery` and
+   `AudioResponseFormat.delivery` are typed and *rejected at runtime*;
+   `gcs_uri` is Vertex-only. Type-present ≠ supported.
+3. **Model-level support is invisible in the types.** `background` and
+   `thinking_level` are typed uniformly across models, while the API accepts
+   them for some models and rejects them for others (see the two tables above).
+
+The deliberate decision (2026-08-22) is **not** to adopt the SDK at runtime: it
+adds ~1.6 MB to the esbuild bundle (which is ~1.4 MB today) and drags in `ws`,
+`protobufjs` and `google-auth-library` for an API-key REST client; and its
+`HttpOptions` exposes only `baseUrl`/`headers`/`timeout`/`retryOptions` with no
+injectable fetch, which is incompatible with this repo's `fetchImpl` test
+discipline. None of the hard parts here — the chained-404 retry budget, sidecar
+re-anchoring, the receiver-safe Files-API upload, the blob-store sink,
+per-session key isolation — are things it would replace.
+
 ### Other documented capabilities not (yet) implemented
 
 - **`response_format` as an array** — `[{type:"text"},{type:"image"}]` requests
@@ -324,6 +549,17 @@ Verified response behavior (butterfly prompt, both types):
   3 style refs; Pro 6 objects + 5 characters; 3.1 Flash Lite 14 objects, no
   character consistency. Plain `image` input parts — no role/type field; the
   split is a model capability, not an API field.
+- **`DELETE /v1beta/interactions/{id}`** — verified (`200 {}`, then GET 404).
+  Would back a "forget this conversation" tool against the 55-day paid-tier
+  retention. The GET half of that pair *is* implemented (below).
+- **`store`, `system_instruction`, `safety_settings`, `service_tier`, `labels`,
+  `webhook_config`** — documented create fields we never send. `store: false`
+  disables `previous_interaction_id` chaining *and* background execution.
+  `webhook_config` is unusable here: the hosted child has no HTTP surface.
+- **Veo 3.1** (`veo-3.1-generate-preview`, `-fast-`, `-lite-`) — native audio,
+  4/6/8s, 720p/1080p/4k, first+last-frame interpolation, up to 3 reference
+  images, +7s extension up to 20×. A different API (`predictLongRunning` with
+  polling), so it is a new client path rather than a model-string swap.
 
 ## Files API — images, list, delete (⚠️ DOCS-DERIVED, not live-verified)
 

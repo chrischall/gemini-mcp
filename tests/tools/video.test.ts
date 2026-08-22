@@ -38,6 +38,53 @@ describe('gemini_video_generate', () => {
     await h.close();
   });
 
+  it('passes an explicit delivery through as an escape hatch', async () => {
+    const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
+    await h.callTool('gemini_video_generate', { prompt: 'x', delivery: 'inline', output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ delivery: 'inline' }));
+    await h.close();
+  });
+
+  it('leaves delivery unset by default so the client picks uri', async () => {
+    const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
+    await h.callTool('gemini_video_generate', { prompt: 'x', output_dir: dir });
+    expect(spy.mock.calls[0][0].delivery).toBeUndefined();
+    await h.close();
+  });
+
+  it('does not let delivery split the idempotency fingerprint (it is transport, not content)', async () => {
+    const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
+    await h.callTool('gemini_video_generate', { prompt: 'same', idempotency_key: 'k1', output_dir: dir });
+    await h.callTool('gemini_video_generate', { prompt: 'same', idempotency_key: 'k1', delivery: 'inline', output_dir: dir });
+    // The second call is the same generation asked for over a different
+    // transport — it must reuse, not re-bill.
+    expect(spy).toHaveBeenCalledTimes(1);
+    await h.close();
+  });
+
+  it('opts into background execution and reports the interaction id for recovery', async () => {
+    const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
+    await h.callTool('gemini_video_generate', { prompt: 'x', background: true, output_dir: dir });
+    const opts = spy.mock.calls[0][0];
+    expect(opts.background).toBe(true);
+    // The id has to reach the job record while the work is still running —
+    // that is the only thing that survives the executor being reclaimed.
+    expect(typeof opts.onInteractionStarted).toBe('function');
+    await h.close();
+  });
+
+  it('does not background unless asked', async () => {
+    const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
+    await h.callTool('gemini_video_generate', { prompt: 'x', output_dir: dir });
+    expect(spy.mock.calls[0][0].background).toBeUndefined();
+    await h.close();
+  });
+
   it('image_to_video passes reference image inputs to the client', async () => {
     const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
     const h = await createTestHarness((srv) => registerVideoTools(srv, client));
