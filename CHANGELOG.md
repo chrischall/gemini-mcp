@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.8.0](https://github.com/chrischall/gemini-mcp/compare/v1.7.0...v1.8.0) (2026-08-22)
+
+
+### Features
+
+* **video:** uri delivery, chained-404 diagnosis, and recovery of lost generations ([#157](https://github.com/chrischall/gemini-mcp/issues/157)) ([e13774d](https://github.com/chrischall/gemini-mcp/commit/e13774d2654a31456f1462ca34d7ff0169db7635))
+
+
+### Bug Fixes
+
+* **client:** keep the api key on one host, cap the download, and read parts by type ([#159](https://github.com/chrischall/gemini-mcp/issues/159)) ([f643a5c](https://github.com/chrischall/gemini-mcp/commit/f643a5ceb7d5441cb225c080f51269ca76ad05dd)), closes [#158](https://github.com/chrischall/gemini-mcp/issues/158)
+
+
+### Documentation
+
+* record why the signed upload URL cannot serve a mobile caller ([#155](https://github.com/chrischall/gemini-mcp/issues/155)) ([ac7f642](https://github.com/chrischall/gemini-mcp/commit/ac7f642ba2e2ed5ebb54e9377a815f0ee228de52))
+
 ## [1.7.0](https://github.com/chrischall/gemini-mcp/compare/v1.6.2...v1.7.0) (2026-08-19)
 
 
