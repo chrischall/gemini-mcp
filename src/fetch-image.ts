@@ -39,7 +39,7 @@ export const IMAGE_URL_MAX_BYTES = 15 * 1024 * 1024;
  */
 export const IMAGE_INLINE_MAX_BYTES = 6 * 1024 * 1024;
 /** Redirect hops followed before giving up. */
-const MAX_REDIRECTS = 5;
+export const MAX_REDIRECTS = 5;
 /**
  * Per-hop abort budget. Matches the client's default upstream timeout so a URL
  * fetch is bounded like every other network call this server makes; callers
@@ -237,17 +237,23 @@ function describeUrl(current: string, requested: string): string {
 }
 
 /** Read a response body, aborting as soon as it exceeds `maxBytes`. */
-async function readCapped(res: Response, maxBytes: number, url: string, requested: string): Promise<Uint8Array> {
+export async function readCapped(
+  res: Response,
+  maxBytes: number,
+  url: string,
+  requested: string,
+  subject?: CapSubject,
+): Promise<Uint8Array> {
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
-    throw tooBig(url, requested, declared, maxBytes);
+    throw tooBig(url, requested, declared, maxBytes, false, subject);
   }
   const reader = res.body?.getReader();
   if (!reader) {
     // No streaming body (some mocked/edge responses) — fall back to buffering,
     // then apply the same cap. Correct, just less eager.
     const buf = new Uint8Array(await res.arrayBuffer());
-    if (buf.byteLength > maxBytes) throw tooBig(url, requested, buf.byteLength, maxBytes);
+    if (buf.byteLength > maxBytes) throw tooBig(url, requested, buf.byteLength, maxBytes, false, subject);
     return buf;
   }
   const chunks: Uint8Array[] = [];
@@ -260,7 +266,7 @@ async function readCapped(res: Response, maxBytes: number, url: string, requeste
       total += value.byteLength;
       if (total > maxBytes) {
         await reader.cancel().catch(() => {});
-        throw tooBig(url, requested, total, maxBytes, true);
+        throw tooBig(url, requested, total, maxBytes, true, subject);
       }
       chunks.push(value);
     }
@@ -287,12 +293,34 @@ function fetchFailure(err: unknown, current: string, requested: string, timeoutM
   );
 }
 
-function tooBig(url: string, requested: string, size: number, max: number, partial = false): McpToolError {
+/**
+ * `subject` names what was too big and how to act on it. It defaults to the
+ * `images_url` wording because that is where the cap started, but the reader is
+ * shared now — a generated-video download reusing it must not tell the caller
+ * to resize an image.
+ */
+function tooBig(url: string, requested: string, size: number, max: number, partial = false, subject?: CapSubject): McpToolError {
+  const what = subject ?? IMAGE_CAP_SUBJECT;
   return new McpToolError(
-    `Image at ${describeUrl(url, requested)} is ${partial ? 'over' : ''} ${formatMb(size)}, above the ${formatMb(max)} limit for images_url.`,
-    { hint: 'Resize or re-encode the image, or upload it yourself with gemini_upload_file and pass the returned file_uri.' },
+    `${what.noun} at ${describeUrl(url, requested)} is ${partial ? 'over ' : ''}${formatMb(size)}, above the ${formatMb(max)} limit${what.limitFor ? ` for ${what.limitFor}` : ''}.`,
+    { hint: what.hint },
   );
 }
+
+/** How {@link readCapped} should describe a body that blew its cap. */
+export interface CapSubject {
+  /** Sentence-leading noun, e.g. "Image" or "Generated video". */
+  noun: string;
+  /** What the limit belongs to, e.g. "images_url"; omitted when it has no name. */
+  limitFor?: string;
+  hint: string;
+}
+
+const IMAGE_CAP_SUBJECT: CapSubject = {
+  noun: 'Image',
+  limitFor: 'images_url',
+  hint: 'Resize or re-encode the image, or upload it yourself with gemini_upload_file and pass the returned file_uri.',
+};
 
 export interface FetchImageOpts {
   /** Injected in tests and by the Worker; defaults to the global `fetch`. */

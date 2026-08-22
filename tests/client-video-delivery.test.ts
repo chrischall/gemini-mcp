@@ -157,6 +157,59 @@ describe('generateVideo — uri delivery', () => {
   });
 });
 
+describe('the media download is credentialed, so the hop rules are strict', () => {
+  it('never carries the api key onto another host, even via a redirect', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    // The key rides this request. A redirect the API controls must not be able
+    // to walk it onto a host we did not intend to authenticate to — the same
+    // rule fetch-image.ts enforces per hop.
+    const cap = scriptedFetch((url, _init, calls) => {
+      if (url.includes('/interactions')) return jsonOk(uriVideoResponse());
+      if (calls.length === 2) {
+        return { ok: false, status: 302, headers: { get: (h: string) => (h.toLowerCase() === 'location' ? 'https://evil.example.com/steal' : null) } };
+      }
+      return bytesOk(new Uint8Array([1]));
+    });
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await expect(c.generateVideo({ input: 'x' })).rejects.toThrow(/unexpected host|generativelanguage/i);
+    // POST + the one redirecting GET. The evil host is never contacted.
+    expect(cap.calls).toHaveLength(2);
+    expect(cap.calls.some((call) => call.url.includes('evil.example.com'))).toBe(false);
+  });
+
+  it('follows a same-host redirect, re-attaching the key on the new hop', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const next = 'https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media&r=2';
+    const cap = scriptedFetch((url, _init, calls) => {
+      if (url.includes('/interactions')) return jsonOk(uriVideoResponse());
+      if (calls.length === 2) {
+        return { ok: false, status: 302, headers: { get: (h: string) => (h.toLowerCase() === 'location' ? next : null) } };
+      }
+      return bytesOk(new Uint8Array([0x41, 0x42, 0x43]));
+    });
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    const r = await c.generateVideo({ input: 'x' });
+    expect(cap.calls[2].url).toBe(next);
+    expect((cap.calls[2].init.headers as Record<string, string>)['x-goog-api-key']).toBe('test-key');
+    expect(r.videos[0].base64).toBe('QUJD');
+  });
+
+  it('refuses a body larger than the download cap instead of buffering it', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = scriptedFetch((url) => {
+      if (url.includes('/interactions')) return jsonOk(uriVideoResponse());
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (h: string) => (h.toLowerCase() === 'content-length' ? String(1024 ** 4) : 'video/mp4') },
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    });
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    await expect(c.generateVideo({ input: 'x' })).rejects.toThrow(/Generated media .* above the 128\.0 MB limit/);
+  });
+});
+
 describe('image and music keep sending no delivery field', () => {
   it('interact does not send response_format.delivery (image delivery is rejected upstream)', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
@@ -166,6 +219,31 @@ describe('image and music keep sending no delivery field', () => {
     const c = new GeminiClient({ fetchImpl: cap.fn });
     await c.interact({ input: 'x' });
     expect(JSON.parse(cap.calls[0].init.body as string).response_format).not.toHaveProperty('delivery');
+  });
+
+  it('still collects a text part that happens to carry a uri', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    // A part is what its `type` says it is. Branching on "has a uri" instead
+    // silently drops the text of any annotated text part.
+    const cap = scriptedFetch(() =>
+      jsonOk({
+        id: 'i-1',
+        status: 'completed',
+        steps: [{
+          type: 'model_output',
+          content: [
+            { type: 'text', text: 'a cited sentence', uri: 'https://example.com/source' },
+            { type: 'image', mime_type: 'image/jpeg', data: 'IMG' },
+          ],
+        }],
+      }),
+    );
+    const c = new GeminiClient({ fetchImpl: cap.fn });
+    const r = await c.interact({ input: 'x' });
+    expect(r.text).toBe('a cited sentence');
+    expect(r.images).toHaveLength(1);
+    // And the text part must not have been mistaken for downloadable media.
+    expect(cap.calls).toHaveLength(1);
   });
 
   it('generateMusic does not send response_format.delivery (audio delivery is rejected upstream)', async () => {

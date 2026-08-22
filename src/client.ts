@@ -7,7 +7,7 @@ import { createUploadUrlMinter, type UploadUrlMinter } from './upload-url.js';
 import { blobStoreFromEnv } from './blob-store.js';
 import { createBlobJobStore, type JobStore } from './job-store.js';
 import { SessionState } from './session.js';
-import { fetchRemoteImage, type FetchedImage } from './fetch-image.js';
+import { fetchRemoteImage, readCapped, MAX_REDIRECTS, type CapSubject, type FetchedImage } from './fetch-image.js';
 import { bytesToBase64 } from './bytes.js';
 
 // NOTE: this module must stay SIDE-EFFECT-FREE at module scope — no I/O, no
@@ -71,6 +71,16 @@ export const TERMINAL_INTERACTION_STATUSES: ReadonlySet<string> = new Set([
 // uri is API-supplied, but it addresses a fetch we make with the API key
 // attached, so it is validated like any other outbound URL in this repo.
 const MEDIA_URI_HOST = 'generativelanguage.googleapis.com';
+// Cap on a single generated-media download. Generous next to what the models
+// actually emit (a 10s 720p clip measured 2.6MB; 10s of 4k is ~60MB) and still
+// bounded, because the bytes are base64'd in memory afterwards — roughly 1.33×
+// again — before the sink ever sees them.
+const MEDIA_DOWNLOAD_MAX_BYTES = 128 * 1024 * 1024;
+/** How an over-cap generated-media download describes itself. */
+const MEDIA_CAP_SUBJECT: CapSubject = {
+  noun: 'Generated media',
+  hint: 'Ask for a shorter clip or a lower resolution — the file itself is still in the Files API for ~48h if you need it another way.',
+};
 // A well-formed interaction id (`v1_Chd…`). Interpolated into the URL path, so
 // it is guarded the same way the model id and file name are.
 const INTERACTION_ID_RE = /^[\w-]+$/;
@@ -957,17 +967,23 @@ export class GeminiClient {
       return body;
     };
 
-    let data: { id: string; steps?: Step[] };
+    // The fallback wraps the POST ALONE. `delivery` is model-implemented, not
+    // just schema-valid: omni takes it, another video model may answer
+    // "<Media> delivery mode is not supported." A 400 on the POST generated
+    // nothing, so re-issuing without the field is free — but a 400 arriving
+    // any later (from a background poll, say) is a 400 about a generation that
+    // is already running, and re-issuing THAT would pay for the clip twice.
+    const timeoutMs = resolveTimeoutMs(opts.timeoutMs, undefined);
+    let body = buildBody(true);
+    let started: { id: string; status?: string; steps?: Step[] };
     try {
-      data = await this.postInteraction(buildBody(true), opts);
+      started = await this.startInteraction(body, opts, timeoutMs);
     } catch (err) {
-      // `delivery` is model-implemented, not just schema-valid: omni takes it,
-      // another video model may answer "<Media> delivery mode is not
-      // supported." That 400 generated nothing, so re-issuing without the field
-      // is free — and better than failing a generation over an optimisation.
       if (!isDeliveryUnsupported(err)) throw err;
-      data = await this.postInteraction(buildBody(false), opts);
+      body = buildBody(false);
+      started = await this.startInteraction(body, opts, timeoutMs);
     }
+    const data = await this.settleInteraction(started, body, timeoutMs);
 
     const { videos, text } = this.extractInteraction(data);
     if (videos.length === 0) {
@@ -1020,10 +1036,34 @@ export class GeminiClient {
     },
   ): Promise<{ id: string; status?: string; steps?: Step[] }> {
     const timeoutMs = resolveTimeoutMs(opts.timeoutMs, opts.imageSize);
+    return await this.settleInteraction(await this.startInteraction(body, opts, timeoutMs), body, timeoutMs);
+  }
+
+  /**
+   * The POST half: issue the request and announce the id.
+   *
+   * Split from the wait so a caller can retry the POST — and ONLY the POST —
+   * without the retry predicate ever seeing an error from after the generation
+   * started. Past this point the work is running and billable.
+   */
+  private async startInteraction(
+    body: Record<string, unknown>,
+    opts: { previousInteractionId?: string; onInteractionStarted?: (interactionId: string) => void },
+    timeoutMs: number,
+  ): Promise<{ id: string; status?: string; steps?: Step[] }> {
     const started = await this.postInteractionOnce(body, opts, timeoutMs);
     // Announce the id before waiting on anything: a caller that persists it can
     // recover the output even if this process never sees the result.
     if (started.id) opts.onInteractionStarted?.(started.id);
+    return started;
+  }
+
+  /** The wait half: poll a backgrounded request to a terminal state. */
+  private async settleInteraction(
+    started: { id: string; status?: string; steps?: Step[] },
+    body: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<{ id: string; status?: string; steps?: Step[] }> {
     // Polling only happens for a request we backgrounded. A synchronous POST
     // already carries its output, and some responses legitimately arrive with
     // no `status` at all — polling those would hang on a finished generation.
@@ -1231,30 +1271,51 @@ export class GeminiClient {
    */
   private async downloadMedia(media: ExtractedMedia): Promise<GeneratedMedia> {
     if (media.base64) return { base64: media.base64, mimeType: media.mimeType };
-    const uri = media.uri ?? '';
-    let parsed: URL;
-    try {
-      parsed = new URL(uri);
-    } catch {
-      throw new McpToolError(`${SERVICE} returned a media reference that is not a URL: ${uri || '(empty)'}`);
-    }
-    if (parsed.protocol !== 'https:' || parsed.hostname !== MEDIA_URI_HOST) {
-      throw new McpToolError(
-        `${SERVICE} returned a media uri on an unexpected host (${parsed.hostname || uri}); expected ${MEDIA_URI_HOST}`,
-        { hint: 'Generated media is served from the Files API on that host only. Report this if it reproduces — it should not happen.' },
-      );
-    }
-    // Local alias so the call carries NO receiver (see uploadToFilesApi).
+    const requested = media.uri ?? '';
+    // Local alias so the calls below carry NO receiver (see uploadToFilesApi).
     const doFetch = this.fetchImpl;
-    const res = await doFetch(uri, { headers: { 'x-goog-api-key': this.requireKey() } });
-    if (!res.ok) {
-      throw new McpToolError(
-        `${SERVICE} media download failed (HTTP ${res.status}) for ${uri}`,
-        { hint: 'Generated files live in the Files API for ~48h and the download requires the api key that created them.' },
-      );
+    const key = this.requireKey();
+
+    let current = requested;
+    for (let hop = 0; ; hop++) {
+      // EVERY hop is revalidated, not just the first. This request carries the
+      // API key, so a redirect — which the response, not us, controls — must
+      // never be able to walk that credential onto another host. Same rule
+      // fetch-image.ts enforces, and stricter: there is exactly one host
+      // generated media is ever served from.
+      const url = assertMediaHost(current, requested);
+      const res = await doFetch(url.toString(), {
+        redirect: 'manual',
+        headers: { 'x-goog-api-key': key },
+      });
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers?.get('location');
+        if (!location) {
+          throw new McpToolError(`${SERVICE} media download returned HTTP ${res.status} with no Location header for ${current}`);
+        }
+        if (hop >= MAX_REDIRECTS) {
+          throw new McpToolError(`${SERVICE} media download for ${requested} exceeded ${MAX_REDIRECTS} redirects (last hop: ${location}).`);
+        }
+        current = new URL(location, url).toString();
+        continue;
+      }
+
+      if (!res.ok) {
+        throw new McpToolError(
+          `${SERVICE} media download failed (HTTP ${res.status}) for ${current}`,
+          { hint: 'Generated files live in the Files API for ~48h and the download requires the api key that created them.' },
+        );
+      }
+
+      // Capped while streaming rather than buffered whole: a generated clip is
+      // small, but `arrayBuffer()` on a surprise is an unbounded allocation.
+      const bytes = await readCapped(res, MEDIA_DOWNLOAD_MAX_BYTES, current, requested, MEDIA_CAP_SUBJECT);
+      return {
+        base64: bytesToBase64(bytes),
+        mimeType: media.mimeType || res.headers?.get('content-type') || 'application/octet-stream',
+      };
     }
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    return { base64: bytesToBase64(bytes), mimeType: media.mimeType || res.headers?.get('content-type') || 'application/octet-stream' };
   }
 
   /** {@link downloadMedia} over a list, preserving order. */
@@ -1295,15 +1356,19 @@ export class GeminiClient {
       for (const parts of [step.content ?? [], step.summary ?? []]) {
         for (const part of parts) {
           const mime = part.mime_type ?? part.mimeType;
-          if (part.data || part.uri) {
+          // Branch on what the part SAYS IT IS, never on which fields it
+          // happens to carry: a text part may also carry a uri (grounded
+          // responses annotate them), and keying off `uri` would file it as
+          // media and drop its text on the floor.
+          if (part.type === 'text') {
+            if (part.text?.trim()) textParts.push(part.text);
+          } else if (part.data || part.uri) {
             // `delivery: 'uri'` replaces `data` with a Files API link — the part
             // carries one or the other, never both. downloadMedia() resolves it.
             const carrier = part.data ? { base64: part.data } : { uri: part.uri };
             if (part.type === 'image') images.push({ ...carrier, mimeType: mime ?? 'image/jpeg' });
             else if (part.type === 'video') videos.push({ ...carrier, mimeType: mime ?? 'video/mp4' });
             else if (part.type === 'audio') audios.push({ ...carrier, mimeType: mime ?? 'audio/mpeg' });
-          } else if (part.type === 'text' && part.text?.trim()) {
-            textParts.push(part.text);
           }
         }
       }
@@ -1333,6 +1398,28 @@ export class GeminiClient {
  * chained POST already waits out. Both resolve on their own; a real 403 simply
  * runs out the caller's clock and is reported with its text.
  */
+/**
+ * One hop of a generated-media download, checked before it is fetched.
+ * Generated media is served from exactly one host over https; anything else is
+ * either a change we need to notice or a redirect trying to collect our key.
+ */
+function assertMediaHost(candidate: string, requested: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new McpToolError(`${SERVICE} returned a media reference that is not a URL: ${candidate || '(empty)'}`);
+  }
+  if (parsed.protocol !== 'https:' || parsed.hostname !== MEDIA_URI_HOST) {
+    throw new McpToolError(
+      `${SERVICE} media download was pointed at an unexpected host (${parsed.hostname || candidate}); expected ${MEDIA_URI_HOST}` +
+        (candidate === requested ? '' : ` (redirected from ${requested})`),
+      { hint: 'Generated media is served from the Files API on that host only. Report this if it reproduces — it should not happen.' },
+    );
+  }
+  return parsed;
+}
+
 function isTransientPoll(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 403 || err.status === 404);
 }
