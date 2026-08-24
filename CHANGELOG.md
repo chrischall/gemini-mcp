@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/chrischall/gemini-mcp/compare/v1.8.0...v1.9.0) (2026-08-24)
+
+
+### Features
+
+* **tools:** ask for landscape or portrait in the words people use ([#162](https://github.com/chrischall/gemini-mcp/issues/162)) ([a2dc6da](https://github.com/chrischall/gemini-mcp/commit/a2dc6da7f5bed594dcdb409da8f9e9b7a98f2b1a))
+
 ## [1.8.0](https://github.com/chrischall/gemini-mcp/compare/v1.7.0...v1.8.0) (2026-08-22)
 
 
