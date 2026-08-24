@@ -22,6 +22,76 @@ export const ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '
 export const IMAGE_SIZES = ['512', '1K', '2K', '4K'] as const;
 
 /**
+ * The words people actually use for shape, as a shorthand over
+ * {@link ASPECT_RATIOS}.
+ *
+ * Landscape and portrait output was always *possible* — every generation tool
+ * has taken `aspect_ratio` since the beginning. But that parameter is a
+ * 14-value enum described as "Output aspect ratio", with nothing linking
+ * "portrait" to `9:16`, so a request phrased the way a person phrases it did
+ * not reliably reach the API. A capability that cannot be addressed is, from
+ * the caller's side, a missing one.
+ */
+export const ORIENTATIONS = ['landscape', 'portrait', 'square'] as const;
+export type Orientation = (typeof ORIENTATIONS)[number];
+
+/**
+ * One mapping, deliberately shared by images and video.
+ *
+ * `16:9`/`9:16` rather than a photo ratio like `3:2` so that "portrait" means
+ * the same shape whatever is being generated — omni offers only these two, and
+ * an orientation that silently meant something different per tool would be a
+ * worse shorthand than no shorthand. Anyone wanting 35mm or print proportions
+ * still names the ratio outright, which always wins (see
+ * {@link resolveAspectRatio}).
+ */
+const ORIENTATION_RATIO: Record<Orientation, string> = {
+  landscape: '16:9',
+  portrait: '9:16',
+  square: '1:1',
+};
+
+/**
+ * Settle `aspect_ratio` and `orientation` into the one value sent upstream.
+ *
+ * An explicit ratio wins: it is the more specific request, and a caller who
+ * named `21:9` while also saying "landscape" meant `21:9`. `supported` is the
+ * calling tool's own enum — the image tools accept all of
+ * {@link ASPECT_RATIOS}, omni accepts two — and an orientation outside it is
+ * REFUSED rather than rounded to the nearest shape. Quietly substituting
+ * `16:9` for an unsupported `square` would hand back a picture the caller
+ * never asked for and give them no way to tell it had been swapped.
+ */
+export function resolveAspectRatio<T extends string>(
+  opts: { aspect_ratio?: T; orientation?: Orientation },
+  supported: readonly T[],
+): T | undefined {
+  if (opts.aspect_ratio) return opts.aspect_ratio;
+  if (!opts.orientation) return undefined;
+  const ratio = ORIENTATION_RATIO[opts.orientation] as T;
+  if (!supported.includes(ratio)) {
+    // Remediation belongs in the MESSAGE — the host drops `hint`.
+    throw new McpToolError(
+      `orientation "${opts.orientation}" (${ratio}) is not available for this model, which supports ${supported.join(' and ')}. ` +
+        `Ask for ${supported.map((r) => `"${r}"`).join(' or ')} via aspect_ratio, or choose another orientation.`,
+      { hint: `Supported aspect ratios: ${supported.join(', ')}.` },
+    );
+  }
+  return ratio;
+}
+
+/** The `orientation` parameter, worded so the shorthand is discoverable. */
+export const orientationSchema = z
+  .enum(ORIENTATIONS)
+  .optional()
+  .describe(
+    'Shape of the output, in plain terms: "landscape" (wide, 16:9), "portrait" (tall, 9:16) or "square" (1:1). ' +
+      'Use this for a request phrased as landscape/portrait/vertical/horizontal. For any other proportion — ' +
+      '35mm photo (3:2), print (4:3), social (4:5), cinematic (21:9) — name it with aspect_ratio instead, ' +
+      'which overrides this when both are given.',
+  );
+
+/**
  * When to pick which Nano Banana model — shared by every tool's `model` param
  * so the guidance can't drift between them.
  */
@@ -283,7 +353,11 @@ export const sharedImageSchema = {
     .regex(/^[\w.-]+$/, 'must be a bare model id (letters, digits, ".", "_", "-")')
     .optional()
     .describe(`Model id override (default: server default; see gemini_list_models). ${MODEL_CHOICE_GUIDE}`),
-  aspect_ratio: z.enum(ASPECT_RATIOS).optional().describe('Output aspect ratio'),
+  aspect_ratio: z
+    .enum(ASPECT_RATIOS)
+    .optional()
+    .describe('Exact output aspect ratio. For a plain landscape/portrait/square request, `orientation` is the shorthand; this wins if both are given.'),
+  orientation: orientationSchema,
   image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution (512 = 0.5K, Flash-only)'),
   output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),
   inline: z.boolean().optional().describe('Return base64 images inline instead of writing to disk'),
@@ -473,10 +547,13 @@ export function timeoutRiskHint(opts: { model: string; imageSize?: string; count
 export function buildMeta(
   model: string,
   seed: number,
-  opts: { aspect_ratio?: string; image_size?: string },
+  opts: { aspect_ratio?: string; image_size?: string; orientation?: Orientation },
 ): Record<string, unknown> {
   const meta: Record<string, unknown> = { model, seed };
+  // The RESOLVED ratio, and the orientation only when one was asked for — so a
+  // caller who said "portrait" can see both what they asked and what it became.
   if (opts.aspect_ratio) meta.aspect_ratio = opts.aspect_ratio;
+  if (opts.orientation) meta.orientation = opts.orientation;
   if (opts.image_size) meta.image_size = opts.image_size;
   return meta;
 }

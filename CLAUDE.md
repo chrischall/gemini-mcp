@@ -146,7 +146,11 @@ src/
                   #   — self-gates on client.library (hosted only)
     uploads.ts    # gemini_get_upload_url                    (registerUploadUrlTools)
                   #   — self-gates on client.uploadUrls (hosted only)
-    shared.ts     # ASPECT_RATIOS, IMAGE_SIZES, sharedImageSchema, pickSeed,
+    shared.ts     # ASPECT_RATIOS, IMAGE_SIZES, ORIENTATIONS +
+                  #   resolveAspectRatio() (landscape/portrait/square shorthand;
+                  #   an explicit aspect_ratio always wins, an orientation the
+                  #   model can't produce is REFUSED not rounded),
+                  #   sharedImageSchema, pickSeed,
                   #   buildMeta, and emit() (inline-vs-write-to-disk result wrapper)
 
 tests/            # vitest, 1:1-ish mirror of src/ + tools/. fetch is mocked
@@ -448,6 +452,18 @@ Two things to keep right:
   chain on top, so nothing escapes as an unattributed throw.
 - **Result wrapper.** Use `emit()` / `textResult()`; don't hand-roll `content`
   arrays. `emit()` owns the inline-vs-disk branch.
+- **Orientation is a shorthand, never a second source of truth.** Every
+  generation tool takes `aspect_ratio`; `orientation`
+  (`landscape`/`portrait`/`square` → `16:9`/`9:16`/`1:1`) exists because a
+  14-value enum described as "Output aspect ratio" was unreachable from the
+  words people use — the capability was there and nobody could ask for it.
+  ONE mapping is shared by images and video so "portrait" means the same shape
+  everywhere (omni offers only 16:9/9:16, which is why that pair was chosen
+  over a photo ratio). `resolveAspectRatio` settles the two: an explicit
+  `aspect_ratio` wins, and an orientation outside the calling tool's enum
+  throws — never silently rounds, since a substituted shape is invisible to the
+  caller. Resolve BEFORE `fingerprintRequest` so `orientation: 'portrait'` and
+  `aspect_ratio: '9:16'` dedup to one billable job.
 - **Binary-output-to-disk is NOT confirm-gated.** Writing a generated image is a
   *local* file write, not a remote mutation, so there's no confirmation token /
   `readOnlyHint`-style gate. (Generation tools set `readOnlyHint: false` only

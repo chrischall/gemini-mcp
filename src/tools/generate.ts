@@ -5,7 +5,7 @@ import { resolveModel } from '../models.js';
 import type { GeminiClient, GroundingResult } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs, requireImageInput } from '../inputs.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, type NamedImage } from './shared.js';
+import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -55,10 +55,15 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
       if (gate) return gate;
       const count = args.count ?? 1;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
+      // Resolve shape BEFORE fingerprinting: `orientation: 'portrait'` and
+      // `aspect_ratio: '9:16'` are the same upstream request, so they must
+      // dedup to the same job rather than billing twice (hence the resolved
+      // ratio in the fingerprint below, and no `orientation` alongside it).
+      const aspectRatio = resolveAspectRatio(args, ASPECT_RATIOS);
       // Fingerprint the request identity (excl. server-picked seed / output path)
       // so a blind re-issue after a host timeout dedups instead of re-billing.
       const fingerprint = fingerprintRequest('gemini_image_generate', {
-        model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
+        model, prompt: args.prompt, aspect_ratio: aspectRatio, image_size: args.image_size,
         thinking_level: args.thinking_level, google_search: args.google_search, count,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         images_url: args.images_url, images_file_uris: args.images_file_uris, images_r2_keys: args.images_r2_keys,
@@ -102,7 +107,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
                 prompt,
                 images: refInputs.length > 0 ? refInputs : undefined,
                 model: args.model,
-                aspectRatio: args.aspect_ratio,
+                aspectRatio,
                 imageSize: args.image_size,
                 seed: seed + i,
                 thinkingLevel: args.thinking_level,
@@ -122,7 +127,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
           }
         });
         if (named.length === 0) throw firstError;
-        const meta = buildMeta(model, seed, args);
+        const meta = buildMeta(model, seed, { ...args, aspect_ratio: aspectRatio });
         if (capturedText) meta.text = capturedText;
         if (capturedGrounding) meta.grounding = capturedGrounding;
         if (report) meta.image_inputs = report;
@@ -175,8 +180,13 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, SEND_LOCAL_ACTION, GENERATE_ENDPOINT, args.images);
       if (gate) return gate;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
+      // Resolve shape BEFORE fingerprinting: `orientation: 'portrait'` and
+      // `aspect_ratio: '9:16'` are the same upstream request, so they must
+      // dedup to the same job rather than billing twice (hence the resolved
+      // ratio in the fingerprint below, and no `orientation` alongside it).
+      const aspectRatio = resolveAspectRatio(args, ASPECT_RATIOS);
       const fingerprint = fingerprintRequest('gemini_image_edit', {
-        model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
+        model, prompt: args.prompt, aspect_ratio: aspectRatio, image_size: args.image_size,
         thinking_level: args.thinking_level, google_search: args.google_search,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         images_url: args.images_url, images_file_uris: args.images_file_uris, images_r2_keys: args.images_r2_keys,
@@ -194,7 +204,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
             prompt,
             images: inputs,
             model: args.model,
-            aspectRatio: args.aspect_ratio,
+            aspectRatio,
             imageSize: args.image_size,
             seed,
             thinkingLevel: args.thinking_level,
@@ -202,7 +212,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
             timeoutMs: args.timeout_ms,
           }));
         const { images: [img], text } = result;
-        const meta = buildMeta(model, seed, args);
+        const meta = buildMeta(model, seed, { ...args, aspect_ratio: aspectRatio });
         if (text) meta.text = text;
         if (result.grounding) meta.grounding = result.grounding;
         if (report) meta.image_inputs = report;
