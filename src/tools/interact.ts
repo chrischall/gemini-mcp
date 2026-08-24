@@ -6,7 +6,7 @@ import { ChainedRequest404Error, type GeminiClient } from '../client.js';
 import { slugify, baseName, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
-import { emit, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
+import { emit, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -96,7 +96,11 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           .string()
           .optional()
           .describe(`Model id override (default: server default; see gemini_list_models). ${MODEL_CHOICE_GUIDE}`),
-        aspect_ratio: z.enum(ASPECT_RATIOS).optional().describe('Output aspect ratio'),
+        aspect_ratio: z
+          .enum(ASPECT_RATIOS)
+          .optional()
+          .describe('Exact output aspect ratio. For a plain landscape/portrait/square request, `orientation` is the shorthand; this wins if both are given.'),
+        orientation: orientationSchema,
         image_size: z
           .enum(IMAGE_SIZES)
           .optional()
@@ -184,8 +188,10 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local file input(s) to the Gemini Interactions API', '/v1beta/interactions', images, args.video_path);
       if (gate) return gate;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
+      // Resolved before the fingerprint so "portrait" and "9:16" are one job.
+      const aspectRatio = resolveAspectRatio(args, ASPECT_RATIOS);
       const fingerprint = fingerprintRequest('gemini_interact', {
-        model, input: args.input, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
+        model, input: args.input, aspect_ratio: aspectRatio, image_size: args.image_size,
         thinking_level: args.thinking_level, previous_interaction_id: previousInteractionId,
         google_search: args.google_search, search_types: args.search_types,
         images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
@@ -198,7 +204,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         const callOpts = {
           input: args.input,
           model: args.model,
-          aspectRatio: args.aspect_ratio,
+          aspectRatio,
           imageSize: args.image_size,
           thinkingLevel: args.thinking_level,
           googleSearch: args.google_search,

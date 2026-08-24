@@ -5,7 +5,7 @@ import { resolveModel } from '../models.js';
 import type { GeminiClient, GeneratedImage } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
-import { emit, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, persistBundle, SET_URL_TTL_MS, type NamedImage } from './shared.js';
+import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, persistBundle, SET_URL_TTL_MS, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -45,9 +45,14 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local master image input(s) to the Gemini API', '/v1beta/models/{model}:generateContent', args.master_images);
       if (gate) return gate;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
+      // Resolve shape BEFORE fingerprinting: `orientation: 'portrait'` and
+      // `aspect_ratio: '9:16'` are the same upstream request, so they must
+      // dedup to the same job rather than billing twice (hence the resolved
+      // ratio in the fingerprint below, and no `orientation` alongside it).
+      const aspectRatio = resolveAspectRatio(args, ASPECT_RATIOS);
       const fingerprint = fingerprintRequest('gemini_image_set', {
         model, master_prompt: args.master_prompt, scenes: args.scenes, count: args.count,
-        reference_mode: args.reference_mode, aspect_ratio: args.aspect_ratio, image_size: args.image_size,
+        reference_mode: args.reference_mode, aspect_ratio: aspectRatio, image_size: args.image_size,
         thinking_level: args.thinking_level, google_search: args.google_search,
         master_images: args.master_images, master_images_base64: args.master_images_base64, from_clipboard: args.from_clipboard,
         master_images_url: args.master_images_url, master_images_file_uris: args.master_images_file_uris,
@@ -55,7 +60,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
       });
       return client.session.jobs.dispatch({ toolName: 'gemini_image_set', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async () => {
         const seed = pickSeed(args.seed);
-        const cfg = { model: args.model, aspectRatio: args.aspect_ratio, imageSize: args.image_size, thinkingLevel: args.thinking_level, googleSearch: args.google_search, timeoutMs: args.timeout_ms };
+        const cfg = { model: args.model, aspectRatio, imageSize: args.image_size, thinkingLevel: args.thinking_level, googleSearch: args.google_search, timeoutMs: args.timeout_ms };
         const slug = args.basename ? baseName(args.basename) : slugify(args.master_prompt);
 
         // 1. master (optionally seeded from reference images).
@@ -156,7 +161,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         });
         const masterText = masterResult.text;
 
-        const meta = buildMeta(model, seed, args);
+        const meta = buildMeta(model, seed, { ...args, aspect_ratio: aspectRatio });
         if (masterText) meta.text = masterText;
         if (masterResult.grounding) meta.grounding = masterResult.grounding;
         if (report) meta.image_inputs = report;

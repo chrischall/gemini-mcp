@@ -5,7 +5,7 @@ import type { GeminiClient } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
-import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
+import { emitMedia, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -38,7 +38,8 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
         prompt: z.string().min(1).describe('Description of the video to generate (or the edit instruction when task=edit)'),
-        aspect_ratio: z.enum(VIDEO_ASPECT_RATIOS).optional().describe('Output aspect ratio (omni: 16:9 or 9:16)'),
+        aspect_ratio: z.enum(VIDEO_ASPECT_RATIOS).optional().describe('Exact output aspect ratio (omni: 16:9 or 9:16). `orientation` is the plain-language shorthand; this wins if both are given.'),
+        orientation: orientationSchema,
         task: z.enum(VIDEO_TASKS).optional().describe('text_to_video (default), image_to_video / reference_to_video (need image input), or edit (needs previous_interaction_id)'),
         images: z.array(z.string().min(1)).optional().describe('Reference image path(s) for image_to_video / reference_to_video'),
         images_url: imagesUrlSchema('Reference stills'),
@@ -79,8 +80,12 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
       const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local image input(s) to the Gemini omni API', '/v1beta/interactions', args.images);
       if (gate) return gate;
       const model = args.model?.trim() || DEFAULT_VIDEO_MODEL;
+      // omni has no square, so `orientation: 'square'` is refused here rather
+      // than rounded to 16:9 — see resolveAspectRatio. Resolved before the
+      // fingerprint so "portrait" and "9:16" dedup to one billable job.
+      const aspectRatio = resolveAspectRatio(args, VIDEO_ASPECT_RATIOS);
       const fingerprint = fingerprintRequest('gemini_video_generate', {
-        model, prompt: args.prompt, aspect_ratio: args.aspect_ratio, task: args.task,
+        model, prompt: args.prompt, aspect_ratio: aspectRatio, task: args.task,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         images_url: args.images_url, images_file_uris: args.images_file_uris,
         previous_interaction_id: previousInteractionId,
@@ -92,7 +97,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
             input: args.prompt,
             images: inputs.length ? inputs : undefined,
             model: args.model,
-            aspectRatio: args.aspect_ratio,
+            aspectRatio,
             task: args.task,
             previousInteractionId,
             timeoutMs: args.timeout_ms,
