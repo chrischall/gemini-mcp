@@ -50,3 +50,8 @@ egress:
     #   - a media/CDN host supplied at runtime
     # Confirm the concrete host(s) against a live run and add them, or
     # the isolated tier will block the call.
+    #
+    # Also: the images_url argument makes this server fetch an ARBITRARY
+    # caller-supplied https host. That cannot be enumerated in advance, so on
+    # the isolated tier either allow the hosts you intend to pass, or expect
+    # image-by-URL to be blocked there.
