@@ -1,0 +1,57 @@
+version: 1
+name: Gemini Images
+slug: gemini
+summary: >-
+  Generate and edit images with Google Gemini image models (Nano Banana /
+  Nano Banana Pro) via natural language prompts
+env:
+  - name: GEMINI_API_KEY
+    secret: true
+    required: true
+    help: >-
+      Your Google Gemini API key (aistudio.google.com/apikey)
+  - name: GEMINI_IMAGE_MODEL
+    required: false
+    help: >-
+      Override the default image model (default: gemini-3.1-flash-image)
+  - name: GEMINI_OUTPUT_DIR
+    required: false
+    help: >-
+      Default directory for generated images (default: current working
+      directory)
+  - name: GEMINI_INPUT_DIR
+    required: false
+    help: >-
+      Directory to resolve bare input-image filenames against
+  - name: GEMINI_TIMEOUT_MS
+    required: false
+    help: >-
+      Upstream request timeout in ms (default: 60000, or 120000 for 4K output)
+  - name: GEMINI_CHAIN_RETRY_MS
+    required: false
+    help: >-
+      Retry budget in milliseconds for a chained request that 404s while the
+      upstream result settles (default 120000).
+  - name: GEMINI_HEARTBEAT_MS
+    required: false
+    help: >-
+      How often, in milliseconds, to emit a progress notification while a
+      generation is in flight. Hosts reset their tools/call timeout on progress,
+      so this lets a long 4K/Pro generation outlive the default budget.
+egress:
+  allow:
+    # Only hosts the SERVER process actually fetches. Hosts that appear
+    # solely in a URL this server BUILDS and returns are excluded.
+    - generativelanguage.googleapis.com
+    #
+    # NOTE — this server also reaches at least one host determined at
+    # RUNTIME, which cannot appear as a literal here:
+    #   - a signed upload URL returned by the API (often storage.googleapis.com / s3)
+    #   - a media/CDN host supplied at runtime
+    # Confirm the concrete host(s) against a live run and add them, or
+    # the isolated tier will block the call.
+    #
+    # Also: the images_url argument makes this server fetch an ARBITRARY
+    # caller-supplied https host. That cannot be enumerated in advance, so on
+    # the isolated tier either allow the hosts you intend to pass, or expect
+    # image-by-URL to be blocked there.
