@@ -204,3 +204,76 @@ describe('orientation reaches the API through the tools', () => {
     expect(vi.mocked(fetchImpl).mock.calls).toHaveLength(1);
   });
 });
+
+/**
+ * Every tool that produces a picture says what shape it produced.
+ *
+ * `orientation` resolves to a ratio the caller never typed, so a result that
+ * omits both leaves that resolution invisible — you asked for "portrait" and
+ * nothing in the response confirms it became `9:16`. The three `buildMeta`
+ * tools always reported it; `gemini_interact` and `gemini_video_generate` build
+ * their meta by hand around chain state and did not (#166). One shared helper
+ * now writes those two fields everywhere, so the hand-rolled metas cannot drift
+ * from `buildMeta` again.
+ */
+describe('the produced shape is echoed by every picture-producing tool', () => {
+  const PNG_ONE = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const MP4 = 'AAAAIGZ0eXBpc29tAAAAAA==';
+
+  let d: string;
+  beforeEach(() => { d = mkdtempSync(join(tmpdir(), 'gemini-shape-')); });
+  afterEach(() => { rmSync(d, { recursive: true, force: true }); vi.restoreAllMocks(); });
+
+  async function interact(args: Record<string, unknown>) {
+    const client = new GeminiClient({ apiKey: 'k' });
+    vi.spyOn(client, 'interact').mockResolvedValue({ id: 'i1', images: [{ base64: PNG_ONE, mimeType: 'image/png' }] });
+    const h = await createTestHarness((s) => registerInteractTools(s, client));
+    const res = await h.callTool('gemini_interact', { input: 'a red leaf', output_dir: d, ...args });
+    await h.close();
+    return parseToolResult<{ aspect_ratio?: string; orientation?: string }>(res);
+  }
+
+  async function video(args: Record<string, unknown>) {
+    const client = new GeminiClient({ apiKey: 'k' });
+    vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v1', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const h = await createTestHarness((s) => registerVideoTools(s, client));
+    const res = await h.callTool('gemini_video_generate', { prompt: 'a wave', output_dir: d, ...args });
+    await h.close();
+    return parseToolResult<{ aspect_ratio?: string; orientation?: string }>(res);
+  }
+
+  it('reports what "portrait" became on gemini_interact', async () => {
+    const meta = await interact({ orientation: 'portrait' });
+    expect(meta.aspect_ratio).toBe('9:16');
+    expect(meta.orientation).toBe('portrait');
+  });
+
+  it('reports what "portrait" became on gemini_video_generate', async () => {
+    const meta = await video({ orientation: 'portrait' });
+    expect(meta.aspect_ratio).toBe('9:16');
+    expect(meta.orientation).toBe('portrait');
+  });
+
+  it('reports a bare aspect_ratio without inventing an orientation for it', async () => {
+    // `21:9` is nobody's idea of "landscape" — echoing one back would be a
+    // claim the caller never made.
+    const meta = await interact({ aspect_ratio: '21:9' });
+    expect(meta.aspect_ratio).toBe('21:9');
+    expect(meta.orientation).toBeUndefined();
+  });
+
+  it('echoes the ratio that WON when both were given, alongside the word asked for', async () => {
+    const meta = await interact({ aspect_ratio: '4:5', orientation: 'portrait' });
+    expect(meta.aspect_ratio).toBe('4:5');
+    expect(meta.orientation).toBe('portrait');
+  });
+
+  it('says nothing about shape when neither was asked for, leaving the model default alone', async () => {
+    const i = await interact({});
+    expect(i.aspect_ratio).toBeUndefined();
+    expect(i.orientation).toBeUndefined();
+    const v = await video({});
+    expect(v.aspect_ratio).toBeUndefined();
+    expect(v.orientation).toBeUndefined();
+  });
+});

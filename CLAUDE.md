@@ -150,8 +150,10 @@ src/
                   #   resolveAspectRatio() (landscape/portrait/square shorthand;
                   #   an explicit aspect_ratio always wins, an orientation the
                   #   model can't produce is REFUSED not rounded),
-                  #   sharedImageSchema, pickSeed,
-                  #   buildMeta, and emit() (inline-vs-write-to-disk result wrapper)
+                  #   sharedImageSchema, pickSeed, buildMeta,
+                  #   reportShape() (the resolved shape, echoed into ANY meta —
+                  #   shared with the hand-rolled interact/video metas), and
+                  #   emit() (inline-vs-write-to-disk result wrapper)
 
 tests/            # vitest, 1:1-ish mirror of src/ + tools/. fetch is mocked
                   #   (fetchImpl injected into GeminiClient); clipboard uses an
@@ -463,7 +465,12 @@ Two things to keep right:
   `aspect_ratio` wins, and an orientation outside the calling tool's enum
   throws — never silently rounds, since a substituted shape is invisible to the
   caller. Resolve BEFORE `fingerprintRequest` so `orientation: 'portrait'` and
-  `aspect_ratio: '9:16'` dedup to one billable job.
+  `aspect_ratio: '9:16'` dedup to one billable job. And every picture-producing
+  tool ECHOES the resolved shape: a word that becomes a ratio the caller never
+  typed has to be visible in the result. `reportShape()` writes those two fields
+  — `buildMeta` calls it, and so do the two hand-rolled metas
+  (`gemini_interact`, `gemini_video_generate`) that are built around
+  `interaction_id` rather than a seed and so cannot use `buildMeta`.
 - **Binary-output-to-disk is NOT confirm-gated.** Writing a generated image is a
   *local* file write, not a remote mutation, so there's no confirmation token /
   `readOnlyHint`-style gate. (Generation tools set `readOnlyHint: false` only

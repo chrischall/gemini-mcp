@@ -549,12 +549,30 @@ export function buildMeta(
   seed: number,
   opts: { aspect_ratio?: string; image_size?: string; orientation?: Orientation },
 ): Record<string, unknown> {
-  const meta: Record<string, unknown> = { model, seed };
-  // The RESOLVED ratio, and the orientation only when one was asked for — so a
-  // caller who said "portrait" can see both what they asked and what it became.
+  const meta = reportShape({ model, seed }, opts);
+  if (opts.image_size) meta.image_size = opts.image_size;
+  return meta;
+}
+
+/**
+ * Record the shape a generation produced, into any meta object.
+ *
+ * The RESOLVED ratio, and the `orientation` only when one was actually asked
+ * for — so a caller who said "portrait" sees both what they asked and what it
+ * became, while a bare `21:9` is not handed back a word nobody used.
+ *
+ * It lives apart from `buildMeta` because two tools cannot use that function:
+ * `gemini_interact` and `gemini_video_generate` build their metas around
+ * `interaction_id` and chain state rather than a seed, and so reported no shape
+ * at all until #166. Sharing the rule rather than copying it is what keeps
+ * those hand-rolled metas from drifting again.
+ */
+export function reportShape(
+  meta: Record<string, unknown>,
+  opts: { aspect_ratio?: string; orientation?: Orientation },
+): Record<string, unknown> {
   if (opts.aspect_ratio) meta.aspect_ratio = opts.aspect_ratio;
   if (opts.orientation) meta.orientation = opts.orientation;
-  if (opts.image_size) meta.image_size = opts.image_size;
   return meta;
 }
 

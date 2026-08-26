@@ -5,7 +5,7 @@ import type { GeminiClient } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
-import { emitMedia, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
+import { emitMedia, reportShape, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -110,7 +110,9 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
           }));
         client.session.lastVideoInteractionId = r.id;
 
-        const meta: Record<string, unknown> = { model, interaction_id: r.id };
+        // The RESOLVED ratio: omni takes only 16:9/9:16, so a caller who asked
+        // in words can see which of the two their request became.
+        const meta = reportShape({ model, interaction_id: r.id }, { ...args, aspect_ratio: aspectRatio });
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
         if (r.text) meta.text = r.text;
         if (report) meta.image_inputs = report;

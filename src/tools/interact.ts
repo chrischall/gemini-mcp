@@ -6,7 +6,7 @@ import { ChainedRequest404Error, type GeminiClient } from '../client.js';
 import { slugify, baseName, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
-import { emit, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
+import { emit, reportShape, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
@@ -266,7 +266,9 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         });
         client.session.lastInteractionId = r.id;
 
-        const meta: Record<string, unknown> = { model, interaction_id: r.id };
+        // `aspectRatio` is the RESOLVED value (see resolveAspectRatio above), so
+        // an `orientation: 'portrait'` request can be seen to have become 9:16.
+        const meta = reportShape({ model, interaction_id: r.id }, { ...args, aspect_ratio: aspectRatio });
         // On recovery the prior id was NOT used — reporting it as
         // previous_interaction_id would misrepresent what the model saw.
         if (chainRecovered) meta.chain_recovered = chainRecovered;
