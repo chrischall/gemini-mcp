@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/chrischall/gemini-mcp/compare/v1.9.0...v1.10.0) (2026-08-26)
+
+
+### Features
+
+* **tools:** report the shape gemini_interact and gemini_video_generate produced ([#169](https://github.com/chrischall/gemini-mcp/issues/169)) ([216cc81](https://github.com/chrischall/gemini-mcp/commit/216cc8134badc1b7b65f53fd2400e50fc0433916))
+
 ## [1.9.0](https://github.com/chrischall/gemini-mcp/compare/v1.8.0...v1.9.0) (2026-08-24)
 
 

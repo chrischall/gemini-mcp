@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "gemini-mcp",
   "display_name": "Gemini Images",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Generate and edit images with Google Gemini image models (Nano Banana / Nano Banana Pro) via natural language prompts",
   "author": {
     "name": "Chris Chall",
