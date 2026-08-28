@@ -92,3 +92,72 @@ describe('loadRateCard', () => {
     expect(loadRateCard({})).toEqual(RATE_CARD);
   });
 });
+
+/**
+ * A partial override is the obvious thing to write when one rate moves, and it
+ * used to poison the session. `{"gemini-3-pro-image": {"image_output": 100}}`
+ * replaced the whole model entry, dropping `input` and `text_output`; an
+ * undefined rate times a token count is NaN, and NaN is absorbing — one bad
+ * call and every later total in the session reads NaN.
+ */
+describe('a partial rate-card override cannot produce NaN', () => {
+  const usage = { input_tokens: 7, output_tokens: 1418, total_tokens: 1425, image_tokens: 1120 };
+
+  it('keeps the shipped rates for fields the override omits', () => {
+    const env = { GEMINI_RATE_CARD: JSON.stringify({ 'gemini-3-pro-image': { image_output: 100 } }) };
+    const c = estimateCost('gemini-3-pro-image', usage, env)!;
+    expect(Number.isFinite(c.usd)).toBe(true);
+    expect(c.breakdown.image_usd).toBeCloseTo(0.112, 6);            // the override
+    expect(c.breakdown.input_usd).toBeCloseTo(0.000014, 9);          // shipped $2.00/1M
+    expect(c.breakdown.text_output_usd).toBeCloseTo(0.003576, 6);    // shipped $12.00/1M
+    expect(c.overridden).toBe(true);
+  });
+
+  it('drops a non-numeric rate rather than letting it reach the arithmetic', () => {
+    const env = { GEMINI_RATE_CARD: JSON.stringify({ 'gemini-3-pro-image': { image_output: 'free' } }) };
+    const c = estimateCost('gemini-3-pro-image', usage, env)!;
+    expect(Number.isFinite(c.usd)).toBe(true);
+    expect(c.breakdown.image_usd).toBeCloseTo(0.1344, 6);            // unchanged
+  });
+
+  it('refuses a new model that does not carry the mandatory rates', () => {
+    // Half a rate card is worse than none — it would price as a confident zero.
+    const env = { GEMINI_RATE_CARD: JSON.stringify({ 'brand-new': { image_output: 5 } }) };
+    expect(estimateCost('brand-new', usage, env)).toBeUndefined();
+  });
+});
+
+describe('video and music', () => {
+  it('prices omni video from tokens, at the rate Google quotes per second', () => {
+    // $17.50/1M and 5,792 tokens per second of 720p is the ~$0.10/second in
+    // the pricing table — the reconciliation that says the rate is right.
+    const oneSecond = { input_tokens: 0, output_tokens: 5792, total_tokens: 5792, video_tokens: 5792 };
+    expect(estimateCost('gemini-omni-flash-preview', oneSecond)?.usd).toBeCloseTo(0.10136, 5);
+  });
+
+  it('bills a Lyria song per generation, ignoring its token counts', () => {
+    // Lyria charges per song, so the tokens describe the work and say nothing
+    // about the bill. Pricing them too would double-count.
+    const noisy = { input_tokens: 9999, output_tokens: 99999, total_tokens: 109998, audio_tokens: 99999 };
+    const clip = estimateCost('lyria-3-clip-preview', noisy)!;
+    expect(clip.usd).toBe(0.04);
+    expect(clip.breakdown.per_generation_usd).toBe(0.04);
+    expect(clip.breakdown.audio_usd).toBe(0);
+    expect(estimateCost('lyria-3-pro-preview', noisy)?.usd).toBe(0.08);
+  });
+
+  it('reconciles gemini-2.5-flash-image against the $0.039 per image it was derived from', () => {
+    // This rate is BACK-DERIVED: Google publishes $0.039/image at 1290 tokens,
+    // not a per-1M figure. The reconciliation is the only thing keeping the
+    // division honest.
+    const oneImage = { input_tokens: 0, output_tokens: 1290, total_tokens: 1290, image_tokens: 1290 };
+    expect(estimateCost('gemini-2.5-flash-image', oneImage)?.usd).toBeCloseTo(0.039, 4);
+  });
+
+  it('prices an unattributed modality as text, which understates rather than inflates', () => {
+    const u = { input_tokens: 0, output_tokens: 1000, total_tokens: 1000 };
+    const c = estimateCost('gemini-3.1-flash-lite-image', u)!;
+    expect(c.breakdown.text_output_usd).toBeCloseTo(0.0015, 8);
+    expect(c.breakdown.image_usd + c.breakdown.video_usd + c.breakdown.audio_usd).toBe(0);
+  });
+});

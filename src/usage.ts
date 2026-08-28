@@ -22,6 +22,10 @@ export interface TokenUsage {
   total_tokens: number;
   /** Output tokens attributed to image modality, when the API broke it out. */
   image_tokens?: number;
+  /** Output tokens attributed to video modality (omni is token-billed). */
+  video_tokens?: number;
+  /** Output tokens attributed to audio modality. */
+  audio_tokens?: number;
   /** Cached input tokens — discounted upstream, so worth surfacing. */
   cached_tokens?: number;
   /** Reasoning tokens (Interactions only). */
@@ -30,14 +34,22 @@ export interface TokenUsage {
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 
-/** Pull the image-modality entry out of either API's by-modality list. */
-function imageTokens(list: unknown): number | undefined {
+/**
+ * Pull one modality's entry out of either API's by-modality list.
+ *
+ * Modality matters for money, not just curiosity: each is billed at its own
+ * rate, and they differ by more than an order of magnitude (text output vs
+ * image output is 20-40x on the same model). A modality nobody breaks out is
+ * priced as text, which is the cheap end — so missing one understates rather
+ * than inventing spend.
+ */
+function modalityTokens(list: unknown, modality: string): number | undefined {
   if (!Array.isArray(list)) return undefined;
   for (const entry of list) {
     if (!entry || typeof entry !== 'object') continue;
     const e = entry as { modality?: unknown; tokenCount?: unknown; tokens?: unknown };
-    // generateContent says "IMAGE"; the Interactions API says "image".
-    if (typeof e.modality === 'string' && e.modality.toLowerCase() === 'image') {
+    // generateContent shouts ("IMAGE"); the Interactions API does not ("image").
+    if (typeof e.modality === 'string' && e.modality.toLowerCase() === modality) {
       return num(e.tokenCount) ?? num(e.tokens);
     }
   }
@@ -63,7 +75,9 @@ export function readUsage(body: unknown): TokenUsage | undefined {
         input_tokens: input ?? 0,
         output_tokens: output ?? 0,
         total_tokens: total ?? (input ?? 0) + (output ?? 0),
-        image_tokens: imageTokens(meta.candidatesTokensDetails),
+        image_tokens: modalityTokens(meta.candidatesTokensDetails, 'image'),
+        video_tokens: modalityTokens(meta.candidatesTokensDetails, 'video'),
+        audio_tokens: modalityTokens(meta.candidatesTokensDetails, 'audio'),
         cached_tokens: num(meta.cachedContentTokenCount),
       });
     }
@@ -79,7 +93,9 @@ export function readUsage(body: unknown): TokenUsage | undefined {
         input_tokens: input ?? 0,
         output_tokens: output ?? 0,
         total_tokens: total ?? (input ?? 0) + (output ?? 0),
-        image_tokens: imageTokens(usage.output_tokens_by_modality),
+        image_tokens: modalityTokens(usage.output_tokens_by_modality, 'image'),
+        video_tokens: modalityTokens(usage.output_tokens_by_modality, 'video'),
+        audio_tokens: modalityTokens(usage.output_tokens_by_modality, 'audio'),
         cached_tokens: num(usage.total_cached_tokens),
         thought_tokens: num(usage.total_thought_tokens),
       });
@@ -96,6 +112,8 @@ function compact(u: TokenUsage): TokenUsage {
     total_tokens: u.total_tokens,
   };
   if (u.image_tokens) out.image_tokens = u.image_tokens;
+  if (u.video_tokens) out.video_tokens = u.video_tokens;
+  if (u.audio_tokens) out.audio_tokens = u.audio_tokens;
   if (u.cached_tokens) out.cached_tokens = u.cached_tokens;
   if (u.thought_tokens) out.thought_tokens = u.thought_tokens;
   return out;
@@ -117,6 +135,8 @@ export function sumUsage(parts: ReadonlyArray<TokenUsage | undefined>): TokenUsa
         output_tokens: acc.output_tokens + u.output_tokens,
         total_tokens: acc.total_tokens + u.total_tokens,
         image_tokens: (acc.image_tokens ?? 0) + (u.image_tokens ?? 0),
+        video_tokens: (acc.video_tokens ?? 0) + (u.video_tokens ?? 0),
+        audio_tokens: (acc.audio_tokens ?? 0) + (u.audio_tokens ?? 0),
         cached_tokens: (acc.cached_tokens ?? 0) + (u.cached_tokens ?? 0),
         thought_tokens: (acc.thought_tokens ?? 0) + (u.thought_tokens ?? 0),
       }),

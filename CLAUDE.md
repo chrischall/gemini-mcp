@@ -160,13 +160,14 @@ src/
     interact.ts   # gemini_interact                           (registerInteractTools)
     video.ts      # gemini_video_generate (omni, Interactions) (registerVideoTools)
     music.ts      # gemini_music_generate (Lyria, Interactions) (registerMusicTools)
-    usage.ts      # gemini_token_usage — what this session spent (registerUsageTools)
-                  #   in TOKENS. There is no balance to read: the
-                  #   Generative Language API has no billing/quota/
-                  #   account resource, and Cloud Billing has no balance
-                  #   concept at all (post-paid). Reports no money —
-                  #   image pricing is not purely per-token, so a
-                  #   hardcoded rate card goes stale silently
+    usage.ts      # gemini_token_usage — what this session spent, (registerUsageTools)
+                  #   in tokens AND estimated USD. There is no balance
+                  #   to read: the Generative Language API has no
+                  #   billing/quota/account resource, and Cloud Billing
+                  #   has no balance concept at all (post-paid), so
+                  #   per-call tokens are how spend is attributed. Cost
+                  #   is priced per call against each call's own model
+                  #   (see pricing.ts), dated and overridable
     jobs.ts       # gemini_get_result (async poll + interaction (registerJobTools)
                   #   recovery for a job whose executor was lost)
     files.ts      # gemini_upload_file / _list_files / _delete_file (registerFileTools)

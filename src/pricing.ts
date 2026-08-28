@@ -40,8 +40,19 @@ export interface ModelRates {
   input: number;
   /** Text and "thinking" output. */
   text_output: number;
-  /** Image output — the expensive one. */
-  image_output: number;
+  /** Image output — 20-40x the text rate on the same model. */
+  image_output?: number;
+  /** Video output. Omni is token-billed ($17.50/1M ≈ 5,792 tokens per second of 720p). */
+  video_output?: number;
+  /** Audio output. */
+  audio_output?: number;
+  /**
+   * A flat price per generation, for models billed that way rather than by
+   * token. Lyria charges per song, so its token counts describe the work and
+   * say nothing about the bill; when this is set it IS the cost and the
+   * per-token rates are ignored.
+   */
+  per_generation?: number;
 }
 
 /**
@@ -52,13 +63,32 @@ export const RATE_CARD: Readonly<Record<string, ModelRates>> = Object.freeze({
   'gemini-3-pro-image': { input: 2.0, text_output: 12.0, image_output: 120.0 },
   'gemini-3.1-flash-image': { input: 0.5, text_output: 3.0, image_output: 60.0 },
   'gemini-3.1-flash-lite-image': { input: 0.25, text_output: 1.5, image_output: 30.0 },
-  'gemini-2.5-flash-image': { input: 0.3, text_output: 3.0, image_output: 30.23 },
+  // Google publishes 2.5-flash-image's output as $0.039 PER IMAGE at 1290
+  // tokens, not as a per-1M rate. 0.039 / 1290 * 1e6 = 30.23 — a back-derived
+  // figure, unlike the four above which are published per-1M directly. The
+  // test reconciles it against the $0.039 it came from.
+  'gemini-2.5-flash-image': { input: 0.3, text_output: 3.0, image_output: 30.2326 },
+  // Omni is token-billed for video: $17.50/1M, ~5,792 tokens per second of
+  // 720p, which is the ~$0.10/second Google quotes. Veo is the per-second
+  // family; this server does not use it.
+  'gemini-omni-flash': { input: 0.5, text_output: 3.0, image_output: 60.0, video_output: 17.5 },
+  // Lyria bills per song, so tokens describe the work and not the bill.
+  'lyria-3-clip': { input: 0, text_output: 0, per_generation: 0.04 },
+  'lyria-3-pro': { input: 0, text_output: 0, per_generation: 0.08 },
 });
 
 /** What one call cost, and how that total was arrived at. */
 export interface CostEstimate {
   usd: number;
-  breakdown: { input_usd: number; text_output_usd: number; image_usd: number };
+  breakdown: {
+    input_usd: number;
+    text_output_usd: number;
+    image_usd: number;
+    video_usd: number;
+    audio_usd: number;
+    /** Set instead of the above when the model bills a flat rate per call. */
+    per_generation_usd?: number;
+  };
   /** The rate-card date, so a caller can see how old these numbers are. */
   priced_at: string;
   /** True when the figure used an operator-supplied rate rather than the shipped one. */
@@ -79,13 +109,36 @@ function normalizeModel(model: string): string {
 export function loadRateCard(env: Record<string, string | undefined> = process.env): Record<string, ModelRates> {
   const raw = readEnvVar('GEMINI_RATE_CARD', { env });
   if (!raw) return { ...RATE_CARD };
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as Record<string, ModelRates>;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...RATE_CARD };
-    return { ...RATE_CARD, ...parsed };
+    parsed = JSON.parse(raw);
   } catch {
     return { ...RATE_CARD };
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...RATE_CARD };
+
+  // Merge PER FIELD, not per model. A shallow per-model merge let a partial
+  // override — `{"gemini-3-pro-image": {"image_output": 100}}`, the obvious
+  // thing to write when one rate moves — drop `input` and `text_output`
+  // entirely, and an undefined rate multiplied by a token count is NaN. That
+  // NaN then flowed into the session accumulator, where it is absorbing: one
+  // bad call and every later total reads NaN for the rest of the session.
+  const out: Record<string, ModelRates> = { ...RATE_CARD };
+  for (const [model, override] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!override || typeof override !== 'object' || Array.isArray(override)) continue;
+    const merged: Record<string, unknown> = { ...(RATE_CARD[normalizeModel(model)] ?? {}), ...(out[model] ?? {}) };
+    for (const [field, value] of Object.entries(override as Record<string, unknown>)) {
+      // Only finite numbers get in. A string, null or NaN in the override is
+      // dropped rather than propagated into arithmetic.
+      if (typeof value === 'number' && Number.isFinite(value)) merged[field] = value;
+    }
+    // A model still lacking the two mandatory rates cannot be priced at all,
+    // and half a rate card is worse than none.
+    if (typeof merged.input === 'number' && typeof merged.text_output === 'number') {
+      out[model] = merged as unknown as ModelRates;
+    }
+  }
+  return out;
 }
 
 /**
@@ -102,28 +155,52 @@ export function estimateCost(
   const rates = card[key];
   if (!rates) return undefined;
 
+  const per = (tokens: number, rate: number | undefined) =>
+    // An absent rate prices as zero, never NaN. A modality with no published
+    // rate is not evidence of spend, and NaN is absorbing — it would poison
+    // every later total in the session.
+    typeof rate === 'number' && Number.isFinite(rate) ? (tokens * rate) / 1_000_000 : 0;
+
+  // Billed per call, not per token: the tokens describe the work and say
+  // nothing about the bill, so pricing them would double-count.
+  if (typeof rates.per_generation === 'number') {
+    return {
+      usd: rates.per_generation,
+      breakdown: {
+        input_usd: 0, text_output_usd: 0, image_usd: 0, video_usd: 0, audio_usd: 0,
+        per_generation_usd: rates.per_generation,
+      },
+      priced_at: PRICED_AT,
+      ...(overriddenFor(key, rates) ? { overridden: true } : {}),
+    };
+  }
+
   const imageTokens = usage.image_tokens ?? 0;
-  // Whatever the API did not attribute to images is text/thinking output.
-  const textTokens = Math.max(0, usage.output_tokens - imageTokens);
-  const per = (tokens: number, rate: number) => (tokens * rate) / 1_000_000;
+  const videoTokens = usage.video_tokens ?? 0;
+  const audioTokens = usage.audio_tokens ?? 0;
+  // Whatever the API attributed to no modality is text/thinking output — the
+  // cheap end, so an unrecognised modality understates rather than inflates.
+  const textTokens = Math.max(0, usage.output_tokens - imageTokens - videoTokens - audioTokens);
 
   const input_usd = per(usage.input_tokens, rates.input);
   const text_output_usd = per(textTokens, rates.text_output);
   const image_usd = per(imageTokens, rates.image_output);
-
-  const shipped = RATE_CARD[key];
-  const overridden =
-    !shipped ||
-    shipped.input !== rates.input ||
-    shipped.text_output !== rates.text_output ||
-    shipped.image_output !== rates.image_output;
+  const video_usd = per(videoTokens, rates.video_output);
+  const audio_usd = per(audioTokens, rates.audio_output);
 
   return {
-    usd: input_usd + text_output_usd + image_usd,
-    breakdown: { input_usd, text_output_usd, image_usd },
+    usd: input_usd + text_output_usd + image_usd + video_usd + audio_usd,
+    breakdown: { input_usd, text_output_usd, image_usd, video_usd, audio_usd },
     priced_at: PRICED_AT,
-    ...(overridden ? { overridden: true } : {}),
+    ...(overriddenFor(key, rates) ? { overridden: true } : {}),
   };
+}
+
+/** Did any rate for this model come from the operator rather than the shipped card? */
+function overriddenFor(key: string, rates: ModelRates): boolean {
+  const shipped = RATE_CARD[key];
+  if (!shipped) return true;
+  return (Object.keys(rates) as Array<keyof ModelRates>).some((f) => rates[f] !== shipped[f]);
 }
 
 /**
