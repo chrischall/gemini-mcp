@@ -44,12 +44,18 @@ egress:
     # solely in a URL this server BUILDS and returns are excluded.
     - generativelanguage.googleapis.com
     #
-    # NOTE — this server also reaches at least one host determined at
-    # RUNTIME, which cannot appear as a literal here:
-    #   - a signed upload URL returned by the API (often storage.googleapis.com / s3)
-    #   - a media/CDN host supplied at runtime
-    # Confirm the concrete host(s) against a live run and add them, or
-    # the isolated tier will block the call.
+    # That one host covers every Gemini call: generateContent, the Files API
+    # upload start, the resumable upload session URL it hands back (same
+    # host — live-verified, docs/GEMINI-API.md) and the media download, which
+    # client.ts refuses to follow to any other host.
+    #
+    # NOTE — this server also reaches ONE host determined at RUNTIME, which
+    # cannot appear as a literal here: the blob store at MCP_BLOB_BASE_URL
+    # (src/blob-store.ts PUTs/GETs generated media there). On mcp-host that
+    # is the gateway's own public hostname, injected at spawn; add that host
+    # for the deployment you register on, or every hosted image save is
+    # blocked. Nothing else is dialled at runtime: no GCS/S3 host is ever
+    # contacted.
     #
     # Also: the images_url argument makes this server fetch an ARBITRARY
     # caller-supplied https host. That cannot be enumerated in advance, so on
