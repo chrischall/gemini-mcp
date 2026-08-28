@@ -80,8 +80,9 @@ describe('gemini_token_usage', () => {
   });
 
   it('says so when some calls could not be priced, instead of undercounting silently', async () => {
-    // Video and music are billed per second, so they contribute tokens and no
-    // cost. A total that quietly omitted them would read as complete.
+    // A model absent from the rate card contributes tokens and no cost. A
+    // total that quietly omitted it would read as complete. (Veo is the
+    // example here: this server does not use it, so it has no rate.)
     const client = new GeminiClient({ apiKey: 'k' });
     client.session.recordUsage({ input_tokens: 7, output_tokens: 1418, total_tokens: 1425, image_tokens: 1120 }, 'gemini-3.1-flash-lite-image');
     client.session.recordUsage({ input_tokens: 5, output_tokens: 500, total_tokens: 505 }, 'veo-3.1-generate-preview');

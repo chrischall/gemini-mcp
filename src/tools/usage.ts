@@ -69,7 +69,7 @@ export function registerUsageTools(server: McpServer, client: GeminiClient): voi
           usage === undefined
             ? 'No generation has run in this session yet, so nothing has been billed through it.'
             : priced < calls
-              ? `Estimate covers ${priced} of ${calls} billed calls — the rest used a model with no token rate (video and music are billed per second, not per token).`
+              ? `Estimate covers ${priced} of ${calls} billed calls — the rest used a model that is not in the rate card. Add it with GEMINI_RATE_CARD to include it.`
               : 'Estimate priced per call against each call\'s own model, then added up.',
         rates:
           `Published rates read on ${PRICED_AT} (paid tier, USD). Override or extend with GEMINI_RATE_CARD ` +

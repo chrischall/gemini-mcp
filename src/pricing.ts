@@ -23,9 +23,14 @@
  * a stale number is the operator's to fix in their own environment rather
  * than something they must wait on a release for.
  *
- * Everything not in the card prices as `undefined` rather than zero. Video and
- * music are billed per second, not per token, so they are deliberately absent
- * — a token-based estimate for them would be wrong in kind, not just degree.
+ * Everything not in the card prices as `undefined` rather than zero.
+ *
+ * Video and music ARE in the card, contrary to the first version of this
+ * module. `gemini-omni-flash` — the model this server's video tool uses — is
+ * token-billed at $17.50/1M (~5,792 tokens per second of 720p, which is the
+ * ~$0.10/second Google quotes); it is Veo that bills per second, and this
+ * server does not use Veo. Lyria genuinely is not token-billed: it charges per
+ * song, which {@link ModelRates.per_generation} exists for.
  *
  * Source: https://ai.google.dev/gemini-api/docs/pricing (paid tier, USD).
  */
@@ -126,7 +131,13 @@ export function loadRateCard(env: Record<string, string | undefined> = process.e
   const out: Record<string, ModelRates> = { ...RATE_CARD };
   for (const [model, override] of Object.entries(parsed as Record<string, unknown>)) {
     if (!override || typeof override !== 'object' || Array.isArray(override)) continue;
-    const merged: Record<string, unknown> = { ...(RATE_CARD[normalizeModel(model)] ?? {}), ...(out[model] ?? {}) };
+    // Store under the SAME key `estimateCost` looks up. Writing the raw key
+    // meant an override for `lyria-3-clip-preview` — the id a caller actually
+    // holds, since the video and music models are preview-only — landed under
+    // that key while lookup normalized to `lyria-3-clip`, so it was silently
+    // ignored: the operator's rate was accepted, stored, and never used.
+    const key = normalizeModel(model);
+    const merged: Record<string, unknown> = { ...(RATE_CARD[key] ?? {}), ...(out[key] ?? {}) };
     for (const [field, value] of Object.entries(override as Record<string, unknown>)) {
       // Only finite numbers get in. A string, null or NaN in the override is
       // dropped rather than propagated into arithmetic.
@@ -135,7 +146,7 @@ export function loadRateCard(env: Record<string, string | undefined> = process.e
     // A model still lacking the two mandatory rates cannot be priced at all,
     // and half a rate card is worse than none.
     if (typeof merged.input === 'number' && typeof merged.text_output === 'number') {
-      out[model] = merged as unknown as ModelRates;
+      out[key] = merged as unknown as ModelRates;
     }
   }
   return out;
@@ -206,10 +217,9 @@ function overriddenFor(key: string, rates: ModelRates): boolean {
 /**
  * Attach a cost estimate to a result's meta, when the model has a rate.
  *
- * Silent when it does not — video and music are billed per second, so a
- * token-priced figure for them would be wrong in kind. An absent
- * `cost_estimate` beside a present `usage` means "not priceable", which is
- * the honest answer rather than a zero.
+ * Silent when it does not — a model absent from the rate card. An absent
+ * `cost_estimate` beside a present `usage` means "no rate for this model",
+ * which is the honest answer rather than a zero.
  */
 export function attachCost(
   meta: Record<string, unknown>,

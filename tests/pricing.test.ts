@@ -161,3 +161,31 @@ describe('video and music', () => {
     expect(c.breakdown.image_usd + c.breakdown.video_usd + c.breakdown.audio_usd).toBe(0);
   });
 });
+
+/**
+ * The video and music models are preview-only, so `gemini-omni-flash-preview`
+ * and `lyria-3-clip-preview` are the ids a caller actually holds — and the ids
+ * they would naturally key an override by. Storing overrides under the raw key
+ * while looking them up normalized meant those entries were accepted, stored,
+ * and never used: the operator's rate was silently ignored.
+ */
+describe('rate-card overrides keyed by a -preview id', () => {
+  const oneSecond = { input_tokens: 0, output_tokens: 5792, total_tokens: 5792, video_tokens: 5792 };
+
+  it('applies an override keyed by the preview id', () => {
+    const env = { GEMINI_RATE_CARD: JSON.stringify({ 'gemini-omni-flash-preview': { video_output: 35 } }) };
+    const c = estimateCost('gemini-omni-flash-preview', oneSecond, env)!;
+    expect(c.breakdown.video_usd).toBeCloseTo(0.20272, 5);   // 5792 x $35/1M
+    expect(c.overridden).toBe(true);
+  });
+
+  it('applies it to the GA id too, since they price as one model', () => {
+    const env = { GEMINI_RATE_CARD: JSON.stringify({ 'gemini-omni-flash-preview': { video_output: 35 } }) };
+    expect(estimateCost('gemini-omni-flash', oneSecond, env)?.breakdown.video_usd).toBeCloseTo(0.20272, 5);
+  });
+
+  it('overrides a per-generation price by its preview id', () => {
+    const env = { GEMINI_RATE_CARD: JSON.stringify({ 'lyria-3-clip-preview': { input: 0, text_output: 0, per_generation: 0.06 } }) };
+    expect(estimateCost('lyria-3-clip-preview', { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, env)?.usd).toBe(0.06);
+  });
+});

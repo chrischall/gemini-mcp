@@ -114,10 +114,11 @@ export class SessionState {
    * a Lite call's and pricing the result at one rate would be wrong by up to
    * 4x. Each call is priced against ITS model and only the money is added up.
    *
-   * `undefined` while nothing priceable has run — a model with no rate (video
-   * and music are billed per second, not per token) contributes usage but no
-   * cost, so a total of `undefined` beside a non-zero usage is meaningful, not
-   * a bug.
+   * `undefined` while nothing priceable has run — a model absent from the rate
+   * card contributes usage but no cost, so a total of `undefined` beside a
+   * non-zero usage is meaningful rather than a bug. (Video and music DO price:
+   * omni is token-billed and Lyria bills per song. It is an unknown or
+   * newly-released model id that goes unpriced.)
    */
   costUsd: number | undefined;
 
