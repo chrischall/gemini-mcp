@@ -114,6 +114,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         // in words can see which of the two their request became.
         const meta = reportShape({ model, interaction_id: r.id }, { ...args, aspect_ratio: aspectRatio });
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
+        if (r.usage) meta.usage = r.usage;
         if (r.text) meta.text = r.text;
         if (report) meta.image_inputs = report;
         meta.hint = `To edit this video, call gemini_video_generate again with task: "edit" and previous_interaction_id: "${r.id}" (or continue_last: true).`;

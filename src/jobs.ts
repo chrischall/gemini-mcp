@@ -3,6 +3,7 @@ import { textResult, McpToolError } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { downloadFilename } from './media-name.js';
 import { HEARTBEAT_MS, type JobRecord, type JobStore } from './job-store.js';
+import { annotateReusedUsage } from './usage.js';
 
 /**
  * Job registry backing idempotency (#53) and the async job pattern (#52).
@@ -198,6 +199,9 @@ function annotateReused(result: CallToolResult, jobId: string): CallToolResult {
     try { obj = JSON.parse(first.text); } catch { obj = {}; }
     obj.reused = true;
     obj.reused_job_id = jobId;
+    // The recorded usage describes the generation being handed back, but this
+    // call did not pay for it — mark it so a workflow total can exclude it.
+    annotateReusedUsage(obj);
     return { ...result, content: [{ ...first, text: JSON.stringify(obj, null, 2) }, ...content.slice(1)] };
   }
   // No text meta block (e.g. inline mode with empty meta) — prepend one.

@@ -7,6 +7,7 @@ import { slugify, baseName } from '../images.js';
 import { resolveImageInputs, requireImageInput } from '../inputs.js';
 import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
+import { sumUsage, type TokenUsage } from '../usage.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 const GENERATE_ENDPOINT = '/v1beta/models/{model}:generateContent';
@@ -98,6 +99,9 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         // throws: an empty success is worse than an error.
         const failed: Array<{ image: number; error: string }> = [];
         let firstError: unknown;
+        // One entry per SUCCESSFUL upstream call. `count: N` is N billable
+        // requests, so reporting the first would understate the tool by N-1.
+        const usages: Array<TokenUsage | undefined> = [];
         await withProgressHeartbeat(extra, `Generating ${count > 1 ? `${count} images` : 'image'} (${model})`, async () => {
           for (let i = 0; i < count; i++) {
             try {
@@ -117,6 +121,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
                 timeoutMs: args.timeout_ms,
               });
               const { images: [img], text } = result;
+              usages.push(result.usage);
               if (text && !capturedText) capturedText = text;
               if (result.grounding && !capturedGrounding) capturedGrounding = result.grounding;
               named.push({ image: img, base: count === 1 ? slug : `${slug}-${String(i + 1).padStart(2, '0')}` });
@@ -128,6 +133,8 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         });
         if (named.length === 0) throw firstError;
         const meta = buildMeta(model, seed, { ...args, aspect_ratio: aspectRatio });
+        const usage = sumUsage(usages);
+        if (usage) meta.usage = usage;
         if (capturedText) meta.text = capturedText;
         if (capturedGrounding) meta.grounding = capturedGrounding;
         if (report) meta.image_inputs = report;
@@ -213,6 +220,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
           }));
         const { images: [img], text } = result;
         const meta = buildMeta(model, seed, { ...args, aspect_ratio: aspectRatio });
+        if (result.usage) meta.usage = result.usage;
         if (text) meta.text = text;
         if (result.grounding) meta.grounding = result.grounding;
         if (report) meta.image_inputs = report;

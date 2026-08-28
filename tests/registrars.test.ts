@@ -52,7 +52,7 @@ describe('TOOL_REGISTRARS', () => {
   it('wraps every registrar, not just the first', async () => {
     const raw = [
       'registerModelTools', 'registerGenerateTools', 'registerSetTools', 'registerInteractTools',
-      'registerVideoTools', 'registerMusicTools', 'registerJobTools', 'registerFileTools',
+      'registerVideoTools', 'registerMusicTools', 'registerJobTools', 'registerUsageTools', 'registerFileTools',
       'registerUploadUrlTools', 'registerLibraryTools',
     ];
     expect(TOOL_REGISTRARS).toHaveLength(raw.length);

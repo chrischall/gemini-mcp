@@ -76,6 +76,13 @@ src/
                   #   decodeImageInput (MIME sniff), writeMedia/writeImage,
                   #   slugify, uniquePath, resolveOutputDir, resolveImagePath.
                   #   NOT an input funnel — inputs.ts is (see below)
+  usage.ts        # readUsage()/sumUsage() — the two APIs' token counts,
+                  #   normalized. generateContent returns camelCase
+                  #   `usageMetadata`; interactions returns snake_case
+                  #   `usage` with DIFFERENT field names plus cached/
+                  #   thought counts. Absence stays undefined, never a
+                  #   zeroed record: "unknown" and "cost nothing" are
+                  #   different claims when a caller is summing
   bytes.ts        # base64 <-> Uint8Array + MB formatting. atob/btoa, never
                   #   Buffer, which is not everywhere; bytesToBase64
                   #   CHUNKS (String.fromCharCode(...bytes) blows the argument
@@ -139,6 +146,13 @@ src/
     interact.ts   # gemini_interact                           (registerInteractTools)
     video.ts      # gemini_video_generate (omni, Interactions) (registerVideoTools)
     music.ts      # gemini_music_generate (Lyria, Interactions) (registerMusicTools)
+    usage.ts      # gemini_token_usage — what this session spent (registerUsageTools)
+                  #   in TOKENS. There is no balance to read: the
+                  #   Generative Language API has no billing/quota/
+                  #   account resource, and Cloud Billing has no balance
+                  #   concept at all (post-paid). Reports no money —
+                  #   image pricing is not purely per-token, so a
+                  #   hardcoded rate card goes stale silently
     jobs.ts       # gemini_get_result (async poll + interaction (registerJobTools)
                   #   recovery for a job whose executor was lost)
     files.ts      # gemini_upload_file / _list_files / _delete_file (registerFileTools)
@@ -204,6 +218,7 @@ shared util, configured non-Bearer.
 | `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (GA since 2026-07) | write (binary-out) |
 | `gemini_video_generate` | `tools/video.ts` | `POST /v1beta/interactions` (omni, `response_format: video`, preview) | write (binary-out, MP4→disk) |
 | `gemini_music_generate` | `tools/music.ts` | `POST /v1beta/interactions` (Lyria, `response_format: audio`, preview) | write (binary-out, MP3/WAV) |
+| `gemini_token_usage` | `tools/usage.ts` | none (session counters) | read |
 | `gemini_get_result` | `tools/jobs.ts` | none, until a killed job needs recovering — then `GET /v1beta/interactions/{id}` + a media download | read (writes recovered media) |
 | `gemini_upload_file` | `tools/files.ts` | `POST /upload/v1beta/files` (resumable) | write |
 | `gemini_list_files` | `tools/files.ts` | `GET /v1beta/files?pageSize=N` | read |
