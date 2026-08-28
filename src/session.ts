@@ -1,4 +1,5 @@
 import { JobRegistry } from './jobs.js';
+import { sumUsage, type TokenUsage } from './usage.js';
 
 /**
  * Everything the server remembers *between tool calls on behalf of one user*.
@@ -90,9 +91,32 @@ export class SessionState {
     return hit;
   }
 
+  /**
+   * Everything this session has spent, in tokens, across every upstream call.
+   *
+   * Accumulated in the CLIENT rather than in the tools, so a call that was
+   * billed and then failed (a safety filter returning no image, say) still
+   * counts — it cost money regardless of whether a tool could use the result.
+   * Per session, never module scope: one hosted process serves many tenants,
+   * and a shared total would report other people's spend as yours.
+   */
+  usageTotal: TokenUsage | undefined;
+
+  /** How many upstream calls contributed to {@link usageTotal}. */
+  billedCalls = 0;
+
+  /** Fold one upstream call's usage into the running total. */
+  recordUsage(usage: TokenUsage | undefined): void {
+    if (!usage) return;
+    this.usageTotal = sumUsage([this.usageTotal, usage]);
+    this.billedCalls += 1;
+  }
+
   /** Forget everything. Tests use this; nothing in `src/` calls it. */
   reset(): void {
     this.jobs.reset();
+    this.usageTotal = undefined;
+    this.billedCalls = 0;
     this.lastInteractionId = undefined;
     this.lastMusicInteractionId = undefined;
     this.lastVideoInteractionId = undefined;

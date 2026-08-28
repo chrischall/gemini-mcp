@@ -242,6 +242,18 @@ gone and Google's docs recommend it over `generateContent` for image work.
   }
   ```
 - **Response:** `{ id, status, model, object, created, updated, usage, steps: [...] }`.
+  `usage` (verified live 2026-08-27) is snake_case and does NOT mirror
+  `generateContent`'s field names:
+  `{ total_tokens, total_input_tokens, total_output_tokens,
+  input_tokens_by_modality: [{modality:"text", tokens}],
+  output_tokens_by_modality: [{modality:"image", tokens}],
+  total_cached_tokens, total_thought_tokens, raw_prompt_token }`.
+  `generateContent` returns `usageMetadata` instead:
+  `{ promptTokenCount, candidatesTokenCount, totalTokenCount,
+  promptTokensDetails: [{modality:"TEXT", tokenCount}],
+  candidatesTokensDetails: [{modality:"IMAGE", tokenCount}], serviceTier }`.
+  Note the modality strings differ in case between the two ("image" vs
+  "IMAGE"). `src/usage.ts` normalizes both.
   `steps[]` entries are `{type:"thought"|"model_output", content?:[parts], summary?:[parts]}`.
   Image parts are `{ type:"image", mime_type:"image/jpeg", data:"<BASE64>" }`; text
   parts are `{type:"text", text}`. The **output image** is the image part in the

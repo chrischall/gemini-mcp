@@ -7,6 +7,7 @@ import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, persistBundle, SET_URL_TTL_MS, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
+import { sumUsage, type TokenUsage } from '../usage.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 export function registerSetTools(server: McpServer, client: GeminiClient): void {
@@ -103,6 +104,11 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
           ? { ...masterOnly.report, ...carried.report }
           : undefined;
         const named: NamedImage[] = [];
+        // A set is the most expensive tool here — master plus one call per
+        // scene — so omitting its usage understates spend more than anywhere
+        // else. Collected from every call that RETURNED, including scenes
+        // whose image was later discarded: they were billed regardless.
+        const usages: Array<TokenUsage | undefined> = [];
         const masterResult = await withProgressHeartbeat(extra, `Generating image set (${model})`, async () => {
           const result = await client.generate({
             prompt: masterPrompt,
@@ -110,6 +116,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
             seed,
             ...cfg,
           });
+          usages.push(result.usage);
           const master = result.images[0];
           named.push({ image: master, base: `${slug}-master` });
 
@@ -138,7 +145,9 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
             let ref: GeneratedImage = master;
             for (let i = 0; i < scenePrompts.length; i++) {
               try {
-                const { images: [img] } = await client.generate({ prompt: composePrompt(scenePrompts[i], styleOnly), images: [ref, ...carriedRefs], seed: seed + i + 1, ...cfg });
+                const scene = await client.generate({ prompt: composePrompt(scenePrompts[i], styleOnly), images: [ref, ...carriedRefs], seed: seed + i + 1, ...cfg });
+                usages.push(scene.usage);
+                const img = scene.images[0];
                 named.push({ image: img, base: sceneName(i) });
                 // Chain mode anchors each scene on the previous OUTPUT, so a
                 // failure must not advance the reference — the next scene
@@ -150,7 +159,9 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
             }
           } else {
             const settled = await Promise.allSettled(
-              scenePrompts.map((p, i) => client.generate({ prompt: composePrompt(p, styleOnly), images: [master, ...carriedRefs], seed: seed + i + 1, ...cfg }).then((r) => r.images[0])),
+              scenePrompts.map((p, i) =>
+                client.generate({ prompt: composePrompt(p, styleOnly), images: [master, ...carriedRefs], seed: seed + i + 1, ...cfg })
+                  .then((r) => { usages.push(r.usage); return r.images[0]; })),
             );
             settled.forEach((outcome, i) => {
               if (outcome.status === 'fulfilled') named.push({ image: outcome.value, base: sceneName(i) });
@@ -162,6 +173,8 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         const masterText = masterResult.text;
 
         const meta = buildMeta(model, seed, { ...args, aspect_ratio: aspectRatio });
+        const usage = sumUsage(usages);
+        if (usage) meta.usage = usage;
         if (masterText) meta.text = masterText;
         if (masterResult.grounding) meta.grounding = masterResult.grounding;
         if (report) meta.image_inputs = report;

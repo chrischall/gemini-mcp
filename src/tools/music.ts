@@ -95,6 +95,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
 
         const meta: Record<string, unknown> = { model, interaction_id: r.id };
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
+        if (r.usage) meta.usage = r.usage;
         if (r.text) meta.text = r.text;
         if (report) meta.image_inputs = report;
         meta.hint = `To continue this track, call gemini_music_generate again with previous_interaction_id: "${r.id}" (or continue_last: true).`;

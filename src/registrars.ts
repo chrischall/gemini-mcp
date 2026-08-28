@@ -20,6 +20,7 @@ import { registerInteractTools } from './tools/interact.js';
 import { registerVideoTools } from './tools/video.js';
 import { registerMusicTools } from './tools/music.js';
 import { registerJobTools } from './tools/jobs.js';
+import { registerUsageTools } from './tools/usage.js';
 import { registerFileTools } from './tools/files.js';
 import { registerUploadUrlTools } from './tools/uploads.js';
 import { registerLibraryTools } from './tools/library.js';
@@ -52,6 +53,7 @@ export const TOOL_REGISTRARS: Array<ToolRegistrar<GeminiClient>> = [
   registerVideoTools,
   registerMusicTools,
   registerJobTools,
+  registerUsageTools,
   registerFileTools,
   registerUploadUrlTools,
   registerLibraryTools,

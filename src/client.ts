@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 import { readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, DEFAULT_VIDEO_MODEL, DEFAULT_MUSIC_MODEL, type GeminiModel, type RawModel } from './models.js';
+import { readUsage, type TokenUsage } from './usage.js';
 import { createDiskSink, createR2Sink, tenantIdFor, type MediaSink } from './storage/media.js';
 import { createR2Library, type CharacterLibrary } from './library.js';
 import { createUploadUrlMinter, type UploadUrlMinter } from './upload-url.js';
@@ -214,7 +215,7 @@ export type SearchType = 'web_search' | 'image_search';
 interface GroundingChunk { web?: GroundingSource }
 interface GroundingMeta { webSearchQueries?: string[]; groundingChunks?: GroundingChunk[] }
 
-export interface GenerateResult { images: GeneratedImage[]; text?: string; grounding?: GroundingResult; }
+export interface GenerateResult { images: GeneratedImage[]; text?: string; grounding?: GroundingResult; usage?: TokenUsage; }
 
 export interface InteractOpts {
   input: string;
@@ -290,7 +291,7 @@ interface GeminiFile {
   error?: { message?: string };
 }
 
-export interface InteractResult { id: string; images: GeneratedImage[]; text?: string; grounding?: GroundingResult; }
+export interface InteractResult { id: string; images: GeneratedImage[]; text?: string; grounding?: GroundingResult; usage?: TokenUsage; }
 
 /** Inline media returned by the Interactions API (image / video / audio) — all
  * just base64 bytes + MIME. Structurally identical to {@link GeneratedImage}. */
@@ -359,7 +360,7 @@ export interface VideoOpts {
    */
   onInteractionStarted?: (interactionId: string) => void;
 }
-export interface VideoResult { id: string; videos: GeneratedMedia[]; text?: string; }
+export interface VideoResult { id: string; videos: GeneratedMedia[]; text?: string; usage?: TokenUsage; }
 
 export interface MusicOpts {
   input: string;
@@ -374,7 +375,7 @@ export interface MusicOpts {
   /** See {@link VideoOpts.onInteractionStarted}. */
   onInteractionStarted?: (interactionId: string) => void;
 }
-export interface MusicResult { id: string; audios: GeneratedMedia[]; text?: string; }
+export interface MusicResult { id: string; audios: GeneratedMedia[]; text?: string; usage?: TokenUsage; }
 
 export interface GenerateOpts {
   prompt: string;
@@ -844,6 +845,17 @@ export class GeminiClient {
     return filterImageModels(data.models ?? []);
   }
 
+  /**
+   * Fold one call's usage into the session total and hand it straight back, so
+   * a call site reads `const usage = this.recordUsage(readUsage(data))` right
+   * where the response lands — before any "returned no media" throw, so a
+   * billed call that a safety filter emptied is still counted.
+   */
+  private recordUsage(usage: TokenUsage | undefined): TokenUsage | undefined {
+    this.session.recordUsage(usage);
+    return usage;
+  }
+
   async generate(opts: GenerateOpts): Promise<GenerateResult> {
     const model = resolveModel(opts.model, readEnvVar('GEMINI_IMAGE_MODEL'));
     const parts: unknown[] = [{ text: opts.prompt }];
@@ -862,12 +874,21 @@ export class GeminiClient {
     if (opts.thinkingLevel !== undefined) generationConfig.thinkingConfig = { thinkingLevel: opts.thinkingLevel };
     const requestBody: Record<string, unknown> = { contents: [{ parts }], generationConfig };
     if (opts.googleSearch) requestBody.tools = [{ google_search: {} }];
-    const data = await this.call<{ candidates?: Array<{ content?: { parts?: Array<Record<string, unknown>> }; groundingMetadata?: GroundingMeta }> }>(
+    const data = await this.call<{
+      candidates?: Array<{ content?: { parts?: Array<Record<string, unknown>> }; groundingMetadata?: GroundingMeta }>;
+      // Present on every response; this type used to parse it away.
+      usageMetadata?: Record<string, unknown>;
+    }>(
       'POST',
       `/models/${model}:generateContent`,
       requestBody,
       resolveTimeoutMs(opts.timeoutMs, opts.imageSize),
     );
+    // Recorded HERE, not at the return: the call is already billed by the
+    // time the response lands, and the "no image" throw below is a real
+    // outcome of a PAID request (a safety filter). Recording at the return
+    // omitted exactly the calls this total exists to catch.
+    const usage = this.recordUsage(readUsage(data));
     const images: GeneratedImage[] = [];
     const textParts: string[] = [];
     let groundingMeta: GroundingMeta | undefined;
@@ -901,7 +922,7 @@ export class GeminiClient {
       }
     }
 
-    return { images, text, grounding };
+    return { images, text, grounding, usage };
   }
 
   async interact(opts: InteractOpts): Promise<InteractResult> {
@@ -927,13 +948,14 @@ export class GeminiClient {
     }
 
     const data = await this.postInteraction(body, opts);
+    const usage = this.recordUsage(readUsage(data));
     const { images, text, grounding } = this.extractInteraction(data, opts.searchTypes);
     if (images.length === 0) {
       throw new McpToolError('Gemini returned no image', {
         hint: 'The request may have been blocked by safety filters — try rephrasing the prompt.',
       });
     }
-    return { id: data.id, images: await this.downloadAll(images), text, grounding };
+    return { id: data.id, images: await this.downloadAll(images), text, grounding, usage };
   }
 
   /**
@@ -985,13 +1007,14 @@ export class GeminiClient {
     }
     const data = await this.settleInteraction(started, body, timeoutMs);
 
+    const usage = this.recordUsage(readUsage(data));
     const { videos, text } = this.extractInteraction(data);
     if (videos.length === 0) {
       throw new McpToolError('Gemini returned no video', {
         hint: 'The request may have been blocked by a safety filter — try a shorter/simpler prompt or a different aspect ratio.',
       });
     }
-    return { id: data.id, videos: await this.downloadAll(videos), text };
+    return { id: data.id, videos: await this.downloadAll(videos), text, usage };
   }
 
   /**
@@ -1012,13 +1035,14 @@ export class GeminiClient {
     if (opts.background === true) body.background = true;
 
     const data = await this.postInteraction(body, opts);
+    const usage = this.recordUsage(readUsage(data));
     const { audios, text } = this.extractInteraction(data);
     if (audios.length === 0) {
       throw new McpToolError('Gemini returned no audio', {
         hint: 'The request may have been blocked by a safety filter — try rephrasing the prompt.',
       });
     }
-    return { id: data.id, audios: await this.downloadAll(audios), text };
+    return { id: data.id, audios: await this.downloadAll(audios), text, usage };
   }
 
   /**
@@ -1485,6 +1509,7 @@ function hostedStorage(): {
     // child — and an in-memory registry — with it (src/job-store.ts).
     jobStore: createBlobJobStore(blob.bucket, { tenant }),
   };
+
 }
 
 /**

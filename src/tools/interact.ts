@@ -278,6 +278,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         meta.hint =
           `To refine this image, call gemini_interact again with previous_interaction_id: "${r.id}" (or continue_last: true) — ` +
           'do NOT re-attach the returned image as an input; the interaction already contains it.';
+        if (r.usage) meta.usage = r.usage;
         if (r.text) meta.text = r.text;
         if (r.grounding) meta.grounding = r.grounding;
         if (report) meta.image_inputs = report;
