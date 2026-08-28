@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.11.0](https://github.com/chrischall/gemini-mcp/compare/v1.10.0...v1.11.0) (2026-08-28)
+
+
+### Features
+
+* **usage:** estimate what a call cost in USD, from a dated rate card ([#180](https://github.com/chrischall/gemini-mcp/issues/180)) ([25681ca](https://github.com/chrischall/gemini-mcp/commit/25681ca56f165a4c6511fcd48cb0a17d0f68f763))
+* **usage:** report what each call cost in tokens, and add a session total ([#176](https://github.com/chrischall/gemini-mcp/issues/176)) ([732b2b4](https://github.com/chrischall/gemini-mcp/commit/732b2b4e45a8f0f7934a3e4742d9ef2ac098bb1c))
+
+
+### Bug Fixes
+
+* **pricing:** correct omni's rates, which were three-quarters wrong ([#182](https://github.com/chrischall/gemini-mcp/issues/182)) ([0133d4d](https://github.com/chrischall/gemini-mcp/commit/0133d4d878ee389100cc7f3340746efee320183e))
+
+
+### Documentation
+
+* declare gemini_token_usage everywhere, and guard the surface ([#179](https://github.com/chrischall/gemini-mcp/issues/179)) ([e2452e5](https://github.com/chrischall/gemini-mcp/commit/e2452e520795d53115ed24ddec768a3ac70ede65))
+
 ## [1.10.0](https://github.com/chrischall/gemini-mcp/compare/v1.9.0...v1.10.0) (2026-08-26)
 
 
