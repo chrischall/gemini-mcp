@@ -43,6 +43,10 @@ GEMINI_TIMEOUT_MS=<ms>      # Optional. Upstream timeout (default 60000; 120000 
 GEMINI_HEARTBEAT_MS=<ms>    # Optional. notifications/progress cadence during generation (default 10000; 0 disables)
 GEMINI_CHAIN_RETRY_MS=<ms>  # Optional. How long to wait out interactions-store lag on a chained 404 (default 120000; 0 disables retrying)
 GEMINI_DEBUG=<any>          # Optional. When set, emit heartbeat diagnostics to stderr (see Quirks). Off by default.
+GEMINI_RATE_CARD=<json>     # Optional. Override/extend the shipped USD-per-1M-token rates used by
+                            #   gemini_token_usage's cost estimate, e.g.
+                            #   {"gemini-3-pro-image":{"input":2,"text_output":12,"image_output":120}}.
+                            #   Malformed JSON is ignored (a bad card must not fail generations).
 ```
 
 Loaded via `loadDotenvSafely` from `.env` next to `dist/` (failure swallowed —
@@ -76,6 +80,16 @@ src/
                   #   decodeImageInput (MIME sniff), writeMedia/writeImage,
                   #   slugify, uniquePath, resolveOutputDir, resolveImagePath.
                   #   NOT an input funnel — inputs.ts is (see below)
+  pricing.ts      # RATE_CARD + estimateCost() — tokens to USD. Possible only
+                  #   because image output is billed PER TOKEN, at 20-40x the
+                  #   text rate: Google's per-image prices ARE that arithmetic
+                  #   (1120 img tokens x $30/1M = the $0.0336 quoted for a 1K
+                  #   flash-lite image), and tests/pricing.test.ts reconciles
+                  #   every rate against a published figure. So output tokens
+                  #   MUST be split image-vs-text before pricing — billing text
+                  #   at the image rate overstates it twentyfold. Dated
+                  #   (PRICED_AT) and overridable (GEMINI_RATE_CARD); a model
+                  #   with no rate prices as undefined, never zero
   usage.ts        # readUsage()/sumUsage() — the two APIs' token counts,
                   #   normalized. generateContent returns camelCase
                   #   `usageMetadata`; interactions returns snake_case

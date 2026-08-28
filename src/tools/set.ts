@@ -8,6 +8,7 @@ import { resolveImageInputs } from '../inputs.js';
 import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, persistBundle, SET_URL_TTL_MS, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { sumUsage, type TokenUsage } from '../usage.js';
+import { attachCost } from '../pricing.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 export function registerSetTools(server: McpServer, client: GeminiClient): void {
@@ -175,6 +176,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         const meta = buildMeta(model, seed, { ...args, aspect_ratio: aspectRatio });
         const usage = sumUsage(usages);
         if (usage) meta.usage = usage;
+        attachCost(meta, model, usage);
         if (masterText) meta.text = masterText;
         if (masterResult.grounding) meta.grounding = masterResult.grounding;
         if (report) meta.image_inputs = report;
