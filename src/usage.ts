@@ -165,5 +165,11 @@ export function sumUsage(parts: ReadonlyArray<TokenUsage | undefined>): TokenUsa
 export function annotateReusedUsage(meta: Record<string, unknown>): Record<string, unknown> {
   if (!meta.usage) return meta;
   meta.usage_billed = false;
+  // The cost estimate needs the same treatment for the same reason, and is
+  // worse if it does not get it: a token count someone forgets to exclude is a
+  // rounding error in a report, a dollar figure is the report. Marked rather
+  // than deleted, so the result still shows what the generation cost when it
+  // was actually made.
+  if (meta.cost_estimate) meta.cost_billed = false;
   return meta;
 }
