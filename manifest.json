@@ -114,6 +114,10 @@
       "description": "Fetch an async generation started with async: true, by its job_id"
     },
     {
+      "name": "gemini_token_usage",
+      "description": "Token usage for this session so far — call before and after a workflow to attribute its cost"
+    },
+    {
       "name": "gemini_upload_file",
       "description": "Upload an image (or video/audio) to the Gemini Files API once — from a url, base64, or local path — and get a reusable files/<id> reference (~48h)"
     },

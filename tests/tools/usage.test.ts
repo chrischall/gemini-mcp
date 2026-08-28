@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerUsageTools } from '../../src/tools/usage.js';
 import { GeminiClient } from '../../src/client.js';
@@ -13,8 +13,6 @@ import { GeminiClient } from '../../src/client.js';
 describe('gemini_token_usage', () => {
   const harness = async (client: GeminiClient) =>
     createTestHarness((s) => registerUsageTools(s, client));
-
-  afterEach(() => { /* each test builds its own client + session */ });
 
   it('reports nothing spent before anything has run, without inventing a zero', async () => {
     const client = new GeminiClient({ apiKey: 'k' });

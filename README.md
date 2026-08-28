@@ -83,6 +83,7 @@ progress), two guards make re-issuing safe and unnecessary:
 | `gemini_video_generate` | Generate a short video (text→video, image→video, or `edit`) via the Gemini omni model (preview); written to disk as MP4 |
 | `gemini_music_generate` | Generate music from a text prompt via a Lyria model — `lyria-3-clip-preview` (~30s, default) or `lyria-3-pro-preview` (longer, WAV-capable); written to disk as MP3/WAV (preview) |
 | `gemini_get_result` | Fetch an async generation started with `async: true` by its `job_id` (status `running` → `done` result). Lets a long generation outlive a host's `tools/call` timeout |
+| `gemini_token_usage` | Token usage for this session so far, added up across every generation. Call it before and after a workflow and subtract to attribute that workflow's cost. Reports tokens, not money — there is no account-balance endpoint to read, and image pricing is not purely per-token |
 | `gemini_upload_file` | Upload an image (or video/audio) to the Gemini Files API once — from a `url`, `data_base64`, or a local `path` — and get a reusable `files/<id>` reference |
 | `gemini_list_files` | List the files currently uploaded under this API key, with MIME types and expiry times |
 | `gemini_delete_file` | Delete an uploaded file before its ~48h expiry (confirm-gated) |
