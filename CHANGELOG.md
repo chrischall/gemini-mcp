@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1](https://github.com/chrischall/gemini-mcp/compare/v1.11.0...v1.11.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **egress:** declare every host the server dials in mint.yaml ([#183](https://github.com/chrischall/gemini-mcp/issues/183)) ([c43f75c](https://github.com/chrischall/gemini-mcp/commit/c43f75c69e67eb3e87d50d493e587274ec6da55e))
+
 ## [1.11.0](https://github.com/chrischall/gemini-mcp/compare/v1.10.0...v1.11.0) (2026-08-28)
 
 
