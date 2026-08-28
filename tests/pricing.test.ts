@@ -189,3 +189,36 @@ describe('rate-card overrides keyed by a -preview id', () => {
     expect(estimateCost('lyria-3-clip-preview', { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, env)?.usd).toBe(0.06);
   });
 });
+
+/**
+ * Omni's rates, each reconciled against something Google states.
+ *
+ * The first version of this entry had three of four numbers wrong — a $60
+ * image-output rate invented by copying flash-image, and input/text rates a
+ * third of the real ones — because only the video rate had been looked up and
+ * the rest were assumed. These pin every figure that has a published
+ * cross-check.
+ */
+describe('gemini-omni-flash', () => {
+  it('prices one second of 720p video at the ~$0.10 Google quotes', () => {
+    // "5,792 tokens per second of 720p video" at $17.50/1M.
+    const oneSecond = { input_tokens: 0, output_tokens: 5792, total_tokens: 5792, video_tokens: 5792 };
+    expect(estimateCost('gemini-omni-flash', oneSecond)?.usd).toBeCloseTo(0.10136, 5);
+  });
+
+  it('bills its text output at $9.00/1M, not the $3.00 copied from flash-image', () => {
+    const u = { input_tokens: 0, output_tokens: 1_000_000, total_tokens: 1_000_000 };
+    expect(estimateCost('gemini-omni-flash', u)?.breakdown.text_output_usd).toBeCloseTo(9.0, 6);
+  });
+
+  it('bills its input at $1.50/1M', () => {
+    const u = { input_tokens: 1_000_000, output_tokens: 0, total_tokens: 1_000_000 };
+    expect(estimateCost('gemini-omni-flash', u)?.breakdown.input_usd).toBeCloseTo(1.5, 6);
+  });
+
+  it('charges nothing for image output, because no image rate is published for it', () => {
+    // The honest consequence of having no rate: zero, not an invented figure.
+    const u = { input_tokens: 0, output_tokens: 1120, total_tokens: 1120, image_tokens: 1120 };
+    expect(estimateCost('gemini-omni-flash', u)?.breakdown.image_usd).toBe(0);
+  });
+});

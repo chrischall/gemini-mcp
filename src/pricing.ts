@@ -6,8 +6,16 @@
  * published per-image prices ARE that arithmetic: 1120 image tokens at
  * $30/1M is the $0.0336 quoted for a 1K flash-lite image, and 2000 at $120/1M
  * is the $0.24 quoted for a 4K pro image. `tests/pricing.test.ts` reconciles
- * every rate against a published per-image figure, so a typo here fails as an
- * equality rather than becoming a plausible wrong number.
+ * every rate for which Google publishes a cross-check — the per-image prices,
+ * and omni's per-second video figure — so a typo in those fails as an equality
+ * rather than becoming a plausible wrong number.
+ *
+ * The rates with no published cross-check (an input rate, a text-output rate)
+ * are only as good as the transcription, which is why they are quoted verbatim
+ * in the entries below and dated. That gap is not academic: omni's entry
+ * originally carried an input and text rate a third of the real ones, and an
+ * image-output rate invented by copying another model, precisely because only
+ * the figure with a cross-check had been looked up.
  *
  * The consequence for the caller: output tokens MUST be split into image and
  * text before pricing. Billing an image model's text tokens at the image rate
@@ -31,6 +39,11 @@
  * ~$0.10/second Google quotes); it is Veo that bills per second, and this
  * server does not use Veo. Lyria genuinely is not token-billed: it charges per
  * song, which {@link ModelRates.per_generation} exists for.
+ *
+ * These are the STANDARD paid-tier rates. Google also publishes a Batch tier
+ * at roughly half price, which this server cannot reach — every call it makes
+ * is synchronous `generateContent` or `interactions`, never the Batch API — so
+ * an estimate here is the standard price and is not silently optimistic.
  *
  * Source: https://ai.google.dev/gemini-api/docs/pricing (paid tier, USD).
  */
@@ -73,10 +86,16 @@ export const RATE_CARD: Readonly<Record<string, ModelRates>> = Object.freeze({
   // figure, unlike the four above which are published per-1M directly. The
   // test reconciles it against the $0.039 it came from.
   'gemini-2.5-flash-image': { input: 0.3, text_output: 3.0, image_output: 30.2326 },
-  // Omni is token-billed for video: $17.50/1M, ~5,792 tokens per second of
+  // Omni is token-billed for video: $17.50/1M at ~5,792 tokens per second of
   // 720p, which is the ~$0.10/second Google quotes. Veo is the per-second
   // family; this server does not use it.
-  'gemini-omni-flash': { input: 0.5, text_output: 3.0, image_output: 60.0, video_output: 17.5 },
+  //
+  // No image-output price is published for omni, so there is no image_output
+  // here. An absent rate prices that modality at zero rather than inventing
+  // one — and the first version of this entry DID invent one ($60, copied
+  // from flash-image), along with a $0.50 input and $3.00 text rate that were
+  // both a third of the real figures. Every number here is now quoted.
+  'gemini-omni-flash': { input: 1.5, text_output: 9.0, video_output: 17.5 },
   // Lyria bills per song, so tokens describe the work and not the bill.
   'lyria-3-clip': { input: 0, text_output: 0, per_generation: 0.04 },
   'lyria-3-pro': { input: 0, text_output: 0, per_generation: 0.08 },

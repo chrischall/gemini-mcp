@@ -110,3 +110,27 @@ describe('reused results and spend', () => {
     });
   });
 });
+
+describe('a replayed result and its cost', () => {
+  it('marks the cost unbilled too, not just the tokens', async () => {
+    // A token count someone forgets to exclude is a rounding error in a
+    // report; a dollar figure IS the report.
+    const { annotateReusedUsage } = await import('../src/usage.js');
+    const out = annotateReusedUsage({
+      usage: { input_tokens: 7, output_tokens: 1418, total_tokens: 1425 },
+      cost_estimate: { usd: 0.034, breakdown: {}, priced_at: '2026-08-28' },
+    });
+    expect(out.usage_billed).toBe(false);
+    expect(out.cost_billed).toBe(false);
+    // Both stay present — they describe the generation being handed back.
+    expect(out.cost_estimate).toBeDefined();
+  });
+
+  it('does not claim a cost was unbilled when no cost was reported', () => {
+    return import('../src/usage.js').then(({ annotateReusedUsage }) => {
+      const out = annotateReusedUsage({ usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } });
+      expect(out.usage_billed).toBe(false);
+      expect('cost_billed' in out).toBe(false);
+    });
+  });
+});
