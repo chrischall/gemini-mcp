@@ -91,7 +91,6 @@ export class SessionState {
     return hit;
   }
 
-  /** Forget everything. Tests use this; nothing in `src/` calls it. */
   /**
    * Everything this session has spent, in tokens, across every upstream call.
    *
@@ -113,6 +112,7 @@ export class SessionState {
     this.billedCalls += 1;
   }
 
+  /** Forget everything. Tests use this; nothing in `src/` calls it. */
   reset(): void {
     this.jobs.reset();
     this.usageTotal = undefined;
