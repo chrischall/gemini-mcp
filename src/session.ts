@@ -1,5 +1,6 @@
 import { JobRegistry } from './jobs.js';
 import { sumUsage, type TokenUsage } from './usage.js';
+import { estimateCost } from './pricing.js';
 
 /**
  * Everything the server remembers *between tool calls on behalf of one user*.
@@ -105,11 +106,38 @@ export class SessionState {
   /** How many upstream calls contributed to {@link usageTotal}. */
   billedCalls = 0;
 
-  /** Fold one upstream call's usage into the running total. */
-  recordUsage(usage: TokenUsage | undefined): void {
+  /**
+   * What this session has spent in USD, priced per call.
+   *
+   * Accumulated as calls happen rather than derived from {@link usageTotal} at
+   * the end, because the total spans models: summing a Pro call's tokens with
+   * a Lite call's and pricing the result at one rate would be wrong by up to
+   * 4x. Each call is priced against ITS model and only the money is added up.
+   *
+   * `undefined` while nothing priceable has run — a model absent from the rate
+   * card contributes usage but no cost, so a total of `undefined` beside a
+   * non-zero usage is meaningful rather than a bug. (Video and music DO price:
+   * omni is token-billed and Lyria bills per song. It is an unknown or
+   * newly-released model id that goes unpriced.)
+   */
+  costUsd: number | undefined;
+
+  /** How many of {@link billedCalls} could actually be priced. */
+  pricedCalls = 0;
+
+  /**
+   * Fold one upstream call's usage into the running totals. `model` is what
+   * makes the cost side possible; without it the tokens still count.
+   */
+  recordUsage(usage: TokenUsage | undefined, model?: string): void {
     if (!usage) return;
     this.usageTotal = sumUsage([this.usageTotal, usage]);
     this.billedCalls += 1;
+    if (!model) return;
+    const cost = estimateCost(model, usage);
+    if (!cost) return;
+    this.costUsd = (this.costUsd ?? 0) + cost.usd;
+    this.pricedCalls += 1;
   }
 
   /** Forget everything. Tests use this; nothing in `src/` calls it. */
@@ -117,6 +145,8 @@ export class SessionState {
     this.jobs.reset();
     this.usageTotal = undefined;
     this.billedCalls = 0;
+    this.costUsd = undefined;
+    this.pricedCalls = 0;
     this.lastInteractionId = undefined;
     this.lastMusicInteractionId = undefined;
     this.lastVideoInteractionId = undefined;

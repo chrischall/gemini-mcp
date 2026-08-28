@@ -8,6 +8,7 @@ import { resolveImageInputs } from '../inputs.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
 import { emit, reportShape, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
+import { attachCost } from '../pricing.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 // The last-interaction id and the written-outputs set used to live here, at
@@ -279,6 +280,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           `To refine this image, call gemini_interact again with previous_interaction_id: "${r.id}" (or continue_last: true) — ` +
           'do NOT re-attach the returned image as an input; the interaction already contains it.';
         if (r.usage) meta.usage = r.usage;
+        attachCost(meta, model, r.usage);
         if (r.text) meta.text = r.text;
         if (r.grounding) meta.grounding = r.grounding;
         if (report) meta.image_inputs = report;

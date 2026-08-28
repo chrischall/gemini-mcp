@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { textResult, toolAnnotations } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
+import { PRICED_AT } from '../pricing.js';
 
 /**
  * What this session has spent, in tokens.
@@ -19,12 +20,16 @@ import type { GeminiClient } from '../client.js';
  * cannot separate your generation from anything else billing the account in
  * the same window, and this can.
  *
- * Deliberately NOT reported here: money. Converting tokens to a cost needs a
- * per-model rate table, and image pricing is not purely per-token — those
- * image tokens are a billing proxy whose rate varies by model and resolution
- * tier, before cached-input discounts and service tier. A stale hardcoded
- * table produces confident wrong numbers, which is worse than none, because
- * people act on them. Multiply these counts by the rate card you trust.
+ * Money IS reported, with two safeguards. Image output turned out to be billed
+ * per token like everything else — just at 20-40x the text-output rate — so
+ * the published per-image prices are exactly the token arithmetic, and an
+ * estimate is arithmetic rather than guesswork (see src/pricing.ts). The
+ * safeguards are that every figure carries the date its rates were read, and
+ * `GEMINI_RATE_CARD` overrides them without waiting on a release.
+ *
+ * The session's cost is accumulated PER CALL, not derived from the token total
+ * at the end: the total spans models, and pricing a Pro call's tokens at a
+ * Lite rate would be wrong by 4x.
  */
 export function registerUsageTools(server: McpServer, client: GeminiClient): void {
   server.registerTool(
@@ -32,11 +37,8 @@ export function registerUsageTools(server: McpServer, client: GeminiClient): voi
     {
       description:
         'Token usage for this session so far — what every generation has cost in tokens, added up. ' +
-        'Call it before and after a workflow and subtract to get that workflow\'s usage; call it after a ' +
-        'single generation for that call\'s. Reports tokens, not money: converting to a cost needs a rate ' +
-        'card this server deliberately does not hardcode. Note there is no account-balance endpoint to ' +
-        'query — Google Cloud is post-paid and its billing data lags by hours — so this is the accurate ' +
-        'way to attribute spend to a call.',
+        'Call it before and after a workflow and subtract to get that workflow\'s cost; call it after a ' +
+        'single generation for that call\'s. Reports tokens AND an estimated USD cost, priced per call against each call\'s own model and stamped with the date its rates were read (override with GEMINI_RATE_CARD). Note there is no account-balance endpoint to query — Google Cloud is post-paid and its billing data lags by hours — so this is the accurate way to attribute spend to a call.',
       annotations: toolAnnotations({ readOnly: true }),
       inputSchema: {
         reset: z
@@ -48,18 +50,30 @@ export function registerUsageTools(server: McpServer, client: GeminiClient): voi
     async (args) => {
       const usage = client.session.usageTotal;
       const calls = client.session.billedCalls;
+      const costUsd = client.session.costUsd;
+      const priced = client.session.pricedCalls;
       if (args.reset) {
         client.session.usageTotal = undefined;
         client.session.billedCalls = 0;
+        client.session.costUsd = undefined;
+        client.session.pricedCalls = 0;
       }
       return textResult({
         usage: usage ?? null,
         billed_calls: calls,
+        estimated_cost_usd: costUsd ?? null,
+        priced_calls: priced,
+        rates_published: PRICED_AT,
         ...(args.reset ? { reset: true } : {}),
         note:
           usage === undefined
             ? 'No generation has run in this session yet, so nothing has been billed through it.'
-            : 'Tokens only — this server does not convert to money, because image pricing is not purely per-token and a hardcoded rate card goes stale silently. Multiply by the rate card you trust.',
+            : priced < calls
+              ? `Estimate covers ${priced} of ${calls} billed calls — the rest used a model that is not in the rate card. Add it with GEMINI_RATE_CARD to include it.`
+              : 'Estimate priced per call against each call\'s own model, then added up.',
+        rates:
+          `Published rates read on ${PRICED_AT} (paid tier, USD). Override or extend with GEMINI_RATE_CARD ` +
+          'if they have moved — an estimate is only as current as its card.',
         scope:
           'This session only. A restart starts from zero, and a hosted deployment counts each authenticated session separately — these are your tokens, not the account\'s.',
       });

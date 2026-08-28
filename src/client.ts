@@ -847,12 +847,12 @@ export class GeminiClient {
 
   /**
    * Fold one call's usage into the session total and hand it straight back, so
-   * a call site reads `const usage = this.recordUsage(readUsage(data))` right
+   * a call site reads `const usage = this.recordUsage(readUsage(data), model)` right
    * where the response lands — before any "returned no media" throw, so a
    * billed call that a safety filter emptied is still counted.
    */
-  private recordUsage(usage: TokenUsage | undefined): TokenUsage | undefined {
-    this.session.recordUsage(usage);
+  private recordUsage(usage: TokenUsage | undefined, model?: string): TokenUsage | undefined {
+    this.session.recordUsage(usage, model);
     return usage;
   }
 
@@ -888,7 +888,7 @@ export class GeminiClient {
     // time the response lands, and the "no image" throw below is a real
     // outcome of a PAID request (a safety filter). Recording at the return
     // omitted exactly the calls this total exists to catch.
-    const usage = this.recordUsage(readUsage(data));
+    const usage = this.recordUsage(readUsage(data), model);
     const images: GeneratedImage[] = [];
     const textParts: string[] = [];
     let groundingMeta: GroundingMeta | undefined;
@@ -948,7 +948,7 @@ export class GeminiClient {
     }
 
     const data = await this.postInteraction(body, opts);
-    const usage = this.recordUsage(readUsage(data));
+    const usage = this.recordUsage(readUsage(data), model);
     const { images, text, grounding } = this.extractInteraction(data, opts.searchTypes);
     if (images.length === 0) {
       throw new McpToolError('Gemini returned no image', {
@@ -1007,7 +1007,7 @@ export class GeminiClient {
     }
     const data = await this.settleInteraction(started, body, timeoutMs);
 
-    const usage = this.recordUsage(readUsage(data));
+    const usage = this.recordUsage(readUsage(data), model);
     const { videos, text } = this.extractInteraction(data);
     if (videos.length === 0) {
       throw new McpToolError('Gemini returned no video', {
@@ -1035,7 +1035,7 @@ export class GeminiClient {
     if (opts.background === true) body.background = true;
 
     const data = await this.postInteraction(body, opts);
-    const usage = this.recordUsage(readUsage(data));
+    const usage = this.recordUsage(readUsage(data), model);
     const { audios, text } = this.extractInteraction(data);
     if (audios.length === 0) {
       throw new McpToolError('Gemini returned no audio', {

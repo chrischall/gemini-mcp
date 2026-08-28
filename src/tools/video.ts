@@ -7,6 +7,7 @@ import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
 import { emitMedia, reportShape, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
+import { attachCost } from '../pricing.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 /** omni's own aspect-ratio enum — NOT the image tools' ASPECT_RATIOS. */
@@ -115,6 +116,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         const meta = reportShape({ model, interaction_id: r.id }, { ...args, aspect_ratio: aspectRatio });
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
         if (r.usage) meta.usage = r.usage;
+        attachCost(meta, model, r.usage);
         if (r.text) meta.text = r.text;
         if (report) meta.image_inputs = report;
         meta.hint = `To edit this video, call gemini_video_generate again with task: "edit" and previous_interaction_id: "${r.id}" (or continue_last: true).`;

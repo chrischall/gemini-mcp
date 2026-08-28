@@ -7,6 +7,7 @@ import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_MUSIC_MODEL } from '../models.js';
 import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
+import { attachCost } from '../pricing.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 const MUSIC_MODELS = ['lyria-3-clip-preview', 'lyria-3-pro-preview'] as const;
@@ -96,6 +97,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         const meta: Record<string, unknown> = { model, interaction_id: r.id };
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
         if (r.usage) meta.usage = r.usage;
+        attachCost(meta, model, r.usage);
         if (r.text) meta.text = r.text;
         if (report) meta.image_inputs = report;
         meta.hint = `To continue this track, call gemini_music_generate again with previous_interaction_id: "${r.id}" (or continue_last: true).`;
