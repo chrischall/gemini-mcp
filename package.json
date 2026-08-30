@@ -1,6 +1,6 @@
 {
   "name": "@chrischall/gemini-mcp",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "mcpName": "io.github.chrischall/gemini-mcp",
   "description": "Gemini image-generation MCP server for Claude — developed and maintained by AI (Claude Code)",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
@@ -46,7 +46,7 @@
     "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
-    "@chrischall/mcp-utils": "0.19.2",
+    "@chrischall/mcp-utils": "^0.19.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.0",
     "zod": "^4.4.2"
