@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/chrischall/gemini-mcp/compare/v1.11.1...v1.12.0) (2026-08-30)
+
+
+### Features
+
+* add gemini_healthcheck ([#185](https://github.com/chrischall/gemini-mcp/issues/185)) ([01e02d3](https://github.com/chrischall/gemini-mcp/commit/01e02d3cb26488a6e5ef6055fb5ace639136ce08))
+
 ## [1.11.1](https://github.com/chrischall/gemini-mcp/compare/v1.11.0...v1.11.1) (2026-08-28)
 
 
