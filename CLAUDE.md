@@ -228,6 +228,7 @@ shared util, configured non-Bearer.
 | Tool | File | Endpoint / model | Kind |
 | --- | --- | --- | --- |
 | `gemini_list_models` | `tools/models.ts` | `GET /v1beta/models?pageSize=200` (filtered to image models) | read |
+| `gemini_healthcheck` | `tools/healthcheck.ts` | `GET /v1beta/models` (one authenticated round-trip) | read |
 | `gemini_image_generate` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (×`count`) | write (binary-out) |
 | `gemini_image_edit` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (input images required) | write (binary-out) |
 | `gemini_image_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode; a failed scene is reported in `failed_scenes`, never thrown — N billed successes must not be lost to one failure) | write (binary-out) |
