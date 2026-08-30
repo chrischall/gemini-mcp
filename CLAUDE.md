@@ -6,11 +6,12 @@ Guidance for Claude working in this repo.
 
 v0.6.0: Google **Gemini** image-generation MCP server. Wraps the Generative
 Language REST API (`https://generativelanguage.googleapis.com/v1beta`) and
-exposes 12 tools to Claude over stdio: text→image and image→image generation,
+exposes 13 tools to Claude over stdio: text→image and image→image generation,
 multi-turn conversational editing, consistent image *sets*, **video generation**
 (omni, `gemini_video_generate`), **music generation** (Lyria clips/pro,
 `gemini_music_generate`), model listing (Nano Banana / Nano Banana Pro
-family), and **Files API** upload/list/delete. Reference images can come from an
+family), **Files API** upload/list/delete, and a credential
+healthcheck (`gemini_healthcheck`). Reference images can come from an
 https URL the *server* fetches (`images_url`), a Files API reference
 (`images_file_uris`), local file paths, raw base64 / data URIs, or the macOS
 clipboard; video from a public YouTube URL or a local upload. Video and music ride the **same

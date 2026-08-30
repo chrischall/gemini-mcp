@@ -53,7 +53,7 @@ describe('TOOL_REGISTRARS', () => {
     const raw = [
       'registerModelTools', 'registerGenerateTools', 'registerSetTools', 'registerInteractTools',
       'registerVideoTools', 'registerMusicTools', 'registerJobTools', 'registerUsageTools', 'registerFileTools',
-      'registerUploadUrlTools', 'registerLibraryTools',
+      'registerUploadUrlTools', 'registerLibraryTools', 'registerHealthcheckTools',
     ];
     expect(TOOL_REGISTRARS).toHaveLength(raw.length);
     // A wrapped registrar is an anonymous arrow, never the named import — so a
