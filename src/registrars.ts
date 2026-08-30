@@ -14,6 +14,7 @@ import type { ToolRegistrar } from '@chrischall/mcp-utils';
 import type { GeminiClient } from './client.js';
 import { surfaceToolErrors } from './errors.js';
 import { registerModelTools } from './tools/models.js';
+import { registerHealthcheckTools } from './tools/healthcheck.js';
 import { registerGenerateTools } from './tools/generate.js';
 import { registerSetTools } from './tools/set.js';
 import { registerInteractTools } from './tools/interact.js';
@@ -47,6 +48,7 @@ export const reporting =
  */
 export const TOOL_REGISTRARS: Array<ToolRegistrar<GeminiClient>> = [
   registerModelTools,
+  registerHealthcheckTools,
   registerGenerateTools,
   registerSetTools,
   registerInteractTools,

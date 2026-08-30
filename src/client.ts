@@ -540,6 +540,17 @@ export class GeminiClient {
    *    That is an invisible, silent failure (the key just stops working); not
    *    depending on the order removes the hazard instead of documenting it.
    */
+  /**
+   * Which source supplies the API key, for `gemini_healthcheck` — a LABEL or
+   * `null`, never the key. Mirrors `requireKey`'s resolution order exactly, so
+   * the healthcheck reports the same source the real tools will use, but does
+   * NOT throw: "no key" is an answer here rather than an error.
+   */
+  describeCredential(): { source: string | null } {
+    if (this.explicitApiKey) return { source: 'connector-session' };
+    return { source: readEnvVar('GEMINI_API_KEY') ? 'env' : null };
+  }
+
   private requireKey(): string {
     const key = this.explicitApiKey || readEnvVar('GEMINI_API_KEY');
     if (!key) {
