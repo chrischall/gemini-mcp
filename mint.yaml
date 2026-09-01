@@ -38,6 +38,12 @@ env:
       How often, in milliseconds, to emit a progress notification while a
       generation is in flight. Hosts reset their tools/call timeout on progress,
       so this lets a long 4K/Pro generation outlive the default budget.
+  - name: GEMINI_RATE_CARD
+    required: false
+    help: >-
+      JSON overriding or extending the built-in pricing card, so a stale rate is
+      yours to fix in your own environment rather than waiting on a release.
+      Anything absent from the card prices as unknown rather than zero.
 egress:
   allow:
     # Only hosts the SERVER process actually fetches. Hosts that appear
