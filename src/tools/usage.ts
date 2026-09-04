@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { textResult, toolAnnotations } from '@chrischall/mcp-utils';
+import { minifiedResult, toolAnnotations } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { PRICED_AT } from '../pricing.js';
 
@@ -58,7 +58,7 @@ export function registerUsageTools(server: McpServer, client: GeminiClient): voi
         client.session.costUsd = undefined;
         client.session.pricedCalls = 0;
       }
-      return textResult({
+      return minifiedResult({
         usage: usage ?? null,
         billed_calls: calls,
         estimated_cost_usd: costUsd ?? null,

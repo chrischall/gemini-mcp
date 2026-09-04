@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { McpToolError, textResult } from '@chrischall/mcp-utils';
+import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import { TERMINAL_INTERACTION_STATUSES, type GeminiClient } from '../client.js';
 import { emitMedia, type NamedMedia } from './shared.js';
 import { slugify } from '../images.js';
@@ -145,7 +145,7 @@ function recoveryNote(recordedError: string | undefined): string {
 
 /** The generation outlived its executor and is not finished yet. */
 function stillRunning(jobId: string, interactionId: string): CallToolResult {
-  return textResult({
+  return minifiedResult({
     job_id: jobId,
     status: 'running',
     interaction_id: interactionId,

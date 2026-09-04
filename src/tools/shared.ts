@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { textResult, McpToolError, readEnvVar } from '@chrischall/mcp-utils';
+import { McpToolError, minifiedResult, readEnvVar } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { GeminiClient, GeneratedImage, GeneratedMedia, ImageInput } from '../client.js';
 import { resolveVideoPath, videoMimeType } from '../images.js';
@@ -649,7 +649,7 @@ export async function emitMedia(
       }
     : {};
   const storage = sink.persistsFiles ? {} : { storage: sink.kind, storage_note: storageNote };
-  return textResult({ [`${kind}s`]: refs, ...media, ...unavailable, ...note, ...storage, ...meta });
+  return minifiedResult({ [`${kind}s`]: refs, ...media, ...unavailable, ...note, ...storage, ...meta });
 }
 
 /**

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { McpToolError, textResult } from '@chrischall/mcp-utils';
+import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { LIBRARY_NAME_PATTERN, type CharacterLibrary, type LibraryImage } from '../library.js';
 import { acceptableUploadType } from '../upload-url.js';
@@ -103,7 +103,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
         resolveLibraryImage(client, args, true),
       ))!;
       const record = await library.saveCharacter({ name: args.name, description: args.description, image });
-      return textResult({
+      return minifiedResult({
         saved: 'character',
         name: record.name,
         description: record.description,
@@ -126,7 +126,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
     },
     async () => {
       const characters = await library.listCharacters();
-      return textResult({
+      return minifiedResult({
         count: characters.length,
         characters: characters.map((c) => ({
           name: c.name,
@@ -156,7 +156,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
       if (!existed) {
         throw new McpToolError(`No saved character "${args.name}". List what exists with gemini_list_characters.`);
       }
-      return textResult({ deleted: 'character', name: args.name });
+      return minifiedResult({ deleted: 'character', name: args.name });
     },
   );
 
@@ -183,7 +183,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
         resolveLibraryImage(client, args, false),
       );
       const record = await library.saveStyle({ name: args.name, promptFragment: args.prompt_fragment, image });
-      return textResult({
+      return minifiedResult({
         saved: 'style',
         name: record.name,
         prompt_fragment: record.prompt_fragment,
@@ -204,7 +204,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
     },
     async () => {
       const styles = await library.listStyles();
-      return textResult({
+      return minifiedResult({
         count: styles.length,
         styles: styles.map((s) => ({
           name: s.name,
@@ -232,7 +232,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
       if (!existed) {
         throw new McpToolError(`No saved style "${args.name}". List what exists with gemini_list_styles.`);
       }
-      return textResult({ deleted: 'style', name: args.name });
+      return minifiedResult({ deleted: 'style', name: args.name });
     },
   );
 }
