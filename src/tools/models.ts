@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { textResult } from '@chrischall/mcp-utils';
+import { minifiedResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 
 export function registerModelTools(server: McpServer, client: GeminiClient): void {
@@ -12,7 +12,7 @@ export function registerModelTools(server: McpServer, client: GeminiClient): voi
     },
     async () => {
       const models = await client.listModels();
-      return textResult({ default: client.defaultModel(), models });
+      return minifiedResult({ default: client.defaultModel(), models });
     },
   );
 }

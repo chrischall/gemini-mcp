@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { McpToolError, textResult } from '@chrischall/mcp-utils';
+import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { withProgressHeartbeat } from './shared.js';
 import { base64ToBytes, wholeMb } from '../bytes.js';
@@ -54,7 +54,7 @@ const RETENTION_NOTE =
 
 /** Shape returned by every upload path. */
 function uploadResult(file: { name: string; uri: string; mimeType: string; expirationTime?: string; sizeBytes?: string; displayName?: string }) {
-  return textResult({
+  return minifiedResult({
     // The `files/<id>` form is what every tool parameter documents, so it leads.
     file_uri: file.name,
     // The absolute uri, for callers that would rather pass it through verbatim.
@@ -228,7 +228,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
     },
     async (args) => {
       const files = await client.listFiles(args.page_size ?? 100);
-      return textResult({
+      return minifiedResult({
         count: files.length,
         files: files.map((f) => ({
           file_uri: f.name,
@@ -279,7 +279,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
             { hint: 'Objects are swept on a retention schedule (MEDIA_TTL_DAYS, default 7 days).' },
           );
         }
-        return textResult({
+        return minifiedResult({
           url: fresh.ref,
           r2_key: fresh.key,
           ...(fresh.expiresAt ? { expires_at: fresh.expiresAt } : {}),
@@ -323,7 +323,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           ? await sink.listRecentPage({ limit, sinceDay: args.since_day })
           : { media: await sink.listRecent({ limit, sinceDay: args.since_day }), truncated: false };
         const found = page.media;
-        return textResult({
+        return minifiedResult({
           count: found.length,
           // Never let a bounded walk pass for the whole picture: concluding an
           // image is gone is what makes someone pay to generate it twice.
@@ -363,7 +363,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
       const gate = previewUnlessConfirmed(args.confirm, 'Delete an uploaded Gemini file', 'DELETE', `/v1beta/${args.file_uri}`);
       if (gate) return gate;
       await client.deleteFile(args.file_uri);
-      return textResult({ deleted: args.file_uri });
+      return minifiedResult({ deleted: args.file_uri });
     },
   );
 }

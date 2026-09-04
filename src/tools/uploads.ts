@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { textResult } from '@chrischall/mcp-utils';
+import { minifiedResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { UPLOAD_MAX_BYTES, RASTER_IMAGE_TYPE_PATTERN } from '../upload-url.js';
 import { wholeMb } from '../bytes.js';
@@ -81,7 +81,7 @@ export function registerUploadUrlTools(server: McpServer, client: GeminiClient):
         `minting a signed upload URL for ${args.filename} (${args.content_type})`,
         () => minter.mint(args.filename, args.content_type),
       );
-      return textResult({
+      return minifiedResult({
         upload_url: minted.url,
         method: 'PUT',
         r2_key: minted.key,

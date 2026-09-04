@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { textResult, McpToolError } from '@chrischall/mcp-utils';
+import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { downloadFilename } from './media-name.js';
 import { HEARTBEAT_MS, type JobRecord, type JobStore } from './job-store.js';
@@ -230,7 +230,7 @@ export interface DispatchOpts {
 
 /** Immediate handle for an async call — the caller polls `gemini_get_result`. */
 function jobHandle(jobId: string, status: JobStatus, durable = false): CallToolResult {
-  return textResult({
+  return minifiedResult({
     job_id: jobId,
     status,
     hint: durable
