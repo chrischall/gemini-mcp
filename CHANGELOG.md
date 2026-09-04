@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.13.0](https://github.com/chrischall/gemini-mcp/compare/v1.12.0...v1.13.0) (2026-09-04)
+
+
+### Features
+
+* **tools:** compact by default — strip media URLs, and minify every response ([#204](https://github.com/chrischall/gemini-mcp/issues/204)) ([0243fb1](https://github.com/chrischall/gemini-mcp/commit/0243fb12f7c3732b933dc519587c60a1055b51b4))
+
+
+### Bug Fixes
+
+* **build:** restore the literal em dash in the package description ([#207](https://github.com/chrischall/gemini-mcp/issues/207)) ([aafb97e](https://github.com/chrischall/gemini-mcp/commit/aafb97e013a6c294182a632f66f2b7e6ead84546))
+
+
+### Refactor
+
+* **tools:** drop the unwired view.ts; media URLs ARE this server's product ([#208](https://github.com/chrischall/gemini-mcp/issues/208)) ([ef0fd9b](https://github.com/chrischall/gemini-mcp/commit/ef0fd9b320e56aba2e12c4106dc63059c02fceb4))
+
+
+### Documentation
+
+* **mint:** declare GEMINI_RATE_CARD in mint.yaml ([#198](https://github.com/chrischall/gemini-mcp/issues/198)) ([932eff4](https://github.com/chrischall/gemini-mcp/commit/932eff48df8e08eb92d058dab239ae9b061431f7))
+
 ## [1.12.0](https://github.com/chrischall/gemini-mcp/compare/v1.11.1...v1.12.0) (2026-08-30)
 
 
