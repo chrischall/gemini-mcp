@@ -5,7 +5,7 @@
 
 ### Features
 
-* **tools:** compact by default — strip media URLs, and minify every response ([#204](https://github.com/chrischall/gemini-mcp/issues/204)) ([0243fb1](https://github.com/chrischall/gemini-mcp/commit/0243fb12f7c3732b933dc519587c60a1055b51b4))
+* **tools:** minify every response — no formatting whitespace on any payload ([#204](https://github.com/chrischall/gemini-mcp/issues/204)) ([0243fb1](https://github.com/chrischall/gemini-mcp/commit/0243fb12f7c3732b933dc519587c60a1055b51b4))
 
 
 ### Bug Fixes
