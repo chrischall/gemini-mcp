@@ -457,8 +457,18 @@ the moment a response was dropped — the exact failure the disk build was
 hardened against. An object store holds a small JSON record perfectly well, so
 it now writes one at `<mediaKey>.json`: beside the object rather than under a
 prefix of its own, so the retention sweep that removes the image removes its
-record with it. `parseMediaKey` skips them, or a listing would offer a JSON blob
-as a recent generation.
+record with it. `walk()` drops any key ending in the suffix BEFORE parsing it,
+or a listing would offer a JSON blob as a recent generation — `parseMediaKey`
+would happily parse one into a valid-looking entry, so the guard has to come
+first.
+
+**The suffix says whether a record can answer a chain question.** Only
+`gemini_interact`, video and music produce an interaction id; a plain
+`gemini_image_generate` records a prompt and nothing to resume. Chain-bearing
+records go to `<mediaKey>.chain.json` and the rest to `<mediaKey>.json`, which
+is what lets a lookup skip the ones that cannot match WITHOUT opening them.
+Without the split, forty ordinary generations spent the read budget and
+`continue_last` came back empty with the chain sitting right there.
 
 Three rules carried over from the disk version. Re-anchoring matches on the
 interaction id ONLY — never "the newest object" — because re-anchoring an edit
