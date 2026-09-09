@@ -1165,9 +1165,13 @@ describe('Files API: list, get, delete', () => {
 });
 
 /**
- * Three upload entry points, one resumable protocol. The Blob path is the
- * live-verified one (video), so its wire shape must not drift; the stream path
- * is what `POST /upload` uses and needs the length declared up front.
+ * Two upload entry points, one resumable protocol. The Blob path is the
+ * live-verified one (video), so its wire shape must not drift.
+ *
+ * A third — `uploadStream` — existed for the retired direct-upload HTTP
+ * endpoint on the Cloudflare Worker. Both went when this moved to mcp-host, so
+ * the ReadableStream branch went with them rather than sitting here untested
+ * against a protocol nothing exercises.
  */
 describe('Files API upload variants', () => {
   function uploadFetch(): { fn: typeof fetch; calls: { url: string; init: RequestInit }[] } {
@@ -1205,27 +1209,35 @@ describe('Files API upload variants', () => {
     expect(file).toMatchObject({ name: 'files/n1', uri: 'https://g/v1beta/files/n1', mimeType: 'image/png' });
   });
 
-  it('uploadStream sends the body as a stream WITH a declared length', async () => {
+  it('forwards an abort signal to both upload round trips', async () => {
+    // The opportunistic base64 promotion bounds itself with one of these; a
+    // signal that reaches neither request bounds nothing.
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = uploadFetch();
-    const stream = new ReadableStream<Uint8Array>({
-      start(c) { c.enqueue(new Uint8Array([1, 2, 3, 4])); c.close(); },
-    });
-    await new GeminiClient({ fetchImpl: cap.fn }).uploadStream(stream, 'image/jpeg', 'shot.jpg', 4);
+    const signal = AbortSignal.timeout(30_000);
+    await new GeminiClient({ fetchImpl: cap.fn }).uploadBytes(new Uint8Array([1, 2, 3, 4]), 'image/png', 'pic.png', signal);
+    expect((cap.calls[0].init as RequestInit).signal).toBe(signal);
+    expect((cap.calls[1].init as RequestInit).signal).toBe(signal);
+  });
 
-    const finalize = cap.calls[1].init as RequestInit & { duplex?: string };
-    expect(finalize.body).toBeInstanceOf(ReadableStream);
-    // Chunked encoding is not accepted by the resumable protocol.
-    expect((finalize.headers as Record<string, string>)['Content-Length']).toBe('4');
-    expect(finalize.duplex).toBe('half');
+  it('sends no signal when the caller gives none, so a big upload is not cut short', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const cap = uploadFetch();
+    await new GeminiClient({ fetchImpl: cap.fn }).uploadBytes(new Uint8Array([1, 2, 3, 4]), 'image/png', 'pic.png');
+    expect(cap.calls[0].init).not.toHaveProperty('signal');
+    expect(cap.calls[1].init).not.toHaveProperty('signal');
   });
 
   it('rejects a file over the Files API 2 GB cap before sending anything', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = uploadFetch();
     const c = new GeminiClient({ fetchImpl: cap.fn });
-    const huge = new ReadableStream<Uint8Array>({ start(s) { s.close(); } });
-    await expect(c.uploadStream(huge, 'video/mp4', 'big.mp4', 3 * 1024 ** 3)).rejects.toThrow(/2 GB/);
+    // Only byteLength is read before the guard throws, so this stands in for
+    // 3 GB without allocating it. It has to pass `instanceof Uint8Array` or
+    // uploadBytes copies it into a real (empty) one and the guard never fires.
+    const huge = Object.create(Uint8Array.prototype) as Uint8Array;
+    Object.defineProperty(huge, 'byteLength', { value: 3 * 1024 ** 3 });
+    await expect(c.uploadBytes(huge, 'video/mp4', 'big.mp4')).rejects.toThrow(/2 GB/);
     expect(cap.calls).toHaveLength(0);
   });
 });

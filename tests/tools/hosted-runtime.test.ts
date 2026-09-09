@@ -171,6 +171,37 @@ describe('sidecars are gated on a real filesystem', () => {
     expect(String(body.hint)).not.toMatch(/sidecar/i);
   });
 
+  it('does not send a caller to an endpoint that no longer exists', async () => {
+    // The remediation used to name `POST /upload` on the connector and say this
+    // ran on a Cloudflare Worker. Both went away when the server moved to
+    // mcp-host, and a caller with a shell will run a curl line verbatim: two of
+    // the four routes it offered were dead. An error that misdirects is worse
+    // than one that just says no.
+    const client = stub(createR2Sink(bucket(), {}));
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const res = await h.callTool('gemini_image_edit', { prompt: 'x', images: ['/tmp/ref.png'], confirm: true });
+    const text = JSON.stringify(res.content);
+    expect(res.isError).toBe(true);
+    expect(text).not.toMatch(/POST \/upload/);
+    expect(text).not.toMatch(/Cloudflare Worker/);
+    // What IS live, in the order a caller should try it.
+    expect(text).toMatch(/images_url/);
+    expect(text).toMatch(/gemini_get_upload_url/);
+    expect(text).toMatch(/images_r2_keys/);
+    await h.close();
+  });
+
+  it('says plainly that no route avoids base64 without network access', async () => {
+    // Section D honesty: an agent that cannot make HTTP requests has no way to
+    // reference a local file except through the conversation. Saying so beats
+    // listing four routes it will discover one at a time that it cannot use.
+    const client = stub(createR2Sink(bucket(), {}));
+    const h = await createTestHarness((s) => registerGenerateTools(s, client));
+    const res = await h.callTool('gemini_image_edit', { prompt: 'x', images: ['/tmp/ref.png'], confirm: true });
+    expect(JSON.stringify(res.content)).toMatch(/cannot make HTTP requests|no network/i);
+    await h.close();
+  });
+
   it('does not advertise sidecar recovery in the gemini_interact DESCRIPTION on R2', () => {
     const diskDesc = describeTool(registerInteractTools as never, stub(createDiskSink()), 'gemini_interact');
     const hostedDesc = describeTool(registerInteractTools as never, stub(createR2Sink(bucket(), {})), 'gemini_interact');
@@ -225,7 +256,7 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
     // context, and name base64 only as the fallback it is.
     expect(text).toMatch(/images_url/);
     expect(text).toMatch(/gemini_upload_file/);
-    expect(text).toMatch(/POST \/upload/);
+    expect(text).toMatch(/gemini_get_upload_url/); // replaced the retired POST /upload
     expect(text).toMatch(/images_base64/);
     expect(text.indexOf('images_url')).toBeLessThan(text.indexOf('images_base64'));
     // Must fail BEFORE any billable upstream call.

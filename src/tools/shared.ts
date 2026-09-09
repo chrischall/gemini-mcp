@@ -370,7 +370,7 @@ export const sharedImageSchema = {
   orientation: orientationSchema,
   image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution (512 = 0.5K, Flash-only)'),
   output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),
-  inline: z.boolean().optional().describe('Return base64 images inline instead of writing to disk. The default costs nothing to carry and hands back a path or URL you can reference again; inline bytes can only be looked at'),
+  inline: z.boolean().optional().describe('Return the image as an inline image block you can SEE, instead of a path (stdio) or link (hosted). The default costs nothing to carry and hands back a reference you can reuse; use this when you need to check the result yourself. On the hosted connector gemini_view_media does the same for an image you already have'),
   seed: z.number().int().optional().describe('Seed for reproducible generation; random if omitted'),
   thinking_level: z.enum(['minimal', 'high']).optional().describe('Reasoning depth (Gemini 3 models); higher can help complex/structural edits'),
   google_search: z.boolean().optional().describe('Ground the image in live Google Search results (current events, weather, data)'),
@@ -745,8 +745,9 @@ export async function persistBundle(
 }
 
 /**
- * Inputs that can only come off a local filesystem. On the hosted connector
- * (a Cloudflare Worker) none of them exist:
+ * Inputs that can only come off a local filesystem. The hosted deployment runs
+ * as a child process on mcp-host with no access to the CALLER's machine, so
+ * none of them exist there:
  *
  *  - `images` / `master_images` — file paths read with `node:fs`.
  *  - `from_clipboard` — shells out to `osascript`/`sips` via `child_process`.
@@ -780,15 +781,16 @@ export function assertLocalInputsAvailable(
   const fix =
     'Reference images WITHOUT putting bytes in the conversation, in order of preference: ' +
     '(1) `images_url` — public https URLs the server fetches itself; ' +
-    '(2) `images_file_uris` — upload once with `gemini_upload_file` (it takes a `url` or `data_base64`) and reuse the returned files/… uri; ' +
-    '(3) `POST /upload` on this connector with the raw bytes as the body ' +
-    "(`curl -X POST <connector-url>/upload -H 'Authorization: Bearer <token>' -H 'Content-Type: image/jpeg' --data-binary @photo.jpg`), " +
-    'then pass the returned file_uri. ' +
-    'As a last resort `images_base64` still works, but it costs ~14k tokens per photo and breaks on a truncated read. ' +
+    '(2) `images_r2_keys` — mint a signed upload URL with `gemini_get_upload_url`, PUT the file to it, then pass the r2_key back ' +
+    '(the server reads its own store; nothing crosses the conversation); ' +
+    '(3) `images_file_uris` — upload once with `gemini_upload_file` (it takes a `url` or `data_base64`) and reuse the returned files/… uri. ' +
+    'If you CANNOT make HTTP requests at all, routes (1) and (2) are closed to you and the only way to reference a local file ' +
+    'is `images_base64`, which costs ~14k tokens per photo and breaks on a truncated read — the server uploads it once and ' +
+    'returns a files/… uri under image_inputs to reuse on later calls. ' +
     'Reference video by `video_url` (a public YouTube URL, or a files/… uri uploaded elsewhere) instead of `video_path`.';
   throw new McpToolError(
     `${unavailable.join(', ')} ${unavailable.length > 1 ? 'are' : 'is'} unavailable on the hosted connector: ` +
-      `it runs on a Cloudflare Worker, which has no filesystem and no local clipboard. ${fix}`,
+      `it runs on a remote machine with no access to your filesystem or clipboard. ${fix}`,
     { hint: fix },
   );
 }

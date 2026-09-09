@@ -243,6 +243,7 @@ shared util, configured non-Bearer.
 | `gemini_delete_file` | `tools/files.ts` | `DELETE /v1beta/files/{id}` | write (confirm-gated) |
 | `gemini_sign_media` | `tools/files.ts` | none (re-signs an R2 key via `mediaSink.resign`) — **hosted deployments only**, not registered on disk sinks | read |
 | `gemini_list_recent_media` | `tools/files.ts` | none (lists `gen/<tenant>/` via `mediaSink.listRecent`) — **hosted only** | read |
+| `gemini_view_media` | `tools/files.ts` | none (reads an `r2_key` back as an inline image block) — **hosted only** | read |
 | `gemini_get_upload_url` | `tools/uploads.ts` | none (mints a signed `PUT /put/<key>` URL, ~10 min TTL) — **hosted only**, gated on `client.uploadUrls` | read |
 | `gemini_save_character` / `gemini_list_characters` / `gemini_delete_character` | `tools/library.ts` | R2 `lib/<tenant>/characters/…` (no expiry) — **hosted only**, gated on `client.library`; delete confirm-gated | write / read / write |
 | `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | `tools/library.ts` | R2 `lib/<tenant>/styles/…` (no expiry) — **hosted only** | write / read / write |
@@ -427,6 +428,23 @@ sidecar. `async` composes with idempotency (an `async` call that dedups returns
 the matching job's id). `JobRegistry.dispatch()` (in `jobs.ts`) is the one seam
 that owns sync-vs-async and all dedup. A `job_id` from another session is simply
 absent from this session's registry, so polling it takes the unknown-id path.
+
+**A hosted result is a link, and a link is not something a model can look
+at.** On disk the caller gets a path its own image tool can open; here it gets
+a signed URL, and fetching one needs network access the caller may not have.
+That is how a five-turn refine loop ships without anyone noticing the text came
+out garbled. `gemini_view_media` reads an `r2_key` back as an inline image
+block, so the caller can look on the turns it chooses to.
+
+Deliberately a separate tool rather than pixels on every result. Bytes on every
+turn is a cost nobody opted into, and the durable half of a result is the
+`r2_key` manifest — small enough to persist (`MAX_PERSISTED_RESULT_BYTES`),
+re-signable long after any URL in it expired, and the thing a replay is rebuilt
+from. An `inline: true` result is raw base64 and is deliberately NOT persisted,
+which is the reason inline must not become the hosted default. The cap on a
+view is the TRANSPORT's, not the model's: an image block is tokenized as an
+image whatever its byte size, but an oversized payload gets rejected or
+truncated on the way out and reads as a broken tool.
 
 **Hosted on mcp-host.** The same stdio server runs as a child there; mcp-host
 proxies MCP over streamable HTTP to claude.ai and wraps it in per-MCP OAuth, so

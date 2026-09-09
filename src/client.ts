@@ -266,7 +266,7 @@ export function normalizeFileName(ref: string): string {
   const match = /(?:^|\/)(files\/[\w-]+)\/?$/.exec(trimmed);
   if (!match) {
     throw new McpToolError(`Not a Gemini Files API reference: "${ref}"`, {
-      hint: 'Pass the `files/<id>` name (or the full https://…/v1beta/files/<id> uri) returned by gemini_upload_file / POST /upload.',
+      hint: 'Pass the `files/<id>` name (or the full https://…/v1beta/files/<id> uri) returned by gemini_upload_file.',
     });
   }
   return match[1];
@@ -665,24 +665,6 @@ export class GeminiClient {
   }
 
   /**
-   * Upload a request body straight through to the Files API without buffering
-   * it — the direct-upload HTTP endpoint (`POST /upload` on the Worker) hands
-   * us a `ReadableStream` and a `Content-Length`, and the whole point of that
-   * endpoint is that the bytes never materialize anywhere they'd cost context
-   * or memory.
-   *
-   * `contentLength` is REQUIRED because the resumable protocol's start step
-   * declares it up front (`X-Goog-Upload-Header-Content-Length`); a stream of
-   * unknown length has to be buffered by the caller first.
-   */
-  async uploadStream(stream: ReadableStream<Uint8Array>, mimeType: string, displayName: string, contentLength: number): Promise<UploadedFile> {
-    if (contentLength > FILE_MAX_BYTES) {
-      throw new McpToolError(`File is ${contentLength} bytes, over the Gemini Files API limit of ${FILE_MAX_BYTES} bytes (2 GB).`);
-    }
-    return this.uploadToFilesApi(stream, mimeType, displayName, contentLength);
-  }
-
-  /**
    * The resumable upload itself. Three live-verified steps (docs/GEMINI-API.md
    * "Files API — local video upload"):
    *
@@ -697,11 +679,12 @@ export class GeminiClient {
    * These two upload calls are raw `fetchImpl` (not `createApiClient`): step 1
    * needs the response *header* and step 2 posts a binary body — neither fits
    * `fetchJson`. The poll DOES go through the shared client (timeout + retry).
-   * Uploads deliberately have no abort timeout: a multi-hundred-MB file can
-   * legitimately take longer than any fixed budget.
+   * Uploads carry no abort timeout by default: a multi-hundred-MB file can
+   * legitimately take longer than any fixed budget. A caller that is uploading
+   * OPPORTUNISTICALLY passes its own `signal` (see `uploadBytes`).
    */
   private async uploadToFilesApi(
-    body: Blob | ReadableStream<Uint8Array>,
+    body: Blob,
     mimeType: string,
     displayName: string,
     contentLength: number,
@@ -745,23 +728,18 @@ export class GeminiClient {
 
     // 2. upload + finalize — single shot; the session URL is self-authorizing
     // (no api-key header needed; verified live).
-    // A Blob body is left EXACTLY as the live-verified video upload sent it:
+    // The Blob body is left EXACTLY as the live-verified video upload sent it:
     // fetch derives Content-Length from the blob, and setting the header by
-    // hand is the kind of change that breaks a verified path for no gain. A
-    // stream has no inherent length, so it declares one — otherwise the runtime
-    // falls back to chunked encoding, which the resumable protocol does not
-    // accept (this half is docs-derived; see docs/GEMINI-API.md).
-    const streaming = !(body instanceof Blob);
+    // hand is the kind of change that breaks a verified path for no gain.
+    // (A ReadableStream branch lived here for the retired direct-upload HTTP
+    // endpoint. Nothing streams into this function any more.)
     const upRes = await doFetch(uploadUrl, {
       method: 'POST',
       headers: {
         'X-Goog-Upload-Offset': '0',
         'X-Goog-Upload-Command': 'upload, finalize',
-        ...(streaming ? { 'Content-Length': String(contentLength) } : {}),
       },
       body: body as BodyInit,
-      // Required by undici/workerd to send a ReadableStream body at all.
-      ...(streaming ? { duplex: 'half' } : {}),
       ...(signal ? { signal } : {}),
     } as RequestInit);
     if (!upRes.ok) {
@@ -841,7 +819,7 @@ export class GeminiClient {
     const file = await this.call<GeminiFile>('GET', `/${resource}`);
     if (!file.uri) {
       throw new McpToolError(`${SERVICE} returned no uri for ${resource}`, {
-        hint: 'Files expire ~48h after upload — re-upload with gemini_upload_file (or POST /upload) and use the new uri.',
+        hint: 'Files expire ~48h after upload — re-upload with gemini_upload_file and use the new uri.',
       });
     }
     if (file.state && file.state !== 'ACTIVE') {
