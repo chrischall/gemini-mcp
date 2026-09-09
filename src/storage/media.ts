@@ -456,9 +456,10 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       const wanted = interactionId.trim();
       if (!wanted) return undefined;
       const hit = await scanSidecars((record) => record.interaction_id === wanted);
-      if (!hit) return undefined;
-      const [described] = await decorate([hit.entry]);
-      return described;
+      // The record the scan already read is passed straight through: re-reading
+      // it to decorate the entry would spend a second round trip on an object
+      // we are holding.
+      return hit ? (await decorate([hit.entry], undefined, hit.record))[0] : undefined;
     },
     async resign(key) {
       if (!(await owned(key))) return undefined;
@@ -541,8 +542,13 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
     return { entries: found, sidecarKeys, truncated, scannedPages };
   }
 
-  /** Attach a fresh link, and the sidecar record where one exists. */
-  async function decorate(entries: RecentMedia[], sidecarKeys?: Set<string>): Promise<RecentMedia[]> {
+  /**
+   * Attach a fresh link, and the sidecar record where one exists.
+   *
+   * `known` short-circuits the read for a caller that is already holding the
+   * record (see findByInteraction).
+   */
+  async function decorate(entries: RecentMedia[], sidecarKeys?: Set<string>, known?: MediaSidecar): Promise<RecentMedia[]> {
     const expiresAtMs = now().getTime() + ttlMs;
     return Promise.all(
       entries.map(async (entry) => {
@@ -551,7 +557,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
         // generated before sidecars existed, and anything whose write failed)
         // keeps its place and simply carries no metadata.
         const has = sidecarKeys ? sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`) : true;
-        const record = has ? await readSidecar(entry.key) : undefined;
+        const record = known ?? (has ? await readSidecar(entry.key) : undefined);
         return {
           ...entry,
           ...(link.unavailable ? {} : { url: link.ref, expiresAt: link.expiresAt }),

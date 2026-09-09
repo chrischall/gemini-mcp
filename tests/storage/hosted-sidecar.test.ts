@@ -142,6 +142,15 @@ describe('hosted sidecars', () => {
     const counting = { ...b, get: async (k: string) => { if (k.endsWith('.json')) reads++; return b.get!(k); } };
     expect(await sink(counting).findByInteraction!('v1_nope')).toBeUndefined();
     expect(reads).toBeLessThanOrEqual(41); // the budget, not the 60 stored
+
+    // And a HIT reads each record once: the scan hands the one it is holding to
+    // the decorator rather than fetching the same object twice. Asked for the
+    // newest — the first the scan looks at — that is exactly one read.
+    const s2 = sink(counting);
+    const newest = (await s2.latestInteractionId!())!;
+    reads = 0;
+    expect(await s2.findByInteraction!(newest)).toBeDefined();
+    expect(reads).toBe(1);
   });
 
   it('never throws when the store misbehaves — recovery is best-effort', async () => {
