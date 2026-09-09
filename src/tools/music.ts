@@ -35,8 +35,8 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         'Generate music from a text prompt (mood, genre, instruments, structure, or lyrics inline) via a Lyria model: ' +
         'lyria-3-clip-preview (30s instrumental clip, default, cheapest), lyria-3.5 (full-length song with vocals) or ' +
         'lyria-3-pro-preview (longer-form). Output is MP3, written to disk (or returned inline). Single-turn: a track ' +
-        'cannot be refined by a follow-up call, so put the whole brief in the prompt. Runs long — use `async: true` + ' +
-        'gemini_get_result, or raise `timeout_ms`. Needs a funded account.',
+        'cannot be refined by a follow-up call, so put the whole brief in the prompt. Runs long — give it a `max_wait_ms` ' +
+        'budget (or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
         prompt: z.string().min(1).describe('Description of the music: mood, genre, instruments, tempo, structure, or lyrics'),

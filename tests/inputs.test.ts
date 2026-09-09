@@ -257,6 +257,40 @@ describe('base64 inputs are uploaded once and handed back as a reference', () =>
     expect(second.inputs[0]).toEqual({ uri: 'https://generativelanguage.googleapis.com/v1beta/files/up1', mimeType: 'image/png' });
   });
 
+  it('reports the file_uri on a cache hit too — the repeat paste is who needs it', async () => {
+    // The schema description tells the caller to reuse
+    // image_inputs.base64_uploaded[].file_uri. A second paste of the same photo
+    // is exactly the call that has to be told, so the cached path reports as
+    // loudly as the uploading one.
+    const s = stubClient();
+    await resolveImageInputs({ images_base64: [PNG_B64] }, s.client);
+    const second = await resolveImageInputs({ images_base64: [PNG_B64] }, s.client);
+    expect(s.uploadBytes).toHaveBeenCalledTimes(1);
+    expect(second.report?.base64_uploaded?.[0]).toMatchObject({ index: 0, file_uri: 'files/up1' });
+  });
+
+  it('falls back to inline when the bytes will not decode, rather than failing the call', async () => {
+    // decodeImageInput does not validate a data: payload, so a URL-safe or
+    // truncated one reaches atob and throws. That has to land in the same
+    // best-effort fallback as an upload failure — the promotion is an
+    // optimisation, and an optimisation must not be able to fail a generation.
+    const s = stubClient();
+    const bad = 'data:image/png;base64,not_valid_base64!!';
+    const { inputs } = await resolveImageInputs({ images_base64: [bad] }, s.client);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0].base64).toBe('not_valid_base64!!');
+    expect(s.uploadBytes).not.toHaveBeenCalled();
+  });
+
+  it('bounds the promotion with an abort signal', async () => {
+    // Two untimed round trips now sit in front of every images_base64
+    // generation. An upload that stalls must not hold the call open with it.
+    const s = stubClient();
+    await resolveImageInputs({ images_base64: [PNG_B64] }, s.client);
+    const signal = s.uploadBytes.mock.calls[0][3] as AbortSignal | undefined;
+    expect(signal).toBeInstanceOf(AbortSignal);
+  });
+
   it('falls back to inline when the upload fails — a promotion must not fail the call', async () => {
     const s = stubClient();
     s.uploadBytes.mockRejectedValueOnce(new Error('upload exploded'));

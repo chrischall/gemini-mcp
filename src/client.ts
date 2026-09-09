@@ -642,8 +642,13 @@ export class GeminiClient {
    * payload, an inline `gemini_upload_file` body) to the Files API. Same three
    * steps as {@link uploadVideo}, minus the filesystem — which is what makes it
    * usable on the hosted connector, where there is no disk to stream from.
+   *
+   * `signal` bounds the two HTTP round trips. It exists for callers that
+   * upload OPPORTUNISTICALLY — the base64 promotion in `inputs.ts` puts an
+   * upload in front of a generation the caller did not ask to wait for, so a
+   * stalled upload must be abandonable rather than open-ended.
    */
-  async uploadBytes(bytes: Uint8Array | ArrayBuffer, mimeType: string, displayName: string): Promise<UploadedFile> {
+  async uploadBytes(bytes: Uint8Array | ArrayBuffer, mimeType: string, displayName: string, signal?: AbortSignal): Promise<UploadedFile> {
     const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     if (view.byteLength > FILE_MAX_BYTES) {
       throw new McpToolError(`File is ${view.byteLength} bytes, over the Gemini Files API limit of ${FILE_MAX_BYTES} bytes (2 GB).`);
@@ -656,7 +661,7 @@ export class GeminiClient {
     // `ArrayBuffer`-backed views, while a `Uint8Array` is generic in its buffer
     // type. The runtime accepts any view.
     const body = new Blob([view as unknown as BlobPart], { type: mimeType });
-    return this.uploadToFilesApi(body, mimeType, displayName, view.byteLength);
+    return this.uploadToFilesApi(body, mimeType, displayName, view.byteLength, signal);
   }
 
   /**
@@ -700,6 +705,10 @@ export class GeminiClient {
     mimeType: string,
     displayName: string,
     contentLength: number,
+    /** Bounds the two upload round trips. The PROCESSING poll below is left
+     * alone: it is already bounded by FILE_POLL_MAX_ATTEMPTS, and it runs for
+     * video rather than for the images this is used to bound. */
+    signal?: AbortSignal,
   ): Promise<UploadedFile> {
     const key = this.requireKey();
     // Local alias so the calls below carry NO receiver: `this.fetchImpl(...)`
@@ -720,6 +729,7 @@ export class GeminiClient {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ file: { display_name: displayName } }),
+      ...(signal ? { signal } : {}),
     });
     if (!startRes.ok) {
       throw new McpToolError(
@@ -752,6 +762,7 @@ export class GeminiClient {
       body: body as BodyInit,
       // Required by undici/workerd to send a ReadableStream body at all.
       ...(streaming ? { duplex: 'half' } : {}),
+      ...(signal ? { signal } : {}),
     } as RequestInit);
     if (!upRes.ok) {
       throw new McpToolError(

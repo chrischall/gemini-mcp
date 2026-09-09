@@ -88,6 +88,15 @@ export function hasImageInput(args: ImageInputArgs): boolean {
   );
 }
 
+/**
+ * How long the opportunistic base64 upload gets before it is abandoned.
+ *
+ * The promotion adds two round trips in front of a generation nobody asked to
+ * wait for, and `uploadToFilesApi` is otherwise untimed. Past this the call
+ * proceeds inline: slower to repeat, but not stalled.
+ */
+const BASE64_UPLOAD_TIMEOUT_MS = 30_000;
+
 /** Conservative TTL when the API doesn't tell us: documented retention is ~48h. */
 const ASSUMED_TTL_MS = 47 * 60 * 60 * 1000;
 
@@ -277,16 +286,27 @@ async function resolveBase64(
   report: ImageInputReport,
 ): Promise<ImageInput> {
   if (!inline.base64) return inline;
-  const bytes = base64ToBytes(inline.base64);
-  // NUL-separated, written as the \u0000 escape — see resolveLocalPath for why
-  // a literal NUL must not appear in this file.
-  const key = `b64\u0000${inline.mimeType}\u0000${bytes.byteLength}\u0000${await digestOf(bytes)}`;
-
-  const cached = client.session.cachedUpload(key);
-  if (cached) return { uri: cached.uri, mimeType: cached.mimeType };
-
+  // EVERYTHING is inside the try, decoding included. `decodeImageInput` does
+  // not validate a data: payload, so a URL-safe alphabet or a truncated paste
+  // reaches `atob` here and throws — and a promotion that fails the generation
+  // it was meant to make cheaper is worse than no promotion.
   try {
-    const uploaded = await client.uploadBytes(bytes, inline.mimeType, `pasted-${index + 1}`);
+    const bytes = base64ToBytes(inline.base64);
+    // NUL-separated, written as the \u0000 escape — see resolveLocalPath for
+    // why a literal NUL must not appear in this file.
+    const key = `b64\u0000${inline.mimeType}\u0000${bytes.byteLength}\u0000${await digestOf(bytes)}`;
+
+    const cached = client.session.cachedUpload(key);
+    if (cached) {
+      // Reported on the cache hit as well. The description tells callers to
+      // reuse `base64_uploaded[].file_uri`, and the SECOND paste of a photo is
+      // precisely the call that needs to hear it — staying silent there tells
+      // the one caller who is repeating themselves nothing.
+      (report.base64_uploaded ??= []).push({ index, file_uri: cached.name, bytes: bytes.byteLength });
+      return { uri: cached.uri, mimeType: cached.mimeType };
+    }
+
+    const uploaded = await client.uploadBytes(bytes, inline.mimeType, `pasted-${index + 1}`, AbortSignal.timeout(BASE64_UPLOAD_TIMEOUT_MS));
     client.session.uploadCache.set(key, {
       name: uploaded.name,
       uri: uploaded.uri,

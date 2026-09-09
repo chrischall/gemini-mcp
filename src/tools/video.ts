@@ -43,8 +43,8 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         '(supply reference image[s]), interpolate between two stills (pass first frame then last frame as images), ' +
         'or continue a prior video (task: "edit" or "extend" + previous_interaction_id / continue_last; extensions ' +
         'add ~3-10s each, to ~40s total). Cost scales with `resolution` — draft at 360p, keep at 1080p/4k. ' +
-        'Output is written to disk as MP4 (video has no inline MCP block). Video runs long — use `async: true` to get a ' +
-        'job_id immediately and poll gemini_get_result, or raise `timeout_ms`. Preview model: needs a funded account.',
+        'Output is written to disk as MP4 (video has no inline MCP block). Video runs long — give it a `max_wait_ms` budget ' +
+        '(or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account.',
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
         prompt: z.string().min(1).describe('Description of the video to generate (or the edit instruction when task=edit)'),
