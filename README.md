@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/@chrischall/gemini-mcp)](https://www.npmjs.com/package/@chrischall/gemini-mcp)
 [![license](https://img.shields.io/npm/l/@chrischall/gemini-mcp)](LICENSE)
 
-MCP server for Google Gemini media generation. Exposes eleven tools to Claude over stdio: list available models, generate/edit/compose images, generate a consistent set of images from a master prompt, multi-turn image refinement (Interactions API), **video** generation (omni), **music** generation (Lyria), an async result poll for long generations, and Files API upload/list/delete for reusable image references. Output is written to disk by default (path returned) or returned inline as base64. Built on the Gemini v1beta API (`generativelanguage.googleapis.com`) using the Nano Banana / Nano Banana Pro (images), omni (video), and Lyria (music) model families.
+MCP server for Google Gemini media generation. Exposes thirteen tools to Claude over stdio: list available models, generate/edit/compose images, generate a consistent set of images from a master prompt, multi-turn image refinement (Interactions API), **video** generation (omni), **music** generation (Lyria), an async result poll for long generations, and Files API upload/list/delete for reusable image references. Output is written to disk by default (path returned) or returned inline as base64. Built on the Gemini v1beta API (`generativelanguage.googleapis.com`) using the Nano Banana / Nano Banana Pro (images), omni (video), and Lyria (music) model families.
 
 Developed and maintained by AI (Claude Code).
 
