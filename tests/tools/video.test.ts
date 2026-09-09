@@ -38,6 +38,55 @@ describe('gemini_video_generate', () => {
     await h.close();
   });
 
+  it('passes resolution through and echoes it back, since it moves the bill', async () => {
+    // omni GA (2026-08-27) added 360p/720p/1080p/4k. A 10s clip measured
+    // ~$0.34 at 360p, so a caller who asked for a cheap draft has to be able
+    // to see, in the result, that they got one.
+    const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
+    const res = await h.callTool('gemini_video_generate', { prompt: 'x', resolution: '360p', output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ resolution: '360p' }));
+    expect(parseToolResult<{ resolution?: string }>(res).resolution).toBe('360p');
+    await h.close();
+  });
+
+  it('leaves resolution unset by default rather than pinning the model default', async () => {
+    const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
+    const res = await h.callTool('gemini_video_generate', { prompt: 'x', output_dir: dir });
+    expect(spy.mock.calls[0][0].resolution).toBeUndefined();
+    expect(parseToolResult<{ resolution?: string }>(res).resolution).toBeUndefined();
+    await h.close();
+  });
+
+  it('does not let two in-flight calls share a job across resolutions', async () => {
+    // `resolution` is in the fingerprint because a 4k render is not the 360p
+    // one — unlike `delivery`, which is the same bytes over a different
+    // transport and is deliberately excluded. Exercised on the in-flight path,
+    // which is the one a fingerprint governs.
+    let settle: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { settle = resolve; });
+    const spy = vi.spyOn(client, 'generateVideo').mockImplementation(async () => {
+      await gate;
+      return { id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] };
+    });
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
+    const a = h.callTool('gemini_video_generate', { prompt: 'same', resolution: '360p', output_dir: dir });
+    const b = h.callTool('gemini_video_generate', { prompt: 'same', resolution: '1080p', output_dir: dir });
+    await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    settle!();
+    await Promise.all([a, b]);
+    await h.close();
+  });
+
+  it('accepts the extend task the GA model added', async () => {
+    const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
+    const h = await createTestHarness((srv) => registerVideoTools(srv, client));
+    await h.callTool('gemini_video_generate', { prompt: 'keep going', task: 'extend', continue_last: false, previous_interaction_id: 'v1_prev', output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ task: 'extend' }));
+    await h.close();
+  });
+
   it('passes an explicit delivery through as an escape hatch', async () => {
     const spy = vi.spyOn(client, 'generateVideo').mockResolvedValue({ id: 'v', videos: [{ base64: MP4, mimeType: 'video/mp4' }] });
     const h = await createTestHarness((srv) => registerVideoTools(srv, client));

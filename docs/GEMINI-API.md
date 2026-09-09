@@ -22,10 +22,14 @@ in this file or the fixtures (a models list and a redacted 1×1 image).
 | `gemini-2.5-flash-image` | fast/cheap. ⚠️ Shutdown 2026-10-02 per the deprecations page (replacement: `gemini-3.1-flash-image-preview`). |
 | `nano-banana-pro-preview` | alias of gemini-3-pro-image |
 
-**Model currency check (2026-08-22, changelog/deprecations pages — docs-derived,
-not live-verified):** everything this server defaults to or recommends is alive
-with no announced shutdown (`gemini-3.1-flash-image`, `gemini-3-pro-image`,
-`gemini-omni-flash-preview`, `lyria-3-clip-preview`, `lyria-3-pro-preview`).
+**Model currency check (2026-09-09, `GET /v1beta/models` against a funded key,
+cross-read with the changelog/deprecations pages).** ⚠️ **`gemini-omni-flash-preview`
+shuts down 2026-09-30** — it was this server's `DEFAULT_VIDEO_MODEL` until this
+pass, and is now `gemini-omni-1.1-flash` (GA 2026-08-27, same rates). Everything
+else the server defaults to or recommends is alive with no announced shutdown
+(`gemini-3.1-flash-image`, `gemini-3-pro-image`, `lyria-3-clip-preview`,
+`lyria-3-pro-preview`). New and now reachable: `lyria-3.5` (2026-09-03).
+The earlier 2026-08-22 check said the same of everything then listed.
 `imagen-4.0-*` shut down 2026-08-17 — already excluded by `filterImageModels`.
 `gemini-3.1-flash-lite-image` (Nano Banana 2 Lite) went GA 2026-06-30 and shows
 up in the filtered list automatically. `gemini-3.7-flash` went GA 2026-08-13 —
@@ -513,6 +517,74 @@ Lifecycle verbs, as observed:
   and, where an id exists, the OUTPUT — still never the EXECUTION, and an
   interaction that cannot be read keeps the honest "was lost" error rather than
   being papered over.
+
+### omni GA and the Lyria request shape (verified live 2026-09-09)
+
+A funded-key pass over `GET /v1beta/models` plus schema probes. Most of it cost
+nothing: **an invalid enum value is rejected before any generation runs**, so
+`{"resolution":"banana-p"}` buys you the real enum for free. Two live
+generations were paid for (a 360p clip, a `lyria-3.5` song) to confirm the
+shapes end to end.
+
+**`gemini-omni-1.1-flash` (GA 2026-08-27) replaces `gemini-omni-flash-preview`,
+which shuts down 2026-09-30.** Same rates. `DEFAULT_VIDEO_MODEL` moved, and
+`src/pricing.ts` gained a key of its own — `normalizeModel` strips a `-preview`
+suffix and nothing else, so the GA id does not inherit the preview's entry and
+would otherwise have priced the server's *default* video model as undefined.
+
+- **`response_format.resolution`** — `360p | 720p (default) | 1080p | 4k`.
+  Now sent by `generateVideo` when the caller asks. This is the cost lever on
+  the video path, not a cosmetic one: video output is token-billed, and a 10s
+  clip at 360p reported 19,310 video output tokens (≈$0.34) against roughly
+  triple that at 720p. Verified end to end — the file came back 640×360, 24fps,
+  10.0s, 578 KB.
+- **`generation_config.video_config.task`** gained **`extend`**:
+  `text_to_video | image_to_video | reference_to_video | edit | extend`.
+  Extensions add ~3-10s each to about 40s total.
+- **Frame interpolation needs no new field** — two image inputs, first frame
+  then last frame, plus a transition prompt.
+- **`duration_seconds` / `fps` do not exist**, on `response_format` or on
+  `video_config`. Length is whatever the model decides from the prompt.
+- **`delivery` is still `inline | uri`.** The docs now say `base64`; the API
+  does not accept it. Unchanged behaviour, but don't "fix" the enum to match
+  the prose.
+
+**The music path had never been run against a real key, and it showed.**
+
+- **`response_format.audio_format` is not a field.** Every Lyria model answers
+  `400 Unknown parameter 'audio_format' at 'response_format'`, so every call
+  this server made carrying `audio_format` failed — the parameter had been
+  broken since it shipped. The real field is **`mime_type`**:
+  `audio/mp3 | audio/ogg_opus | audio/l16 | audio/wav | audio/alaw | audio/mulaw`.
+- **…and no Lyria model accepts anything but MP3 today.** `audio/wav` is
+  refused per-model on both `lyria-3-clip-preview` and `lyria-3.5`
+  (`Audio MIME type AUDIO_WAV is not supported for models/lyria-3.5`),
+  contradicting the docs' "MP3 (default) or WAV" for 3.5. So the server sends
+  **no format field at all** and the tool exposes none. When one becomes real
+  it goes back as `mime_type`.
+- **`delivery` on audio is schema-valid and runtime-rejected** —
+  `Audio delivery mode is not supported.` — re-confirming the 2026-08-22
+  finding. Lyria audio always returns inline base64 (a 30s track is ~1.9M
+  base64 chars), so the sink is what keeps those bytes out of the transcript.
+- **Lyria is single-turn.** A chained call is not refused at the edge; it
+  reaches the model and dies on the track it is handed back:
+  `400 Unsupported input mime type for this model: audio/s16le`. The
+  `previous_interaction_id` / `continue_last` parameters were removed from
+  `gemini_music_generate` rather than left advertising a turn that cannot
+  happen.
+- **`lyria-3.5`** (2026-09-03, $0.08/song): minutes-long, vocals, 44.1kHz
+  stereo, image input. Verified live — 32.7s, `audio/mpeg`, two `model_output`
+  steps (a text step of section markers `[[A0]] [[B1]] …`, then the audio).
+
+**A malformed `previous_interaction_id` answers
+`400 Invalid JSON payload: syntax error in request body`**, not a 404 — the id
+is a structured token the server decodes. Worth knowing before reading that
+message as a malformed request body: `ChainedRequest404Error` handles the 404
+case, and this is a different one.
+
+**Image config is unchanged.** The live `imageConfig` enums still match
+`src/tools/shared.ts` exactly: 14 aspect ratios, `imageSize` of
+`1K 2K 4K 512 512P 512PX`.
 
 ### The `@google/genai` `.d.ts` as a spec source
 

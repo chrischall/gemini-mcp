@@ -51,7 +51,7 @@ import { readEnvVar } from '@chrischall/mcp-utils';
 import type { TokenUsage } from './usage.js';
 
 /** The date the shipped rates were read from Google's pricing page. */
-export const PRICED_AT = '2026-08-28';
+export const PRICED_AT = '2026-09-09';
 
 /** USD per 1,000,000 tokens. */
 export interface ModelRates {
@@ -96,9 +96,17 @@ export const RATE_CARD: Readonly<Record<string, ModelRates>> = Object.freeze({
   // from flash-image), along with a $0.50 input and $3.00 text rate that were
   // both a third of the real figures. Every number here is now quoted.
   'gemini-omni-flash': { input: 1.5, text_output: 9.0, video_output: 17.5 },
+  // The GA model (2026-08-27) bills at the preview's rates. It needs its own
+  // key: `normalizeModel` strips a `-preview` suffix and nothing else, so
+  // `gemini-omni-1.1-flash` would otherwise price as undefined — and undefined
+  // is what the server's DEFAULT video model would have reported.
+  'gemini-omni-1.1-flash': { input: 1.5, text_output: 9.0, video_output: 17.5 },
   // Lyria bills per song, so tokens describe the work and not the bill.
   'lyria-3-clip': { input: 0, text_output: 0, per_generation: 0.04 },
   'lyria-3-pro': { input: 0, text_output: 0, per_generation: 0.08 },
+  // lyria-3.5 (2026-09-03): minutes-long songs with vocals, $0.08 a song. A
+  // bare id with no `-preview` to strip, so it is listed rather than derived.
+  'lyria-3.5': { input: 0, text_output: 0, per_generation: 0.08 },
 });
 
 /** What one call cost, and how that total was arrived at. */

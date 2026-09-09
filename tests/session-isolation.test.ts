@@ -6,7 +6,7 @@ import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerGenerateTools } from '../src/tools/generate.js';
 import { registerInteractTools } from '../src/tools/interact.js';
 import { registerJobTools } from '../src/tools/jobs.js';
-import { registerMusicTools } from '../src/tools/music.js';
+import { registerVideoTools } from '../src/tools/video.js';
 import { GeminiClient } from '../src/client.js';
 
 /**
@@ -146,28 +146,28 @@ describe('async job ids are not readable across sessions', () => {
   });
 });
 
-describe('music/video continue_last is per-session too', () => {
-  // `gemini_music_generate` IS registered on the hosted connector, so its
-  // last-interaction memory is a live cross-tenant leak of the same shape as
-  // gemini_interact's. (Video is stdio-only — not registered on the Worker —
-  // but carries the identical hazard, so it is scoped the same way.)
-  it('B\'s music continue_last does not resume A\'s music interaction', async () => {
+describe('video continue_last is per-session too', () => {
+  // The same hazard as gemini_interact's, on the other tool that remembers an
+  // interaction id. (Music used to be tested here as well; it no longer has a
+  // continue_last to leak — Lyria is single-turn, so the parameter and the
+  // session memory behind it were removed.)
+  it('B\'s video continue_last does not resume A\'s video interaction', async () => {
     const a = sessionClient('key-a');
     const b = sessionClient('key-b');
-    vi.spyOn(a, 'generateMusic').mockResolvedValue({ id: 'A-music', audios: [{ base64: PNG, mimeType: 'audio/mp3' }] });
-    const musicB = vi.spyOn(b, 'generateMusic').mockResolvedValue({ id: 'B-music', audios: [{ base64: PNG, mimeType: 'audio/mp3' }] });
+    vi.spyOn(a, 'generateVideo').mockResolvedValue({ id: 'A-video', videos: [{ base64: PNG, mimeType: 'video/mp4' }] });
+    const videoB = vi.spyOn(b, 'generateVideo').mockResolvedValue({ id: 'B-video', videos: [{ base64: PNG, mimeType: 'video/mp4' }] });
 
-    const hA = await createTestHarness((s) => registerMusicTools(s, a));
-    const hB = await createTestHarness((s) => registerMusicTools(s, b));
+    const hA = await createTestHarness((s) => registerVideoTools(s, a));
+    const hB = await createTestHarness((s) => registerVideoTools(s, b));
 
-    await hA.callTool('gemini_music_generate', { prompt: 'lo-fi', output_dir: dir });
-    const res = await hB.callTool('gemini_music_generate', { prompt: 'add drums', continue_last: true, output_dir: dir });
+    await hA.callTool('gemini_video_generate', { prompt: 'a cat', output_dir: dir });
+    const res = await hB.callTool('gemini_video_generate', { prompt: 'now a dog', continue_last: true, output_dir: dir });
     await hA.close();
     await hB.close();
 
     expect(res.isError).toBe(true);
-    expect(JSON.stringify(res.content)).not.toContain('A-music');
-    expect(musicB).not.toHaveBeenCalled();
+    expect(JSON.stringify(res.content)).not.toContain('A-video');
+    expect(videoB).not.toHaveBeenCalled();
   });
 });
 

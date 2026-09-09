@@ -330,7 +330,17 @@ export interface VideoOpts {
   images?: ImageInput[];
   model?: string;
   aspectRatio?: '9:16' | '16:9';
-  task?: 'text_to_video' | 'image_to_video' | 'reference_to_video' | 'edit';
+  /**
+   * Output resolution — `360p | 720p | 1080p | 4k`, verified live 2026-09-09
+   * against `gemini-omni-1.1-flash`. Left unset the model picks 720p.
+   *
+   * This is the cost lever on the video path, not a cosmetic one: omni bills
+   * video output per token, so a 10s clip measured 19,310 output tokens
+   * (~$0.34) at 360p against roughly triple that at 720p. A draft belongs at
+   * 360p and only the keeper at 1080p/4k.
+   */
+  resolution?: '360p' | '720p' | '1080p' | '4k';
+  task?: 'text_to_video' | 'image_to_video' | 'reference_to_video' | 'edit' | 'extend';
   previousInteractionId?: string;
   timeoutMs?: number;
   /**
@@ -366,8 +376,6 @@ export interface MusicOpts {
   input: string;
   images?: ImageInput[];
   model?: string;
-  /** `wav` is Lyria-3-Pro-only; the client sends it through, the tool validates. */
-  audioFormat?: 'mp3' | 'wav';
   previousInteractionId?: string;
   timeoutMs?: number;
   /** Run server-side and poll. Opt-in — see {@link VideoOpts.background}. */
@@ -990,6 +998,7 @@ export class GeminiClient {
       const responseFormat: Record<string, unknown> = { type: 'video' };
       if (withDelivery) responseFormat.delivery = delivery;
       if (opts.aspectRatio) responseFormat.aspect_ratio = opts.aspectRatio;
+      if (opts.resolution) responseFormat.resolution = opts.resolution;
       const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
       if (opts.task) body.generation_config = { video_config: { task: opts.task } };
       if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
@@ -1037,8 +1046,20 @@ export class GeminiClient {
     const inputParts: unknown[] = [{ type: 'text', text: opts.input }];
     for (const img of opts.images ?? []) inputParts.push(interactPart(img));
 
+    // No format field. The one the server used to send — `audio_format` —
+    // does not exist: every call carrying it answered `400 Unknown parameter
+    // 'audio_format' at 'response_format'`, on every Lyria model, which is
+    // what a docs-derived shape buys you. The real field is `mime_type`
+    // (`audio/mp3 | audio/ogg_opus | audio/l16 | audio/wav | audio/alaw |
+    // audio/mulaw`), and as of 2026-09-09 every value but MP3 is refused
+    // per-model — `Audio MIME type AUDIO_WAV is not supported for
+    // models/lyria-3.5`, and the same for the clip model. So there is no
+    // format lever to expose yet; when there is, it goes here as `mime_type`.
+    //
+    // `delivery` is absent for the same class of reason: the enum accepts
+    // `uri`, the runtime answers `Audio delivery mode is not supported.`
+    // (re-verified 2026-09-09). Lyria audio always comes back inline base64.
     const responseFormat: Record<string, unknown> = { type: 'audio' };
-    if (opts.audioFormat) responseFormat.audio_format = opts.audioFormat;
 
     const body: Record<string, unknown> = { model, input: inputParts, response_format: responseFormat };
     if (opts.previousInteractionId !== undefined) body.previous_interaction_id = opts.previousInteractionId;
