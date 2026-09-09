@@ -111,6 +111,39 @@ describe('hosted sidecars', () => {
     expect(await s.findByInteraction!('v1_missing')).toBeUndefined();
   });
 
+  it('reads records lazily, not one per object on the page', async () => {
+    // Each record is its OWN object, so "check them all" is a round trip per
+    // item on a tool call. A lookup walks newest-first and stops at the first
+    // match, which is nearly always the previous turn.
+    const b = bucket();
+    const s = sink(b);
+    const keys: string[] = [];
+    for (const n of ['one', 'two', 'three']) {
+      const [stored] = await s.persist([{ base: n, base64: PNG, mimeType: 'image/png' }], {});
+      await s.writeSidecar!(stored.key!, { interaction_id: `v1_${n}` });
+      keys.push(stored.key!);
+    }
+    let reads = 0;
+    const counting = { ...b, get: async (k: string) => { if (k.endsWith('.json')) reads++; return b.get!(k); } };
+    const counted = sink(counting);
+    // Newest first is the last key written, so its record is the first read.
+    await counted.latestInteractionId!();
+    expect(reads).toBe(1);
+  });
+
+  it('gives up after a bounded number of reads rather than walking everything', async () => {
+    const b = bucket();
+    const s = sink(b);
+    for (let i = 0; i < 60; i++) {
+      const [stored] = await s.persist([{ base: `n${i}`, base64: PNG, mimeType: 'image/png' }], {});
+      await s.writeSidecar!(stored.key!, { interaction_id: `v1_${i}` });
+    }
+    let reads = 0;
+    const counting = { ...b, get: async (k: string) => { if (k.endsWith('.json')) reads++; return b.get!(k); } };
+    expect(await sink(counting).findByInteraction!('v1_nope')).toBeUndefined();
+    expect(reads).toBeLessThanOrEqual(41); // the budget, not the 60 stored
+  });
+
   it('never throws when the store misbehaves — recovery is best-effort', async () => {
     const b = bucket();
     const broken: MediaBucket = { ...b, put: async () => { throw new Error('store down'); } };
