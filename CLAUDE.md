@@ -467,6 +467,15 @@ best-effort and never throws: the generation is the job. And media with no
 record at all (everything generated before this shipped) keeps its place in a
 listing and simply carries no metadata.
 
+Two hazards that are specific to this half, and both cost a wrong resume rather
+than an error. **Key order cannot tell you which record is newest**: keys sort
+by day and then by a RANDOM id, so within a day the order is arbitrary —
+`latestInteractionId` reads the newest day's records out and compares their own
+`created` stamps. And **the three chains share one index**, so the record
+carries its `kind` and `continue_last` asks for `'image'`; without that a
+picture chain could resume an omni interaction, or a Lyria one, where a chained
+call is a documented 400.
+
 **Hosted on mcp-host.** The same stdio server runs as a child there; mcp-host
 proxies MCP over streamable HTTP to claude.ai and wraps it in per-MCP OAuth, so
 this repo has no Worker, no `createConnector`, and no HTTP surface of its own.

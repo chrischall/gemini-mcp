@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerInteractTools } from '../../src/tools/interact.js';
 import { registerFileTools } from '../../src/tools/files.js';
+import { registerVideoTools } from '../../src/tools/video.js';
 import { createR2Sink, type MediaBucket, type MediaSink } from '../../src/storage/media.js';
 import { SessionState } from '../../src/session.js';
 import { ChainedRequest404Error } from '../../src/client.js';
@@ -100,6 +101,30 @@ describe('hosted interact — the sidecar record', () => {
 
     expect(interact.mock.calls[1][0].previousInteractionId).toBe('v1_one');
     expect(parseToolResult<{ continued_from_sidecar?: boolean }>(res).continued_from_sidecar).toBe(true);
+  });
+
+  it('does not resume a video interaction as if it were an image chain', async () => {
+    // Video and music write records too. gemini_interact reading "the newest
+    // id" without asking which chain it belongs to would resume an omni
+    // interaction here — and a Lyria one is worse still, since a chained call
+    // to it is a documented 400.
+    const sink = createR2Sink(bucket(), { tenant: 't', publicBaseUrl: 'https://cdn.example' });
+    const interact = vi.fn().mockResolvedValue({ id: 'v1_image', images: [{ base64: PNG, mimeType: 'image/png' }] });
+    const client = hostedClient(sink, {
+      interact,
+      generateVideo: vi.fn().mockResolvedValue({ id: 'v1_video', videos: [{ base64: PNG, mimeType: 'video/mp4' }] }),
+    });
+    const hi = await createTestHarness((s) => registerInteractTools(s, client));
+    await hi.callTool('gemini_interact', { input: 'a red poster' });
+    const hv = await createTestHarness((s) => registerVideoTools(s, client));
+    await hv.callTool('gemini_video_generate', { prompt: 'a drifting balloon' });
+    await hv.close();
+
+    client.session.lastInteractionId = undefined; // the restart
+    await hi.callTool('gemini_interact', { input: 'make it blue', continue_last: true });
+    await hi.close();
+
+    expect(interact.mock.calls[1][0].previousInteractionId).toBe('v1_image');
   });
 
   it('re-anchors a chained 404 on the image that interaction produced', async () => {

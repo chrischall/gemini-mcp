@@ -149,7 +149,7 @@ export interface MediaSink {
    * across a restart, where the in-memory id is gone but the interaction
    * itself is still alive upstream.
    */
-  latestInteractionId?(): Promise<string | undefined>;
+  latestInteractionId?(kind: 'image' | 'video' | 'audio'): Promise<string | undefined>;
   /**
    * One-line, honest description of where the refs point — echoed into the
    * result payload so the caller is never left guessing whether it got a path,
@@ -225,6 +225,15 @@ export interface RecentMedia {
  */
 export interface MediaSidecar {
   interaction_id?: string;
+  /**
+   * Which tool's chain this id belongs to.
+   *
+   * Load-bearing, not descriptive: `gemini_interact`'s `continue_last` reads
+   * the newest recorded id, and video and music write records too. Without the
+   * kind it could resume an omni interaction, or a Lyria one — where a chained
+   * call is a documented 400.
+   */
+  kind?: 'image' | 'video' | 'audio';
   prompt?: string;
   model?: string;
   /** ISO timestamp, filled in by the sink. */
@@ -312,8 +321,13 @@ const KEY_PREFIX_DEFAULT = 'gen';
  * How many listing pages one `listRecent` call will walk. A listing walk is
  * unbounded work and this runs on a tool call, so it is capped — and the cap
  * is REPORTED (see `listRecentPage`) rather than silently truncating.
+ *
+ * Doubled when sidecar records joined the same prefix: each generation now
+ * occupies two objects, so the old budget reached half as many of them.
+ * Reporting `truncated` sooner is not free — it is what sends someone to re-pay
+ * for an image that is sitting right there.
  */
-const MAX_LIST_PAGES = 10;
+const MAX_LIST_PAGES = 20;
 
 /**
  * Split a stored key back into the day it was written and the name it was asked
@@ -449,8 +463,8 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
         // fails to write must not fail the image it describes.
       }
     },
-    async latestInteractionId() {
-      return (await scanSidecars(() => true))?.record.interaction_id;
+    async latestInteractionId(kind) {
+      return newestInteractionId(kind);
     },
     async findByInteraction(interactionId) {
       const wanted = interactionId.trim();
@@ -506,6 +520,10 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
   async function walk(
     { sinceDay }: { sinceDay?: string },
   ): Promise<{ entries: RecentMedia[]; sidecarKeys: Set<string>; truncated: boolean; scannedPages: number }> {
+    // A put-only bucket is a supported shape. Answering empty lets the CALLER
+    // raise its own actionable error; asserting `bucket.list!` here threw a
+    // TypeError out of the sink instead.
+    if (!bucket.list) return { entries: [], sidecarKeys: new Set(), truncated: false, scannedPages: 0 };
     // Scoped at the STORE, not filtered afterwards: asking only for our own
     // prefix means another account's keys are never in hand to leak by a
     // filtering mistake.
@@ -576,7 +594,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
    *
    * Lazy on purpose. Reusing the listing would read every record on the page to
    * answer a question that is nearly always settled by the first — a chain
-   * being continued or re-anchored is the previous turn.
+   * being re-anchored is the previous turn.
    */
   async function scanSidecars(
     accept: (record: MediaSidecar) => boolean,
@@ -590,6 +608,42 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       if (record?.interaction_id && accept(record)) return { entry, record };
     }
     return undefined;
+  }
+
+  /**
+   * The most recent interaction id of a given kind, by the record's OWN
+   * timestamp.
+   *
+   * Key order cannot answer this. Keys sort by day and then by a random id, so
+   * within a day the order is arbitrary — reading "the newest" off it hands
+   * `continue_last` a turn from earlier in the session and silently resumes the
+   * wrong chain. So the newest DAY's records are read (bounded like every other
+   * scan) and compared on `created`.
+   *
+   * A day whose records are all of another kind falls through to the day
+   * before, rather than answering "none": an image chain does not end because
+   * the last thing generated was a video.
+   */
+  async function newestInteractionId(kind: 'image' | 'video' | 'audio'): Promise<string | undefined> {
+    const { entries, sidecarKeys } = await walk({});
+    let reads = 0;
+    let best: { created: string; id: string } | undefined;
+    let bestDay: string | undefined;
+    for (const entry of entries) {
+      // Entries are day-descending, so once a day has produced a match every
+      // later entry is older and cannot beat it.
+      if (bestDay && entry.day < bestDay) break;
+      if (!sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`)) continue;
+      if (++reads > MAX_SIDECAR_READS) break;
+      const record = await readSidecar(entry.key);
+      if (!record?.interaction_id || (record.kind ?? 'image') !== kind) continue;
+      // A record written before `created` existed sorts oldest rather than
+      // winning on an empty string comparison.
+      const created = record.created ?? '';
+      if (!best || created > best.created) best = { created, id: record.interaction_id };
+      bestDay = entry.day;
+    }
+    return best?.id;
   }
 
   /** A stored object's sidecar record, or undefined — never a throw. */

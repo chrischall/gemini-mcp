@@ -111,23 +111,27 @@ describe('hosted sidecars', () => {
     expect(await s.findByInteraction!('v1_missing')).toBeUndefined();
   });
 
-  it('reads records lazily, not one per object on the page', async () => {
+  it('stops at the first match instead of reading every record', async () => {
     // Each record is its OWN object, so "check them all" is a round trip per
-    // item on a tool call. A lookup walks newest-first and stops at the first
-    // match, which is nearly always the previous turn.
+    // item on a tool call. A lookup walks newest-first and stops as soon as it
+    // matches, which for a re-anchor is nearly always the previous turn.
+    // (`latestInteractionId` is the exception and reads the newest day out:
+    // within a day, key order is random, so it has to compare timestamps.)
     const b = bucket();
     const s = sink(b);
     const keys: string[] = [];
     for (const n of ['one', 'two', 'three']) {
       const [stored] = await s.persist([{ base: n, base64: PNG, mimeType: 'image/png' }], {});
-      await s.writeSidecar!(stored.key!, { interaction_id: `v1_${n}` });
+      await s.writeSidecar!(stored.key!, { interaction_id: `v1_${n}`, kind: 'image' });
       keys.push(stored.key!);
     }
     let reads = 0;
     const counting = { ...b, get: async (k: string) => { if (k.endsWith('.json')) reads++; return b.get!(k); } };
     const counted = sink(counting);
-    // Newest first is the last key written, so its record is the first read.
-    await counted.latestInteractionId!();
+    // The first entry the walk reaches is a match, so exactly one record is read.
+    const first = (await counted.listRecent!({ limit: 1 }))[0];
+    reads = 0;
+    await counted.findByInteraction!(first.interactionId!);
     expect(reads).toBe(1);
   });
 
@@ -136,7 +140,7 @@ describe('hosted sidecars', () => {
     const s = sink(b);
     for (let i = 0; i < 60; i++) {
       const [stored] = await s.persist([{ base: `n${i}`, base64: PNG, mimeType: 'image/png' }], {});
-      await s.writeSidecar!(stored.key!, { interaction_id: `v1_${i}` });
+      await s.writeSidecar!(stored.key!, { interaction_id: `v1_${i}`, kind: 'image' });
     }
     let reads = 0;
     const counting = { ...b, get: async (k: string) => { if (k.endsWith('.json')) reads++; return b.get!(k); } };
@@ -145,12 +149,89 @@ describe('hosted sidecars', () => {
 
     // And a HIT reads each record once: the scan hands the one it is holding to
     // the decorator rather than fetching the same object twice. Asked for the
-    // newest — the first the scan looks at — that is exactly one read.
+    // first entry the walk reaches, that is exactly one read.
     const s2 = sink(counting);
-    const newest = (await s2.latestInteractionId!())!;
+    const first = (await s2.listRecent!({ limit: 1 }))[0];
     reads = 0;
-    expect(await s2.findByInteraction!(newest)).toBeDefined();
+    expect(await s2.findByInteraction!(first.interactionId!)).toBeDefined();
     expect(reads).toBe(1);
+  });
+
+  it('picks the newest record by its timestamp, not by key order', async () => {
+    // Keys sort by day, then by a RANDOM id — so within a day, key order is
+    // arbitrary. Reading "the newest" off that order hands continue_last a
+    // turn from earlier in the session, silently resuming the wrong chain.
+    const b = bucket();
+    let clock = Date.parse('2026-09-09T10:00:00Z');
+    const s = createR2Sink(b, {
+      tenant: 't',
+      publicBaseUrl: 'https://cdn.example',
+      now: () => new Date(clock),
+      // Descending ids, so key order is the exact REVERSE of write order.
+      randomId: () => `id${String(900 - Math.floor((clock - Date.parse('2026-09-09T10:00:00Z')) / 1000)).padStart(4, '0')}`,
+    });
+    for (const id of ['v1_first', 'v1_second', 'v1_third']) {
+      const [stored] = await s.persist([{ base: id, base64: PNG, mimeType: 'image/png' }], {});
+      await s.writeSidecar!(stored.key!, { interaction_id: id, kind: 'image' });
+      clock += 60_000;
+    }
+    expect(await s.latestInteractionId!('image')).toBe('v1_third');
+  });
+
+  it('keeps video and music ids out of the image chain', async () => {
+    // gemini_interact's continue_last reads this. A chained Lyria call is a
+    // documented 400, so handing it a music id turns a convenience into a
+    // guaranteed failure — and a video id would resume the wrong medium.
+    const b = bucket();
+    let clock = Date.parse('2026-09-09T10:00:00Z');
+    const s = createR2Sink(b, { tenant: 't', publicBaseUrl: 'https://cdn.example', now: () => new Date(clock) });
+    const [img] = await s.persist([{ base: 'poster', base64: PNG, mimeType: 'image/png' }], {});
+    await s.writeSidecar!(img.key!, { interaction_id: 'v1_image', kind: 'image' });
+    clock += 60_000;
+    const [clip] = await s.persist([{ base: 'clip', base64: PNG, mimeType: 'video/mp4' }], {});
+    await s.writeSidecar!(clip.key!, { interaction_id: 'v1_video', kind: 'video' });
+
+    expect(await s.latestInteractionId!('image')).toBe('v1_image');
+    expect(await s.latestInteractionId!('video')).toBe('v1_video');
+  });
+
+  it('answers cleanly on a bucket that cannot list', async () => {
+    // A put-only bucket is a supported shape (tests use one). A lookup must
+    // come back empty so the caller raises its own actionable error, rather
+    // than throwing a TypeError from inside the sink.
+    const putOnly = { put: async () => {} } as unknown as MediaBucket;
+    const s = createR2Sink(putOnly, { tenant: 't' });
+    await expect(s.latestInteractionId!('image')).resolves.toBeUndefined();
+    await expect(s.findByInteraction!('v1_x')).resolves.toBeUndefined();
+  });
+
+  it('reaches as many generations as it did before records shared the prefix', async () => {
+    // Sidecars land in the same listing as their media, so a fixed page budget
+    // reaches roughly half as many generations. The budget moved with it —
+    // reporting `truncated` sooner would send someone to re-pay for an image
+    // that is right there.
+    const b = bucket();
+    const s = createR2Sink(b, { tenant: 't', publicBaseUrl: 'https://cdn.example' });
+    for (let i = 0; i < 60; i++) {
+      const [stored] = await s.persist([{ base: `n${String(i).padStart(2, '0')}`, base64: PNG, mimeType: 'image/png' }], {});
+      await s.writeSidecar!(stored.key!, { interaction_id: `v1_${i}`, kind: 'image' });
+    }
+    // A store that hands back 10 objects per page: 120 objects is 12 pages of
+    // media+record pairs, past the budget of 10 that covered 100 media alone.
+    const paged: MediaBucket = {
+      ...b,
+      list: async ({ prefix, cursor }) => {
+        const keys = [...(b as unknown as { objects: Map<string, unknown> }).objects.keys()]
+          .filter((k) => !prefix || k.startsWith(prefix)).sort();
+        const start = cursor ? keys.indexOf(cursor) : 0;
+        const slice = keys.slice(start, start + 10);
+        const next = keys[start + 10];
+        return { objects: slice.map((key) => ({ key })), truncated: Boolean(next), cursor: next };
+      },
+    };
+    const page = await createR2Sink(paged, { tenant: 't', publicBaseUrl: 'https://cdn.example' }).listRecentPage!({ limit: 60 });
+    expect(page.media).toHaveLength(60);
+    expect(page.truncated).toBe(false);
   });
 
   it('never throws when the store misbehaves — recovery is best-effort', async () => {

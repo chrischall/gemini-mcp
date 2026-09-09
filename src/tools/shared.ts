@@ -629,10 +629,17 @@ export async function emitMedia(
   // as its master. Best-effort inside the sink, which never throws.
   const record: MediaSidecar = {
     ...opts.sidecar,
+    // The kind is what keeps the three chains apart. `gemini_interact`'s
+    // continue_last reads the newest recorded id, and video and music write
+    // records too — without this it could resume an omni interaction, or a
+    // Lyria one, where a chained call is a documented 400.
+    kind,
     ...(typeof meta?.interaction_id === 'string' ? { interaction_id: meta.interaction_id } : {}),
     ...(typeof meta?.model === 'string' ? { model: meta.model } : {}),
   };
-  if (!sink.persistsFiles && sink.writeSidecar && Object.keys(record).length > 0) {
+  // `kind` alone is not worth an object — a record earns its place by carrying
+  // something a later caller can act on or recognise.
+  if (!sink.persistsFiles && sink.writeSidecar && (record.interaction_id || record.prompt)) {
     for (const p of persisted) if (p.key) await sink.writeSidecar(p.key, record);
   }
   // Note a downgraded inline-video request so the caller isn't left wondering.

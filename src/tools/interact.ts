@@ -199,7 +199,10 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           // the store — so a restart no longer ends a chain on either.
           previousInteractionId = onDisk
             ? await latestInteractionId(resolveOutputDir(args.output_dir))
-            : await client.mediaSink?.latestInteractionId?.();
+            // 'image' explicitly: video and music write records too, and a
+            // chained Lyria call is a documented 400. Resuming the wrong
+            // medium's chain is worse than not resuming.
+            : await client.mediaSink?.latestInteractionId?.('image');
           continuedFromSidecar = previousInteractionId !== undefined;
         }
         if (!previousInteractionId) {
