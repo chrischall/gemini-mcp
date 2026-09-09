@@ -75,15 +75,49 @@ describe('dispatch — in-flight fingerprint dedup', () => {
 });
 
 describe('dispatch — idempotency_key', () => {
-  it('reuses a recently-completed result for the same key (even if fingerprint differs)', async () => {
+  it('reuses a recently-completed result for the same key and the same request', async () => {
     let calls = 0;
     const work = () => { calls++; return Promise.resolve(textResultOf({ images: ['a.png'], model: 'm' })); };
     await registry.dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
-    const r2 = await registry.dispatch({ toolName: 't', fingerprint: 'fp2', idempotencyKey: 'k' }, work);
+    const r2 = await registry.dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
     expect(calls).toBe(1);
     const m = metaOf(r2);
     expect(m.reused).toBe(true);
     expect(typeof m.reused_job_id).toBe('string');
+  });
+
+  it('does NOT reuse across a different request under the same key', async () => {
+    // An idempotency_key is a habit as often as a promise — "1", "test",
+    // "retry". Replaying on the key alone hands back a DIFFERENT prompt's
+    // image and labels it a cache hit. The durable window has always required
+    // the fingerprint to match; this is the in-memory window doing the same.
+    let calls = 0;
+    const work = () => { calls++; return Promise.resolve(textResultOf({ images: ['a.png'] })); };
+    await registry.dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
+    const r2 = await registry.dispatch({ toolName: 't', fingerprint: 'fp2', idempotencyKey: 'k' }, work);
+    expect(calls).toBe(2);
+    expect(metaOf(r2).reused).toBeUndefined();
+  });
+
+  it('keeps replaying the first request after the key is reused for a second', async () => {
+    // Reusing "k" for a new prompt must not cost the first one its replay: a
+    // retry of THAT call still has to be free, or the habit of reusing a key
+    // turns every earlier retry into a second charge.
+    let calls = 0;
+    const work = () => { calls++; return Promise.resolve(textResultOf({ images: ['a.png'] })); };
+    await registry.dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
+    await registry.dispatch({ toolName: 't', fingerprint: 'fp2', idempotencyKey: 'k' }, work);
+    const again = await registry.dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
+    expect(calls).toBe(2);
+    expect(metaOf(again).reused).toBe(true);
+  });
+
+  it('scopes a key to one tool, so two tools sharing "1" do not collide', async () => {
+    let calls = 0;
+    const work = () => { calls++; return Promise.resolve(textResultOf({ images: ['a.png'] })); };
+    await registry.dispatch({ toolName: 'gemini_image_generate', fingerprint: 'fp1', idempotencyKey: '1' }, work);
+    await registry.dispatch({ toolName: 'gemini_video_generate', fingerprint: 'fp2', idempotencyKey: '1' }, work);
+    expect(calls).toBe(2);
   });
 
   it('does not reuse a failed job by key — the retry runs again', async () => {
@@ -98,9 +132,11 @@ describe('dispatch — idempotency_key', () => {
     vi.useFakeTimers();
     let calls = 0;
     const work = () => { calls++; return Promise.resolve(textResultOf({ images: ['a.png'] })); };
+    // SAME fingerprint both times, so what is being tested is the expiry and
+    // not the request differing.
     await registry.dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
     await vi.advanceTimersByTimeAsync(11 * 60 * 1000); // past the 10-min TTL
-    await registry.dispatch({ toolName: 't', fingerprint: 'fp2', idempotencyKey: 'k' }, work);
+    await registry.dispatch({ toolName: 't', fingerprint: 'fp1', idempotencyKey: 'k' }, work);
     expect(calls).toBe(2);
   });
 });
