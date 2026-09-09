@@ -5,7 +5,7 @@ import type { GeminiClient, GeneratedImage, GeneratedMedia, ImageInput } from '.
 import { resolveVideoPath, videoMimeType } from '../images.js';
 import { IMAGE_URL_MAX_BYTES, IMAGE_INLINE_MAX_BYTES } from '../fetch-image.js';
 import { bytesToBase64, base64ToBytes, wholeMb } from '../bytes.js';
-import { createDiskSink, type MediaSink } from '../storage/media.js';
+import { createDiskSink, type MediaSink, type MediaSidecar } from '../storage/media.js';
 import { downloadFilename } from '../media-name.js';
 import { buildZip } from '../zip.js';
 
@@ -600,7 +600,7 @@ export interface NamedMedia { media: GeneratedMedia; base: string; }
 export async function emitMedia(
   named: NamedMedia[],
   kind: 'image' | 'video' | 'audio',
-  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink; urlTtlMs?: number },
+  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink; urlTtlMs?: number; sidecar?: MediaSidecar },
   meta?: Record<string, unknown>,
   onWritten?: (paths: string[]) => void | Promise<void>,
 ): Promise<CallToolResult> {
@@ -622,6 +622,26 @@ export async function emitMedia(
   // refs are real files. On a sink with no filesystem there is nothing to sit
   // next to, so it is skipped rather than handed URLs it would misinterpret.
   if (sink.persistsFiles) await onWritten?.(refs);
+  // The hosted twin of the `<image>.json` sidecar `onWritten` writes on disk.
+  // Same purpose: the interaction id has to outlive the response, or a dropped
+  // turn ends the chain and a 404 has nothing to re-anchor on. Written for
+  // EVERY stored object, since a set's scenes are as worth identifying later
+  // as its master. Best-effort inside the sink, which never throws.
+  const record: MediaSidecar = {
+    ...opts.sidecar,
+    // The kind is what keeps the three chains apart. `gemini_interact`'s
+    // continue_last reads the newest recorded id, and video and music write
+    // records too — without this it could resume an omni interaction, or a
+    // Lyria one, where a chained call is a documented 400.
+    kind,
+    ...(typeof meta?.interaction_id === 'string' ? { interaction_id: meta.interaction_id } : {}),
+    ...(typeof meta?.model === 'string' ? { model: meta.model } : {}),
+  };
+  // `kind` alone is not worth an object — a record earns its place by carrying
+  // something a later caller can act on or recognise.
+  if (!sink.persistsFiles && sink.writeSidecar && (record.interaction_id || record.prompt)) {
+    for (const p of persisted) if (p.key) await sink.writeSidecar(p.key, record);
+  }
   // Note a downgraded inline-video request so the caller isn't left wondering.
   const note = opts.inline && kind === 'video' ? { inline_unsupported: 'video has no MCP inline content type — written to disk instead' } : {};
   // Say where the bytes actually went whenever they are NOT local paths — the
@@ -668,7 +688,7 @@ export async function emitMedia(
  */
 export async function emit(
   named: NamedImage[],
-  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink; urlTtlMs?: number },
+  opts: { inline?: boolean; output_dir?: string; sink?: MediaSink; urlTtlMs?: number; sidecar?: MediaSidecar },
   meta?: Record<string, unknown>,
   onWritten?: (paths: string[]) => void | Promise<void>,
 ): Promise<CallToolResult> {

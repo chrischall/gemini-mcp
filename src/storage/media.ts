@@ -121,6 +121,36 @@ export interface MediaSink {
    */
   listRecentPage?(opts: { limit?: number; sinceDay?: string }): Promise<{ media: RecentMedia[]; truncated: boolean; scannedPages: number }>;
   /**
+   * Record what produced a stored object, beside the object itself.
+   *
+   * The hosted answer to the `<image>.json` sidecar. On disk that file is what
+   * makes a lost response survivable — the interaction id outlives the
+   * response, so a chain can be continued and a chained 404 can be re-anchored
+   * on the image the dead interaction actually made. Without it the hosted
+   * deployment loses the id the moment a response is dropped, which is the
+   * failure the disk build was hardened against.
+   *
+   * Best-effort and never throws: a record that fails to write must not fail
+   * the generation it describes. Absent on the disk sink, which writes real
+   * sidecars through `onWritten` instead.
+   */
+  writeSidecar?(key: string, record: MediaSidecar): Promise<void>;
+  /**
+   * The stored object a given interaction produced, by id.
+   *
+   * Matched on the id ONLY, never "the newest object": re-anchoring an edit on
+   * the wrong picture corrupts it silently, so an unknown id comes back
+   * undefined and the caller rethrows rather than guessing.
+   */
+  findByInteraction?(interactionId: string): Promise<RecentMedia | undefined>;
+  /**
+   * The most recent interaction id this store has a record for — the hosted
+   * twin of `latestInteractionId` over the output dir. Backs `continue_last`
+   * across a restart, where the in-memory id is gone but the interaction
+   * itself is still alive upstream.
+   */
+  latestInteractionId?(kind: 'image' | 'video' | 'audio'): Promise<string | undefined>;
+  /**
    * One-line, honest description of where the refs point — echoed into the
    * result payload so the caller is never left guessing whether it got a path,
    * a fetchable URL, or an opaque object ref. `undefined` for the disk sink,
@@ -182,6 +212,32 @@ export interface RecentMedia {
   /** A freshly-signed, openable link. */
   url?: string;
   expiresAt?: string;
+  /** From the object's sidecar record, when it has one (see MediaSink.writeSidecar). */
+  interactionId?: string;
+  prompt?: string;
+  model?: string;
+  createdAt?: string;
+}
+
+/**
+ * What a hosted sidecar records. The disk build writes the same shape as
+ * `<image>.json`; this is its object-store twin.
+ */
+export interface MediaSidecar {
+  interaction_id?: string;
+  /**
+   * Which tool's chain this id belongs to.
+   *
+   * Load-bearing, not descriptive: `gemini_interact`'s `continue_last` reads
+   * the newest recorded id, and video and music write records too. Without the
+   * kind it could resume an omni interaction, or a Lyria one — where a chained
+   * call is a documented 400.
+   */
+  kind?: 'image' | 'video' | 'audio';
+  prompt?: string;
+  model?: string;
+  /** ISO timestamp, filled in by the sink. */
+  created?: string;
 }
 
 export interface R2SinkOptions {
@@ -265,8 +321,13 @@ const KEY_PREFIX_DEFAULT = 'gen';
  * How many listing pages one `listRecent` call will walk. A listing walk is
  * unbounded work and this runs on a tool call, so it is capped — and the cap
  * is REPORTED (see `listRecentPage`) rather than silently truncating.
+ *
+ * Doubled when sidecar records joined the same prefix: each generation now
+ * occupies two objects, so the old budget reached half as many of them.
+ * Reporting `truncated` sooner is not free — it is what sends someone to re-pay
+ * for an image that is sitting right there.
  */
-const MAX_LIST_PAGES = 10;
+const MAX_LIST_PAGES = 20;
 
 /**
  * Split a stored key back into the day it was written and the name it was asked
@@ -295,6 +356,27 @@ export function safeKeySegment(base: string): string {
     .replace(/^[-.]+|[-.]+$/g, '');
   return cleaned || 'media';
 }
+
+/**
+ * Suffix that turns a media key into its sidecar's key. Beside the object, not
+ * under a prefix of its own, so one retention sweep covers both.
+ */
+const SIDECAR_SUFFIX = '.json';
+
+/**
+ * How many sidecar records a lookup will READ before giving up.
+ *
+ * Deliberately small, and the reason both lookups walk lazily rather than
+ * reusing the listing: a record is a separate object, so "scan the last 200"
+ * means 200 store round trips on a tool call. Newest-first, stopping at the
+ * first match, the common case is one read — the chain being re-anchored is
+ * almost always the previous turn. Only a miss pays the full budget, and a miss
+ * is the error path.
+ */
+const MAX_SIDECAR_READS = 40;
+
+/** Longest prompt a sidecar keeps. Enough to recognise, not to reproduce. */
+const SIDECAR_PROMPT_MAX = 500;
 
 /**
  * The hosted-connector sink: one R2 object per generated item.
@@ -350,43 +432,48 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
     },
     async listRecentPage({ limit = 20, sinceDay } = {}) {
       if (!bucket.list) return { media: [], truncated: false, scannedPages: 0 };
-      // Scoped at the STORE, not filtered afterwards: asking only for our own
-      // prefix means another account's keys are never in hand to leak by a
-      // filtering mistake.
-      const prefix = await ownPrefix();
-      const found: RecentMedia[] = [];
-      let cursor: string | undefined;
-      let truncated = false;
-      let scannedPages = 0;
-      // Bounded: a listing walk is unbounded work, and this runs on a tool call.
-      for (let page = 0; page < MAX_LIST_PAGES; page++) {
-        scannedPages = page + 1;
-        const listed = await bucket.list({ prefix, cursor, limit: 1000 });
-        for (const obj of listed.objects) {
-          const parsed = parseMediaKey(obj.key, prefix);
-          if (!parsed) continue; // not a dated object key — skip, never throw
-          if (sinceDay && parsed.day < sinceDay) continue;
-          found.push({ ...parsed, key: obj.key, ...(obj.size !== undefined ? { sizeBytes: obj.size } : {}) });
-        }
-        if (!listed.truncated || !listed.cursor) break;
-        cursor = listed.cursor;
-        // Ran out of budget with more to read: the answer is a subset, and
-        // must say so rather than passing for the whole picture.
-        if (page === MAX_LIST_PAGES - 1) truncated = true;
+      const { entries, sidecarKeys, truncated, scannedPages } = await walk({ sinceDay });
+      const page = entries.slice(0, limit);
+      // Records are read for the RETURNED page only, never the whole walk: one
+      // per entry is one store round trip, and a listing of twenty must not
+      // become a listing of every object stored this month.
+      const media = await decorate(page, sidecarKeys);
+      return { media, truncated: truncated || entries.length > limit, scannedPages };
+    },
+    /**
+     * `<mediaKey>.json`, deliberately beside the object rather than under a
+     * prefix of its own: the retention sweep that removes the image removes its
+     * record with it, so a sidecar can never outlive the thing it describes.
+     * `parseMediaKey` skips it, so a listing never offers one as media.
+     */
+    async writeSidecar(key, record) {
+      try {
+        if (!(await owned(key))) return;
+        const body = new TextEncoder().encode(JSON.stringify({
+          ...record,
+          // Capped: a record exists to identify a generation later, not to
+          // store the brief. An 8k prompt would put more bytes in metadata than
+          // some images have, on every single object.
+          ...(record.prompt ? { prompt: record.prompt.slice(0, SIDECAR_PROMPT_MAX) } : {}),
+          created: now().toISOString(),
+        }));
+        await bucket.put(`${key}${SIDECAR_SUFFIX}`, body, { httpMetadata: { contentType: 'application/json' } });
+      } catch {
+        // Best-effort by design: the generation is the job, and a record that
+        // fails to write must not fail the image it describes.
       }
-      // Keys sort lexicographically by day, and the id after it is random, so
-      // ordering is by day — which is the honest grain: the store records no
-      // per-object timestamp we could do better with.
-      found.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : a.key < b.key ? 1 : -1));
-      const page = found.slice(0, limit);
-      const expiresAtMs = now().getTime() + ttlMs;
-      const media = await Promise.all(
-        page.map(async (entry) => {
-          const link = await describe(entry.key, expiresAtMs);
-          return { ...entry, ...(link.unavailable ? {} : { url: link.ref, expiresAt: link.expiresAt }) };
-        }),
-      );
-      return { media, truncated: truncated || found.length > limit, scannedPages };
+    },
+    async latestInteractionId(kind) {
+      return newestInteractionId(kind);
+    },
+    async findByInteraction(interactionId) {
+      const wanted = interactionId.trim();
+      if (!wanted) return undefined;
+      const hit = await scanSidecars((record) => record.interaction_id === wanted);
+      // The record the scan already read is passed straight through: re-reading
+      // it to decorate the entry would spend a second round trip on an object
+      // we are holding.
+      return hit ? (await decorate([hit.entry], undefined, hit.record))[0] : undefined;
     },
     async resign(key) {
       if (!(await owned(key))) return undefined;
@@ -416,14 +503,161 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
     note: () =>
       publicBase
         ? 'Generated media was uploaded to R2 and the values above are public URLs (not local file paths) — open or download them directly. ' +
-          'This hosted connector has no filesystem, so `output_dir` is ignored and no <image>.json sidecar is written — capture interaction_id from this result to chain further turns.'
+          'This connector has no filesystem, so `output_dir` is ignored — but the interaction id is recorded beside each image, so continue_last and chain recovery still work.'
         : signedBase
           ? 'Generated media is served by this connector at the signed URLs above — open them in a browser or fetch them with curl; no auth header is needed, the signature is in the link. ' +
             'They expire (see media[].expires_at), and the objects behind them are cleaned up on a retention schedule. ' +
-            'This hosted connector has no filesystem, so `output_dir` is ignored and no <image>.json sidecar is written — capture interaction_id from this result to chain further turns.'
+            'This connector has no filesystem, so `output_dir` is ignored — but the interaction id is recorded beside each image, so continue_last and chain recovery still work.'
           : 'Generated media was stored, but this connector has no public media URL configured and no signing route available, so the values above are bare object keys rather than fetchable links. ' +
             'Set MEDIA_PUBLIC_BASE_URL on the Worker, or pass inline: true to receive the bytes directly.',
   };
+
+  /**
+   * List this account's objects, newest-first, splitting media from the sidecar
+   * records that sit beside them. No record is READ here — that is per-object
+   * work, and both callers want only a slice of it.
+   */
+  async function walk(
+    { sinceDay }: { sinceDay?: string },
+  ): Promise<{ entries: RecentMedia[]; sidecarKeys: Set<string>; truncated: boolean; scannedPages: number }> {
+    // A put-only bucket is a supported shape. Answering empty lets the CALLER
+    // raise its own actionable error; asserting `bucket.list!` here threw a
+    // TypeError out of the sink instead.
+    if (!bucket.list) return { entries: [], sidecarKeys: new Set(), truncated: false, scannedPages: 0 };
+    // Scoped at the STORE, not filtered afterwards: asking only for our own
+    // prefix means another account's keys are never in hand to leak by a
+    // filtering mistake.
+    const prefix = await ownPrefix();
+    const found: RecentMedia[] = [];
+    const sidecarKeys = new Set<string>();
+    let cursor: string | undefined;
+    let truncated = false;
+    let scannedPages = 0;
+    // Bounded: a listing walk is unbounded work, and this runs on a tool call.
+    for (let page = 0; page < MAX_LIST_PAGES; page++) {
+      scannedPages = page + 1;
+      const listed = await bucket.list!({ prefix, cursor, limit: 1000 });
+      for (const obj of listed.objects) {
+        // A sidecar shares its media's key plus a suffix, so it lands in this
+        // same listing. It is metadata, not a generation: offering one as
+        // "recent media" would hand back a JSON blob to look at.
+        if (obj.key.endsWith(SIDECAR_SUFFIX)) { sidecarKeys.add(obj.key); continue; }
+        const parsed = parseMediaKey(obj.key, prefix);
+        if (!parsed) continue; // not a dated object key — skip, never throw
+        if (sinceDay && parsed.day < sinceDay) continue;
+        found.push({ ...parsed, key: obj.key, ...(obj.size !== undefined ? { sizeBytes: obj.size } : {}) });
+      }
+      if (!listed.truncated || !listed.cursor) break;
+      cursor = listed.cursor;
+      // Ran out of budget with more to read: the answer is a subset, and must
+      // say so rather than passing for the whole picture.
+      if (page === MAX_LIST_PAGES - 1) truncated = true;
+    }
+    // Keys sort lexicographically by day, and the id after it is random, so
+    // ordering is by day — which is the honest grain: the store records no
+    // per-object timestamp we could do better with.
+    found.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : a.key < b.key ? 1 : -1));
+    return { entries: found, sidecarKeys, truncated, scannedPages };
+  }
+
+  /**
+   * Attach a fresh link, and the sidecar record where one exists.
+   *
+   * `known` short-circuits the read for a caller that is already holding the
+   * record (see findByInteraction).
+   */
+  async function decorate(entries: RecentMedia[], sidecarKeys?: Set<string>, known?: MediaSidecar): Promise<RecentMedia[]> {
+    const expiresAtMs = now().getTime() + ttlMs;
+    return Promise.all(
+      entries.map(async (entry) => {
+        const link = await describe(entry.key, expiresAtMs);
+        // Only where the walk actually saw a record — media with none (anything
+        // generated before sidecars existed, and anything whose write failed)
+        // keeps its place and simply carries no metadata.
+        const has = sidecarKeys ? sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`) : true;
+        const record = known ?? (has ? await readSidecar(entry.key) : undefined);
+        return {
+          ...entry,
+          ...(link.unavailable ? {} : { url: link.ref, expiresAt: link.expiresAt }),
+          ...(record?.interaction_id ? { interactionId: record.interaction_id } : {}),
+          ...(record?.prompt ? { prompt: record.prompt } : {}),
+          ...(record?.model ? { model: record.model } : {}),
+          ...(record?.created ? { createdAt: record.created } : {}),
+        };
+      }),
+    );
+  }
+
+  /**
+   * Walk stored objects newest-first, reading at most {@link MAX_SIDECAR_READS}
+   * records, and stop at the first one the predicate accepts.
+   *
+   * Lazy on purpose. Reusing the listing would read every record on the page to
+   * answer a question that is nearly always settled by the first — a chain
+   * being re-anchored is the previous turn.
+   */
+  async function scanSidecars(
+    accept: (record: MediaSidecar) => boolean,
+  ): Promise<{ entry: RecentMedia; record: MediaSidecar } | undefined> {
+    const { entries, sidecarKeys } = await walk({});
+    let reads = 0;
+    for (const entry of entries) {
+      if (!sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`)) continue;
+      if (++reads > MAX_SIDECAR_READS) return undefined;
+      const record = await readSidecar(entry.key);
+      if (record?.interaction_id && accept(record)) return { entry, record };
+    }
+    return undefined;
+  }
+
+  /**
+   * The most recent interaction id of a given kind, by the record's OWN
+   * timestamp.
+   *
+   * Key order cannot answer this. Keys sort by day and then by a random id, so
+   * within a day the order is arbitrary — reading "the newest" off it hands
+   * `continue_last` a turn from earlier in the session and silently resumes the
+   * wrong chain. So the newest DAY's records are read (bounded like every other
+   * scan) and compared on `created`.
+   *
+   * A day whose records are all of another kind falls through to the day
+   * before, rather than answering "none": an image chain does not end because
+   * the last thing generated was a video.
+   */
+  async function newestInteractionId(kind: 'image' | 'video' | 'audio'): Promise<string | undefined> {
+    const { entries, sidecarKeys } = await walk({});
+    let reads = 0;
+    let best: { created: string; id: string } | undefined;
+    let bestDay: string | undefined;
+    for (const entry of entries) {
+      // Entries are day-descending, so once a day has produced a match every
+      // later entry is older and cannot beat it.
+      if (bestDay && entry.day < bestDay) break;
+      if (!sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`)) continue;
+      if (++reads > MAX_SIDECAR_READS) break;
+      const record = await readSidecar(entry.key);
+      if (!record?.interaction_id || (record.kind ?? 'image') !== kind) continue;
+      // A record written before `created` existed sorts oldest rather than
+      // winning on an empty string comparison.
+      const created = record.created ?? '';
+      if (!best || created > best.created) best = { created, id: record.interaction_id };
+      bestDay = entry.day;
+    }
+    return best?.id;
+  }
+
+  /** A stored object's sidecar record, or undefined — never a throw. */
+  async function readSidecar(key: string): Promise<MediaSidecar | undefined> {
+    try {
+      const obj = await bucket.get?.(`${key}${SIDECAR_SUFFIX}`);
+      if (!obj) return undefined;
+      return JSON.parse(new TextDecoder().decode(new Uint8Array(await obj.arrayBuffer()))) as MediaSidecar;
+    } catch {
+      // A malformed or unreadable record is the same as none: this decorates a
+      // listing, and a listing that throws is worse than one without prompts.
+      return undefined;
+    }
+  }
 
   /** One stored object → the ref the caller sees, plus its key and expiry. */
   async function describe(key: string, expiresAtMs: number): Promise<PersistedMedia> {

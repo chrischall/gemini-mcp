@@ -95,8 +95,12 @@ describe('media sink threading', () => {
     );
     await h.close();
 
-    expect(b.keys).toHaveLength(1);
-    expect((body.images as string[])[0]).toBe(`https://media.example.com/${b.keys[0]}`);
+    // Two objects: the image, and the sidecar record beside it that makes a
+    // later listing identifiable (prompt, model, interaction id).
+    const mediaKeys = b.keys.filter((k) => !k.endsWith('.json'));
+    expect(mediaKeys).toHaveLength(1);
+    expect(b.keys.filter((k) => k.endsWith('.json'))).toHaveLength(1);
+    expect((body.images as string[])[0]).toBe(`https://media.example.com/${mediaKeys[0]}`);
     expect(body.storage).toBe('r2');
     expect(String(body.storage_note)).toMatch(/not local file paths|NOT fetchable/i);
   });
@@ -154,7 +158,7 @@ describe('sidecars are gated on a real filesystem', () => {
     expect(existsSync(`${body.images[0]}.json`)).toBe(true);
   });
 
-  it('does NOT claim a sidecar on R2, and says so instead', async () => {
+  it('does not write an <image>.json on R2, and says what it does instead', async () => {
     const b = bucket();
     const client = stub(createR2Sink(b, { publicBaseUrl: 'https://media.example.com' }), {
       interact: vi.fn().mockResolvedValue({ id: 'interactions/abc', images: [{ base64: PNG, mimeType: 'image/png' }] }),
@@ -165,10 +169,11 @@ describe('sidecars are gated on a real filesystem', () => {
 
     expect(body.interaction_id).toBe('interactions/abc');
     expect(body.sidecar_error).toBeUndefined();
-    // The result must not tell the caller to go look for a sidecar that no
-    // filesystem exists to hold.
-    expect(String(body.storage_note)).toMatch(/no <image>\.json sidecar/i);
-    expect(String(body.hint)).not.toMatch(/sidecar/i);
+    // No output dir here, and no file to go looking for — but the recovery the
+    // sidecar existed FOR is real now, stored beside the image, so the note has
+    // to say that rather than "capture the id yourself".
+    expect(String(body.storage_note)).toMatch(/output_dir` is ignored/);
+    expect(String(body.storage_note)).toMatch(/continue_last and chain recovery still work/);
   });
 
   it('does not send a caller to an endpoint that no longer exists', async () => {
@@ -202,7 +207,7 @@ describe('sidecars are gated on a real filesystem', () => {
     await h.close();
   });
 
-  it('does not advertise sidecar recovery in the gemini_interact DESCRIPTION on R2', () => {
+  it('describes the recovery each deployment actually has', () => {
     const diskDesc = describeTool(registerInteractTools as never, stub(createDiskSink()), 'gemini_interact');
     const hostedDesc = describeTool(registerInteractTools as never, stub(createR2Sink(bucket(), {})), 'gemini_interact');
 
@@ -210,8 +215,11 @@ describe('sidecars are gated on a real filesystem', () => {
     // description is a standing token cost and gets reworded as it is trimmed.
     expect(diskDesc).toMatch(/`<image>\.json` sidecar/);
     expect(diskDesc).toMatch(/land in the output dir/);
-    expect(hostedDesc).not.toMatch(/land in the output dir|re-anchored on the prior output/);
-    expect(hostedDesc).toMatch(/no output dir, no sidecar/);
+    // Hosted promises the same two recoveries without promising a file.
+    expect(hostedDesc).not.toMatch(/`<image>\.json`|land in the output dir/);
+    expect(hostedDesc).toMatch(/no output dir/);
+    expect(hostedDesc).toMatch(/continue_last/);
+    expect(hostedDesc).toMatch(/re-anchored/);
   });
 
   it('omits the sidecar/disk-recovery advice from timeout_risk when there is no disk', async () => {

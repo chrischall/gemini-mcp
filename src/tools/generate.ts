@@ -151,7 +151,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         meta.hint = REFINE_HINT;
         const risk = timeoutRiskHint({ model, imageSize: args.image_size, count, persistsFiles: client.mediaSink?.persistsFiles });
         if (risk) meta.timeout_risk = risk;
-        return emit(named, { ...args, sink: client.mediaSink }, meta);
+        return emit(named, { ...args, sink: client.mediaSink, sidecar: { prompt: args.prompt } }, meta);
       });
     },
   );
@@ -231,7 +231,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         meta.hint = REFINE_HINT;
         const risk = timeoutRiskHint({ model, imageSize: args.image_size, persistsFiles: client.mediaSink?.persistsFiles });
         if (risk) meta.timeout_risk = risk;
-        return emit([{ image: img, base: slug }], { ...args, sink: client.mediaSink }, meta);
+        return emit([{ image: img, base: slug }], { ...args, sink: client.mediaSink, sidecar: { prompt: args.prompt } }, meta);
       });
     },
   );

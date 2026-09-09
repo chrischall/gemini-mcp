@@ -94,7 +94,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
           media,
           base: r.audios.length > 1 ? `${slug}-${String(i + 1).padStart(2, '0')}` : slug,
         }));
-        return emitMedia(named, 'audio', { inline: args.inline, output_dir: args.output_dir, sink: client.mediaSink }, meta);
+        return emitMedia(named, 'audio', { inline: args.inline, output_dir: args.output_dir, sink: client.mediaSink, sidecar: { prompt: args.prompt } }, meta);
       });
     },
   );

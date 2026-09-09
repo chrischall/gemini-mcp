@@ -390,6 +390,13 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
             r2_key: m.key,
             day: m.day,
             name: m.name,
+            // From the object's sidecar record, where it has one. This is what
+            // makes a listing identifiable rather than a wall of keys: which
+            // turn produced it, what was asked for, and the id to chain from.
+            ...(m.interactionId ? { interaction_id: m.interactionId } : {}),
+            ...(m.prompt ? { prompt: m.prompt } : {}),
+            ...(m.model ? { model: m.model } : {}),
+            ...(m.createdAt ? { created_at: m.createdAt } : {}),
             ...(m.sizeBytes !== undefined ? { size_bytes: m.sizeBytes } : {}),
             ...(m.url ? { url: m.url, curl_hint: `curl -sS -o ${downloadFilename(m.key)} "${m.url}"` } : {}),
             ...(m.expiresAt ? { expires_at: m.expiresAt } : {}),
