@@ -122,6 +122,10 @@ swept on a retention schedule. The `r2_key` is the durable handle for that windo
 
 - **`gemini_sign_media`** (hosted deployments only) mints a fresh signed URL from an `r2_key`,
   so an expired link never forces you to re-generate — and re-pay for — the image.
+- **The interaction id is stored beside each image**, so a hosted deployment recovers a lost
+  turn the way the local one does: `continue_last: true` survives a restart, a chained 404 is
+  re-anchored on the image that interaction produced, and `gemini_list_recent_media` shows the
+  prompt, model and interaction id for every stored object rather than a wall of keys.
 - **`gemini_view_media`** (hosted deployments only) returns the image itself, inline, from an
   `r2_key`. A link is not something a model can look at, so without this a generate → refine
   loop runs blind. It is a separate call rather than bytes on every result: you pay image
