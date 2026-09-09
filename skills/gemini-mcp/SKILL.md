@@ -118,6 +118,9 @@ not an error.
   any number of calls until then.
 - On stdio, an `images` path referenced **more than once in a session** is auto-uploaded to the
   Files API (keyed on path + mtime + size) so the bytes stop being re-sent.
+- `images_base64` is uploaded on the **first** sighting, not the second — the tokens are already
+  spent by then. The result reports it under `image_inputs.base64_uploaded[].file_uri`: pass that
+  to `images_file_uris` on the next call instead of pasting the bytes again.
 
 ### Files API
 | Tool | Description |
@@ -217,7 +220,8 @@ gemini_image_edit(
 → returns path to the edited image
 ```
 `images_base64` is for bytes you actually have — a file you `Read`/encode, a URL
-you fetch, or a `data:` URI the user pastes as **text**.
+you fetch, or a `data:` URI the user pastes as **text**. Send them once: the result's
+`image_inputs.base64_uploaded[].file_uri` is a `files/<id>` to reuse via `images_file_uris`.
 
 **Iterate on ONE image conversationally (multi-turn):**
 ```

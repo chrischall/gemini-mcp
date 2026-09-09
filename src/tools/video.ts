@@ -5,7 +5,7 @@ import type { GeminiClient } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
-import { emitMedia, reportShape, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
+import { emitMedia, reportShape, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedMedia} from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { attachCost } from '../pricing.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
@@ -55,7 +55,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         images: z.array(z.string().min(1)).optional().describe('Reference image path(s) for image_to_video / reference_to_video'),
         images_url: imagesUrlSchema('Reference stills'),
         images_file_uris: imagesFileUrisSchema('Reference stills'),
-        images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, which keep image bytes out of the conversation'),
+        images_base64: imagesBase64Schema(),
         from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS clipboard as a reference'),
         filename: z.string().optional().describe('Base filename for the output video (extension stripped; default: slugified prompt)'),
         output_dir: z.string().optional().describe('Directory to write the video to (default: $GEMINI_OUTPUT_DIR or cwd)'),

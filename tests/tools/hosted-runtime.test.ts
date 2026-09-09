@@ -175,9 +175,12 @@ describe('sidecars are gated on a real filesystem', () => {
     const diskDesc = describeTool(registerInteractTools as never, stub(createDiskSink()), 'gemini_interact');
     const hostedDesc = describeTool(registerInteractTools as never, stub(createR2Sink(bucket(), {})), 'gemini_interact');
 
-    expect(diskDesc).toMatch(/sidecar recording its interaction id land in the output dir/);
-    expect(hostedDesc).not.toMatch(/land in the output dir|re-anchors itself/);
-    expect(hostedDesc).toMatch(/no output dir and no `<image>\.json` sidecar/);
+    // Matched on what each branch PROMISES, not on its exact wording — the
+    // description is a standing token cost and gets reworded as it is trimmed.
+    expect(diskDesc).toMatch(/`<image>\.json` sidecar/);
+    expect(diskDesc).toMatch(/land in the output dir/);
+    expect(hostedDesc).not.toMatch(/land in the output dir|re-anchored on the prior output/);
+    expect(hostedDesc).toMatch(/no output dir, no sidecar/);
   });
 
   it('omits the sidecar/disk-recovery advice from timeout_risk when there is no disk', async () => {

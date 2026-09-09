@@ -104,8 +104,9 @@ src/
                   #   limit on the first real photo)
   inputs.ts       # resolveImageInputs() — THE funnel: paths / base64 / images_url /
                   #   images_file_uris / clipboard → one ImageInput[]. Owns the
-                  #   fetch-once-per-call dedup, the >6MB → Files API promotion, and
-                  #   the stdio "referenced twice → upload once" cache
+                  #   fetch-once-per-call dedup, the >6MB → Files API promotion, the
+                  #   stdio "referenced twice → upload once" cache, and the base64
+                  #   FIRST-sighting upload (see Token cost below)
   fetch-image.ts  # fetchRemoteImage() — server-side URL fetch for images_url.
                   #   https-only, private/loopback/link-local refused, EVERY redirect
                   #   hop revalidated, streamed byte cap. Pure; no module-scope I/O
@@ -479,6 +480,27 @@ Two things to keep right:
   `tests/blob-store.test.ts` restates them independently so a drift fails here
   rather than as a 403 in production. They are also the shapes the retired
   Worker used, which is why links minted before the move still resolve.
+
+## Token cost
+
+The tool surface is a standing cost on every request: `tools/list` for the 13
+stdio tools is ~43.5KB of JSON, ~10.9k tokens, carried before the conversation
+says anything. `tests/tool-surface-budget.test.ts` pins a ceiling so it cannot
+drift back up a paragraph at a time (it was 47.5KB / ~11.9k before the trim
+that added the test). Raising the ceiling is fine and deliberate; growing into
+it by accident is what the test stops. **Rationale belongs in the doc comment
+above a schema, not in its `.describe()`** — one is free, the other is billed
+on every call, on every tool that shares it.
+
+**`images_base64` uploads on the FIRST sighting, unlike every other input.** A
+local path stays inline until its second reference, because the first one is
+free. Base64 is the opposite: the caller spent ~14k tokens per photo emitting
+it before the server ever saw it, so waiting for a second sighting means
+waiting until the cost has been paid twice. `resolveBase64` uploads
+immediately, caches by content digest (so the same photo across calls uploads
+once), and reports the `files/<id>` back under `image_inputs.base64_uploaded`
+— which is what the schema description tells the caller to reuse. Best-effort:
+an upload failure falls back to inline rather than failing the generation.
 
 ## Conventions
 

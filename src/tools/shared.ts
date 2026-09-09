@@ -85,10 +85,8 @@ export const orientationSchema = z
   .enum(ORIENTATIONS)
   .optional()
   .describe(
-    'Shape of the output, in plain terms: "landscape" (wide, 16:9), "portrait" (tall, 9:16) or "square" (1:1). ' +
-      'Use this for a request phrased as landscape/portrait/vertical/horizontal. For any other proportion — ' +
-      '35mm photo (3:2), print (4:3), social (4:5), cinematic (21:9) — name it with aspect_ratio instead, ' +
-      'which overrides this when both are given.',
+    'Output shape in plain terms: landscape (16:9), portrait (9:16) or square (1:1). For any other proportion — ' +
+      '3:2, 4:3, 4:5, 21:9 — use aspect_ratio, which wins if both are given.',
   );
 
 /**
@@ -96,11 +94,9 @@ export const orientationSchema = z
  * so the guidance can't drift between them.
  */
 export const MODEL_CHOICE_GUIDE =
-  'gemini-3.1-flash-image (Nano Banana 2) is the versatile generalist workhorse — balances speed with ' +
-  'state-of-the-art 4K generation, world knowledge, and reliable text rendering; excels at multi-reference-image ' +
-  'processing and consistency. gemini-3-pro-image (Nano Banana Pro) is the premium choice for the most complex ' +
-  'visual tasks — highest world knowledge, advanced localization, accurate brand consistency, precision creative control. ' +
-  'gemini-3.1-flash-lite-image (Nano Banana 2 Lite) is the fastest/cheapest for simple tasks (1K only, no search grounding).';
+  'gemini-3.1-flash-image (Nano Banana 2, the default) is the generalist: fast, 4K, reliable text, strong ' +
+  'multi-reference consistency. gemini-3-pro-image (Pro) is for the hardest work — best world knowledge, brand ' +
+  'precision. gemini-3.1-flash-lite-image (Lite) is cheapest: 1K only, no search grounding.';
 
 /**
  * Per-call upstream timeout override, shared by every generation tool
@@ -113,7 +109,7 @@ export const timeoutMsSchema = z
   .positive()
   .optional()
   .describe(
-    'Upstream request timeout in ms for this call (default: $GEMINI_TIMEOUT_MS, else 60000 — or 120000 when image_size is 4K, which routinely runs past 60s)',
+    'Upstream timeout in ms for this call (default $GEMINI_TIMEOUT_MS, else 60000 — 120000 at 4K, which runs past 60s)',
   );
 
 /**
@@ -127,7 +123,7 @@ export const idempotencyKeySchema = z
   .min(1)
   .optional()
   .describe(
-    'Opaque idempotency key: a repeat call with the same key returns the recorded result (reused: true) instead of billing a new generation. Set it when retrying after a host timeout (-32001) to avoid a duplicate charge.',
+    'Repeat calls with this key return the recorded result (reused: true) instead of billing a new generation. Set it when retrying after a host timeout (-32001).',
   );
 
 /**
@@ -139,10 +135,9 @@ export const asyncSchema = z
   .boolean()
   .optional()
   .describe(
-    'Run in the background and return a job_id immediately instead of the image, so a long (Pro/4K) generation cannot hit ' +
-      'the host tools/call timeout (-32001). Poll gemini_get_result with the job_id to fetch the result. ' +
-      'PREFER `max_wait_ms` on the hosted connector: it runs where the executor is only guaranteed to stay alive while the ' +
-      'request is open, so this option is served there as a bounded wait rather than an immediate hand-off.',
+    'Return a job_id immediately instead of the result, so a long generation cannot hit the host tools/call timeout ' +
+      '(-32001); poll gemini_get_result. On the hosted connector prefer max_wait_ms — the executor only lives while a ' +
+      'request is open, so async is served there as a bounded wait.',
   );
 
 /**
@@ -158,9 +153,9 @@ export const maxWaitMsSchema = z
   .max(600_000)
   .optional()
   .describe(
-    'Wait up to this many ms for the result; if generation is still running when the budget expires, return ' +
-      '{ job_id, status: "running" } immediately instead (poll gemini_get_result). Keeps fast results in-band while a ' +
-      'slow batch can never trip the host tools/call timeout (-32001) — e.g. 20000 for multi-image sets. Ignored when async is set.',
+    'Wait up to this many ms in-band, then hand back { job_id, status: "running" } to poll with gemini_get_result ' +
+      '(e.g. 20000 for multi-image sets). Keeps fast results inline and slow ones off the host timeout (-32001). ' +
+      'Ignored when async is set.',
   );
 
 /**
@@ -173,9 +168,9 @@ export function imagesR2KeysSchema(label = 'Reference images'): z.ZodOptional<z.
     .array(z.string().min(1))
     .optional()
     .describe(
-      `${label} by r2_key from THIS connector's store: a signed upload (gemini_get_upload_url → curl PUT) or an earlier ` +
-        "generation's media[].r2_key. The server reads its own bucket directly — no bytes in the conversation, no signed URL, " +
-        'no ~48h Files API expiry. Hosted connector only.',
+      `${label} by r2_key from this connector's store: a signed upload (gemini_get_upload_url → curl PUT) or an earlier ` +
+        "generation's media[].r2_key. The server reads its own bucket — no bytes in the conversation, no ~48h expiry. " +
+        'Hosted connector only.',
     );
 }
 
@@ -185,9 +180,8 @@ export const charactersSchema = z
   .max(8)
   .optional()
   .describe(
-    'Names of saved characters (see gemini_list_characters / gemini_save_character): each one\'s reference image and ' +
-      'description are attached to the request automatically, keeping recurring subjects consistent without re-sending anything. ' +
-      'Hosted connector only.',
+    'Names of saved characters (gemini_list_characters): each one\'s reference image and description are attached ' +
+      'automatically, keeping recurring subjects consistent without re-sending anything. Hosted connector only.',
   );
 
 /** Saved-style name applied to a generation (hosted connector only). */
@@ -196,8 +190,8 @@ export const styleSchema = z
   .min(1)
   .optional()
   .describe(
-    'Name of a saved style preset (see gemini_list_styles / gemini_save_style): its prompt fragment — and reference image, ' +
-      'if it has one — is applied to the request automatically. Hosted connector only.',
+    'Name of a saved style preset (gemini_list_styles): its prompt fragment, and reference image if it has one, are ' +
+      'applied automatically. Hosted connector only.',
   );
 
 /** What {@link resolveCharacterRefs} hands back to a generation handler. */
@@ -318,9 +312,26 @@ export function imagesUrlSchema(label = 'Reference images'): z.ZodOptional<z.Zod
     .array(z.string().url())
     .optional()
     .describe(
-      `${label} as public https URLs — the SERVER downloads them, so no image bytes travel through the conversation. ` +
-        'Preferred over images_base64, which costs ~14k tokens per photo and breaks if a file read was truncated. ' +
-        `Max ${wholeMb(IMAGE_URL_MAX_BYTES)}MB each; must be a directly-linked image (Content-Type image/*).`,
+      `${label} as public https URLs — the server downloads them, so no image bytes cross the conversation. Preferred ` +
+        `over images_base64, which costs ~14k tokens per photo. Max ${wholeMb(IMAGE_URL_MAX_BYTES)}MB each, Content-Type image/*.`,
+    );
+}
+
+/**
+ * Raw base64 / data URIs — the last-resort input form, and the only one whose
+ * bytes have already crossed the conversation by the time the server sees
+ * them. The description says so, and says what to do instead NEXT time: the
+ * funnel uploads each entry once and reports the `files/<id>` back, so the
+ * repeat reference costs a short string rather than another photo.
+ */
+export function imagesBase64Schema(label = 'Reference images', prefix = 'images'): z.ZodOptional<z.ZodArray<z.ZodString>> {
+  return z
+    .array(z.string().min(1))
+    .optional()
+    .describe(
+      `${label} as base64 strings or data URIs. Last resort — about 14k tokens per photo; prefer ${prefix}_url or ` +
+        `${prefix}_file_uris. The server uploads each one and reports a file_uri under image_inputs: pass that to ` +
+        `${prefix}_file_uris next time instead of re-sending the bytes.`,
     );
 }
 
@@ -333,9 +344,8 @@ export function imagesFileUrisSchema(label = 'Reference images'): z.ZodOptional<
     .array(z.string().min(1))
     .optional()
     .describe(
-      `${label} by Gemini Files API reference ("files/<id>", or the full uri) from gemini_upload_file or POST /upload. ` +
-        'Upload once, then reference it across as many calls as you like — no bytes are re-sent and none enter the conversation. ' +
-        'Files are retained ~48h, after which the reference stops resolving.',
+      `${label} as Files API references ("files/<id>" or the full uri) from gemini_upload_file. Upload once and reuse ` +
+        'across calls with no bytes in the conversation; retained ~48h, after which the reference stops resolving.',
     );
 }
 
@@ -360,7 +370,7 @@ export const sharedImageSchema = {
   orientation: orientationSchema,
   image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution (512 = 0.5K, Flash-only)'),
   output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),
-  inline: z.boolean().optional().describe('Return base64 images inline instead of writing to disk'),
+  inline: z.boolean().optional().describe('Return base64 images inline instead of writing to disk. The default costs nothing to carry and hands back a path or URL you can reference again; inline bytes can only be looked at'),
   seed: z.number().int().optional().describe('Seed for reproducible generation; random if omitted'),
   thinking_level: z.enum(['minimal', 'high']).optional().describe('Reasoning depth (Gemini 3 models); higher can help complex/structural edits'),
   google_search: z.boolean().optional().describe('Ground the image in live Google Search results (current events, weather, data)'),

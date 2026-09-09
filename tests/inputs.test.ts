@@ -234,6 +234,38 @@ describe('input ordering', () => {
   });
 });
 
+describe('base64 inputs are uploaded once and handed back as a reference', () => {
+  // The point of the whole funnel is that image bytes never cross the
+  // conversation. `images_base64` is the one form where they already have —
+  // roughly 14k tokens for a photo — so the job here is to make sure it only
+  // happens ONCE. The promotion is on FIRST sighting, unlike a local path's
+  // second: by the time a caller pastes the same base64 twice, the tokens that
+  // rule would have saved are already spent.
+  it('uploads on the first sighting and returns the file_uri to reuse', async () => {
+    const s = stubClient();
+    const { inputs, report } = await resolveImageInputs({ images_base64: [PNG_B64] }, s.client);
+    expect(s.uploadBytes).toHaveBeenCalledTimes(1);
+    expect(inputs[0]).toEqual({ uri: 'https://generativelanguage.googleapis.com/v1beta/files/up1', mimeType: 'image/png' });
+    expect(report?.base64_uploaded?.[0]).toMatchObject({ index: 0, file_uri: 'files/up1', bytes: PNG_BYTES.byteLength });
+  });
+
+  it('uploads identical bytes once across calls in the same session', async () => {
+    const s = stubClient();
+    await resolveImageInputs({ images_base64: [PNG_B64] }, s.client);
+    const second = await resolveImageInputs({ images_base64: [PNG_B64] }, s.client);
+    expect(s.uploadBytes).toHaveBeenCalledTimes(1);
+    expect(second.inputs[0]).toEqual({ uri: 'https://generativelanguage.googleapis.com/v1beta/files/up1', mimeType: 'image/png' });
+  });
+
+  it('falls back to inline when the upload fails — a promotion must not fail the call', async () => {
+    const s = stubClient();
+    s.uploadBytes.mockRejectedValueOnce(new Error('upload exploded'));
+    const { inputs, report } = await resolveImageInputs({ images_base64: [PNG_B64] }, s.client);
+    expect(inputs[0]).toEqual({ base64: PNG_B64, mimeType: 'image/png' });
+    expect(report?.base64_uploaded).toBeUndefined();
+  });
+});
+
 describe('local paths auto-upload on repeat use (stdio)', () => {
   it('stays inline the FIRST time a path is referenced', async () => {
     const s = stubClient();

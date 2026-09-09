@@ -58,6 +58,12 @@ export interface ImageInputReport {
   file_uris?: string[];
   /** Local paths promoted to a Files API upload on their repeat reference. */
   auto_uploaded?: Array<{ path: string; file_uri: string; expires?: string }>;
+  /**
+   * `images_base64` entries promoted to a Files API upload, by position. The
+   * caller reuses `file_uri` via `images_file_uris` instead of pasting the
+   * bytes a second time.
+   */
+  base64_uploaded?: Array<{ index: number; file_uri: string; bytes: number; expires?: string }>;
   /** Connector-store objects attached by `images_r2_keys`, in order.
    * `file_uri` is present when the object was large enough to be promoted to
    * a Files API reference instead of inlined. */
@@ -120,10 +126,14 @@ export async function resolveImageInputs(args: ImageInputArgs, client: GeminiCli
     inputs.push(await resolveLocalPath(path, client, onDisk, report));
   }
 
-  // 3. raw base64 / data URIs
+  // 3. raw base64 / data URIs — the one form that already cost the caller
+  // tokens, so it is promoted to a Files API upload immediately (see
+  // resolveBase64).
   if (args.images_base64?.length) {
     const { decodeImageInput } = await import('./images.js');
-    for (const b64 of args.images_base64) inputs.push(decodeImageInput(b64));
+    for (const [index, b64] of args.images_base64.entries()) {
+      inputs.push(await resolveBase64(decodeImageInput(b64), index, client, report));
+    }
   }
 
   // 4. https URLs, fetched by the server. Deduped within the call.
@@ -242,6 +252,68 @@ async function resolveLocalPath(
   } catch {
     return inline;
   }
+}
+
+/**
+ * One base64 input → a Files API reference, uploaded on FIRST sighting.
+ *
+ * Every other form in this funnel keeps bytes out of the conversation
+ * altogether. `images_base64` cannot: by the time the server sees it the
+ * caller has already spent ~14k tokens per photo emitting it. So the rule is
+ * deliberately not the local-path rule (inline once, upload on the second
+ * sighting) — waiting for a second sighting here means waiting until the cost
+ * this is meant to prevent has been paid twice. Uploading now buys a
+ * `files/<id>` that the report hands back, and the next call references that
+ * instead of pasting anything.
+ *
+ * Identity is the bytes, so the same image pasted into two calls uploads once.
+ * Best-effort: an upload failure falls back to inline, because a promotion
+ * that fails the call is worse than one that does not happen.
+ */
+async function resolveBase64(
+  inline: ImageInput,
+  index: number,
+  client: GeminiClient,
+  report: ImageInputReport,
+): Promise<ImageInput> {
+  if (!inline.base64) return inline;
+  const bytes = base64ToBytes(inline.base64);
+  // NUL-separated, written as the \u0000 escape — see resolveLocalPath for why
+  // a literal NUL must not appear in this file.
+  const key = `b64\u0000${inline.mimeType}\u0000${bytes.byteLength}\u0000${await digestOf(bytes)}`;
+
+  const cached = client.session.cachedUpload(key);
+  if (cached) return { uri: cached.uri, mimeType: cached.mimeType };
+
+  try {
+    const uploaded = await client.uploadBytes(bytes, inline.mimeType, `pasted-${index + 1}`);
+    client.session.uploadCache.set(key, {
+      name: uploaded.name,
+      uri: uploaded.uri,
+      mimeType: uploaded.mimeType,
+      expiresAtMs: expiresAtMs(uploaded.expirationTime, Date.now()),
+    });
+    (report.base64_uploaded ??= []).push({
+      index,
+      file_uri: uploaded.name,
+      bytes: bytes.byteLength,
+      ...(uploaded.expirationTime ? { expires: uploaded.expirationTime } : {}),
+    });
+    return { uri: uploaded.uri, mimeType: uploaded.mimeType };
+  } catch {
+    return inline;
+  }
+}
+
+/**
+ * SHA-256 of the bytes, hex. Content identity for the upload cache — two
+ * pastes of the same photo must resolve to one upload even when the base64
+ * text differs (a data: prefix, different line wrapping).
+ */
+async function digestOf(bytes: Uint8Array): Promise<string> {
+  const view = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const hash = await crypto.subtle.digest('SHA-256', view);
+  return [...new Uint8Array(hash)].map((n) => n.toString(16).padStart(2, '0')).join('');
 }
 
 /** One https URL → inline bytes, or a Files API reference when it's large. */

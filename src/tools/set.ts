@@ -5,7 +5,7 @@ import { resolveModel } from '../models.js';
 import type { GeminiClient, GeneratedImage } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
-import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, persistBundle, SET_URL_TTL_MS, type NamedImage } from './shared.js';
+import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, persistBundle, SET_URL_TTL_MS, type NamedImage} from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { sumUsage, type TokenUsage } from '../usage.js';
 import { attachCost } from '../pricing.js';
@@ -31,7 +31,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         master_images_r2_keys: imagesR2KeysSchema('Reference images passed to the master AND to every scene call'),
         characters: charactersSchema,
         style: styleSchema,
-        master_images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs for master generation. Last resort: prefer master_images_url or master_images_file_uris, which keep image bytes out of the conversation'),
+        master_images_base64: imagesBase64Schema('Reference images for the master generation', 'master_images'),
         confirm: schemaConfirm,
         ...sharedImageSchema,
       },
