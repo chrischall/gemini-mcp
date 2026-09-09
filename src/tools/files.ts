@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { withProgressHeartbeat } from './shared.js';
-import { base64ToBytes, wholeMb } from '../bytes.js';
+import { base64ToBytes, bytesToBase64, formatMb, wholeMb } from '../bytes.js';
 import { fileNameFromUrl } from '../fetch-image.js';
 import { downloadFilename } from '../media-name.js';
 import { previewUnlessConfirmed, previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
@@ -20,8 +20,8 @@ import { previewUnlessConfirmed, previewLocalInputsUnlessConfirmed, schemaConfir
  * Three ways in, none of which put bytes in the conversation:
  *
  *  - `gemini_upload_file` with `url` — the SERVER downloads it.
- *  - `POST /upload` on the connector with the raw bytes as the request body —
- *    the intended path for an agent with a shell (see README).
+ *  - `gemini_get_upload_url` → a signed PUT → `gemini_upload_file` with the
+ *    returned `r2_key` — the intended path for a caller with a shell.
  *  - `gemini_upload_file` with `path` — stdio only, reads the local file.
  *
  * `data_base64` exists as a deliberate last resort: it is the one form that
@@ -40,8 +40,8 @@ import { previewUnlessConfirmed, previewLocalInputsUnlessConfirmed, schemaConfir
  * one. A Cloudflare isolate gets 128MB total, hence the much lower hosted
  * figure; Node has no comparable ceiling.
  *
- * `POST /upload` is unaffected: it streams, and is bounded only by the Files
- * API's own 2 GB cap.
+ * The signed-PUT route is unaffected: those bytes go straight to the object
+ * store and are bounded only by the Files API's own 2 GB cap when forwarded.
  */
 const UPLOAD_URL_MAX_BYTES_DISK = 100 * 1024 * 1024;
 const UPLOAD_URL_MAX_BYTES_HOSTED = 25 * 1024 * 1024;
@@ -68,6 +68,17 @@ function uploadResult(file: { name: string; uri: string; mimeType: string; expir
   });
 }
 
+/**
+ * Ceiling on an inline view.
+ *
+ * Not a model limit — an image block is tokenized as an image, and a 1K render
+ * costs about a thousand tokens however many bytes it arrived as. This is the
+ * TRANSPORT: a host that caps tool-result size rejects or truncates an
+ * oversized payload, and a truncated image block reads as a broken tool rather
+ * than a big picture. 8MB clears any render this server produces at 1K or 2K.
+ */
+const VIEW_MAX_BYTES = 8 * 1024 * 1024;
+
 export function registerFileTools(server: McpServer, client: GeminiClient): void {
   const onDisk = client.mediaSink?.persistsFiles ?? true;
   const urlMaxBytes = onDisk ? UPLOAD_URL_MAX_BYTES_DISK : UPLOAD_URL_MAX_BYTES_HOSTED;
@@ -88,8 +99,8 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           : ', or `r2_key` (re-upload media this connector generated, from media[].r2_key in an earlier result).') +
         (onDisk
           ? ''
-          : ' This connector also accepts raw bytes over HTTP: POST them to /upload with the same Authorization header ' +
-            'and a Content-Type of image/*, which avoids base64 entirely.'),
+          : ' To upload a local file without base64: mint a signed PUT URL with gemini_get_upload_url, PUT the bytes to it, ' +
+            'then pass the returned r2_key here.'),
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
         url: z
@@ -99,7 +110,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           .describe(
             `Public https URL the SERVER downloads and uploads (image/video/audio, up to ${wholeMb(urlMaxBytes)}MB). ` +
               'No bytes pass through the conversation.' +
-              (onDisk ? '' : ' Larger files: POST the raw bytes to /upload, which streams instead of buffering.'),
+              (onDisk ? '' : ' Larger files: PUT them to a gemini_get_upload_url link and pass the r2_key instead — that path does not buffer.'),
           ),
         data_base64: z
           .string()
@@ -125,7 +136,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           .describe(
             onDisk
               ? 'Path to a local file (absolute, or resolved against $GEMINI_INPUT_DIR). Confirm-gated like every other local-file input.'
-              : 'Unavailable on this hosted connector (no filesystem) — use `url`, `data_base64`, or POST /upload.',
+              : 'Unavailable here: this deployment runs on a remote machine and cannot read your filesystem. Use `url`, `r2_key` (via gemini_get_upload_url), or `data_base64`.',
           ),
         mime_type: z
           .string()
@@ -149,9 +160,10 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
       if (args.path) {
         if (!onDisk) {
           throw new McpToolError(
-            '`path` is unavailable on the hosted connector: it runs on a Cloudflare Worker, which has no filesystem. ' +
-              'Use `url` (the server downloads it), `data_base64`, or POST the raw bytes to /upload with the same Authorization header.',
-            { hint: 'Use `url`, `data_base64`, or POST /upload.' },
+            '`path` is unavailable on the hosted connector: it runs on a remote machine with no access to your filesystem. ' +
+              'Use `url` (the server downloads it), `r2_key` after PUTting the file to a URL from gemini_get_upload_url, or ' +
+              '`data_base64` if you cannot make HTTP requests at all.',
+            { hint: 'Use `url`, `r2_key` (gemini_get_upload_url), or `data_base64`.' },
           );
         }
         // Same gate as every other local-file input: a prompt-injected `path`
@@ -286,6 +298,52 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           curl_hint: `curl -sS -o ${downloadFilename(fresh.key ?? 'media')} "${fresh.ref}"`,
           hint: 'In a Claude chat client, download this URL into your sandbox and present it as an output file — inline image blocks and markdown embeds do not render for the end user.',
         });
+      },
+    );
+
+    // The tool that lets a model SEE what it made.
+    //
+    // On disk the result is a path an agent's own image tool can open. Here it
+    // is a signed URL, which is not the same thing at all: fetching it takes
+    // network I/O the caller may not be allowed to perform, and a URL is not
+    // something a vision model can look at. Without this, a generate → refine
+    // loop on the hosted connector runs blind.
+    //
+    // Deliberately its own tool rather than pixels on every result. Bytes on
+    // every turn is a cost nobody opted into, and the durable half of a result
+    // is the `r2_key` manifest — small enough to persist, and re-signable long
+    // after any URL in it has expired. This way the caller pays for eyes on the
+    // turns it actually looks, and an image from a LOST turn (found through
+    // gemini_list_recent_media) can be examined exactly the same way.
+    server.registerTool(
+      'gemini_view_media',
+      {
+        description:
+          'Return a generated image as an inline image block, so you can actually SEE it — from its `r2_key`. ' +
+          'The generation tools hand back links, which a model cannot look at; call this to check composition, colour ' +
+          'or garbled text before refining, and to inspect an image recovered with gemini_list_recent_media. ' +
+          'Costs image tokens on the turns you use it, which is why it is a separate call and not part of every result. ' +
+          'Keywords: see the image, view, look at, verify output, check the result, preview.',
+        annotations: { readOnlyHint: true, openWorldHint: false },
+        inputSchema: {
+          r2_key: z.string().min(1).describe('The `media[].r2_key` from a generation result or gemini_list_recent_media'),
+        },
+      },
+      async (args) => {
+        const key = args.r2_key.trim();
+        const { bytes, mimeType } = await client.readStoredMedia(key);
+        if (bytes.byteLength > VIEW_MAX_BYTES) {
+          // A cap the TRANSPORT imposes, not the model: an oversized block is
+          // rejected or truncated on the way out, which reads as a broken tool
+          // rather than a large image. Say which it is, and name both ways
+          // through. Remediation in the MESSAGE — hints are dropped.
+          throw new McpToolError(
+            `That image is too large to return inline (${formatMb(bytes.byteLength)}, limit ${formatMb(VIEW_MAX_BYTES)}). ` +
+              'Re-render it at a smaller image_size (1K is plenty to check composition), or take the link from ' +
+              'gemini_sign_media and open it outside the conversation.',
+          );
+        }
+        return { content: [{ type: 'image' as const, data: bytesToBase64(bytes), mimeType }] };
       },
     );
 

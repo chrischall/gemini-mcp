@@ -84,7 +84,7 @@ describe('gemini_upload_file — url', () => {
     };
     expect(capture({}, true)).toMatch(/up to 100MB/);
     expect(capture({}, false)).toMatch(/up to 25MB/);
-    expect(capture({}, false)).toMatch(/POST the raw bytes to \/upload/);
+    expect(capture({}, false)).toMatch(/gemini_get_upload_url/);
 
     const fetchRemoteImage = vi.fn().mockResolvedValue({
       bytes: PNG_BYTES, mimeType: 'image/png', size: 4, finalUrl: 'https://x/y', requestedUrl: 'https://x/y',
@@ -147,7 +147,7 @@ describe('gemini_upload_file — data_base64 and path', () => {
     await h.close();
   });
 
-  it('refuses `path` on the hosted connector and points at the three alternatives', async () => {
+  it('refuses `path` on the hosted connector and points at the live alternatives', async () => {
     const uploadBytes = vi.fn();
     const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadBytes }, false)));
     const res = await h.callTool('gemini_upload_file', { path: '/etc/passwd', confirm: true });
@@ -155,9 +155,12 @@ describe('gemini_upload_file — data_base64 and path', () => {
 
     expect(res.isError).toBe(true);
     const text = JSON.stringify(res.content);
-    expect(text).toMatch(/no filesystem/);
+    expect(text).toMatch(/no access to your filesystem/);
     expect(text).toMatch(/url/);
-    expect(text).toMatch(/\/upload/);
+    // The retired POST /upload used to be named here. gemini_get_upload_url is
+    // what replaced it; a route that no longer exists must not be advertised.
+    expect(text).toMatch(/gemini_get_upload_url/);
+    expect(text).not.toMatch(/POST \/upload/);
     expect(uploadBytes).not.toHaveBeenCalled();
   });
 });

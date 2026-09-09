@@ -5,9 +5,9 @@
  * The problem these solve is the mirror image of `/media`: a signed GET lets a
  * shell *download* generated media with no auth header, but uploading a
  * reference photo still required `images_base64` (~14k tokens per JPEG, silently
- * corrupting on a truncated read) or `POST /upload` (which 401s from any shell
- * that doesn't hold the MCP session's bearer token). A signed PUT URL closes
- * that gap: the authenticated MCP session mints it, and then a bare
+ * corrupting on a truncated read) or the Worker's `POST /upload`, which 401'd
+ * from any shell without the MCP session's bearer token and is gone entirely
+ * now that the Worker is. A signed PUT URL closes that gap: the authenticated MCP session mints it, and then a bare
  * `curl -X PUT --data-binary @photo.jpg "<url>"` stores the bytes.
  *
  * Same HMAC secret as the media GET URLs, but a DIFFERENT payload shape, so the

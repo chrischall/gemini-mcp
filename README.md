@@ -88,6 +88,7 @@ progress), two guards make re-issuing safe and unnecessary:
 | `gemini_list_files` | List the files currently uploaded under this API key, with MIME types and expiry times |
 | `gemini_delete_file` | Delete an uploaded file before its ~48h expiry (confirm-gated) |
 | `gemini_sign_media` | *(hosted deployments only)* Mint a fresh signed URL for generated media from its `r2_key` — an expired link is not a dead end |
+| `gemini_view_media` | *(hosted deployments only)* Return a generated image as an inline image block from its `r2_key`, so a model can actually see what it made before refining it |
 | `gemini_get_upload_url` | *(hosted deployments only)* Mint a short-lived signed PUT URL so a shell can upload a reference image with no auth header; the PUT returns an `r2_key` usable in `images_r2_keys`, `gemini_save_character`, or `gemini_upload_file` |
 | `gemini_save_character` / `gemini_list_characters` / `gemini_delete_character` | *(hosted deployments only)* Persistent per-account character library: save a reference image + description under a name, then pass `characters: ["name"]` on generation tools. No expiry |
 | `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | *(hosted deployments only)* Persistent per-account style presets: a reusable prompt fragment (optionally with a reference image), applied by passing `style: "name"` on generation tools. No expiry |
@@ -121,6 +122,10 @@ swept on a retention schedule. The `r2_key` is the durable handle for that windo
 
 - **`gemini_sign_media`** (hosted deployments only) mints a fresh signed URL from an `r2_key`,
   so an expired link never forces you to re-generate — and re-pay for — the image.
+- **`gemini_view_media`** (hosted deployments only) returns the image itself, inline, from an
+  `r2_key`. A link is not something a model can look at, so without this a generate → refine
+  loop runs blind. It is a separate call rather than bytes on every result: you pay image
+  tokens only on the turns you actually look.
 - **`gemini_upload_file` with `r2_key`** turns media this server generated into a Files API
   reference (the server reads it back with its own key — no signature for you to mint), so
   a generated image can become the reference image for the next generation in one cheap call.

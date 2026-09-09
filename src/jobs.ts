@@ -241,10 +241,19 @@ export interface DispatchOpts {
 }
 
 /** Immediate handle for an async call — the caller polls `gemini_get_result`. */
-function jobHandle(jobId: string, status: JobStatus, durable = false): CallToolResult {
+/**
+ * `interactionId` is on the handle, not held back until the job settles.
+ *
+ * It is the one thing that outlives a lost response: the generation continues
+ * upstream whatever happens to this request, and the id is how a later call
+ * chains onto it or recovers its output. Withholding it until the settle is
+ * withholding it exactly in the case where the settle never comes.
+ */
+function jobHandle(jobId: string, status: JobStatus, durable = false, interactionId?: string): CallToolResult {
   return minifiedResult({
     job_id: jobId,
     status,
+    ...(interactionId ? { interaction_id: interactionId } : {}),
     hint: durable
       ? `Generation running in the background. Poll gemini_get_result with job_id "${jobId}" until status is "done". The job record is stored durably, so a poll still works if this connector restarts — but background work is NOT restarted, so a long generation is safer with max_wait_ms than with async.`
       : `Generation running in the background. Poll gemini_get_result with job_id "${jobId}" until status is "done" (results are per-process and expire ~10 min after completion).`,
@@ -511,11 +520,11 @@ export class JobRegistry {
     }
 
     if (hit) {
-      if (async) return jobHandle(hit.jobId, hit.status);
+      if (async) return jobHandle(hit.jobId, hit.status, this.store !== undefined, hit.interactionId);
       const settled = waitMs !== undefined && hit.status === 'running'
         ? await awaitWithBudget(hit.promise, waitMs)
         : await hit.promise;
-      if (settled === undefined) return jobHandle(hit.jobId, 'running');
+      if (settled === undefined) return jobHandle(hit.jobId, 'running', this.store !== undefined, hit.interactionId);
       // Refresh before annotating: a recorded result can outlive the signed
       // URLs inside it, and replaying an expired link is its own kind of wrong
       // answer — it looks like success.
@@ -572,13 +581,13 @@ export class JobRegistry {
     });
     if (this.store) void settle.then(() => this.track(this.writeRecord(entry)));
 
-    if (async) return jobHandle(jobId, 'running', this.store !== undefined);
+    if (async) return jobHandle(jobId, 'running', this.store !== undefined, this.jobs.get(jobId)?.interactionId);
     if (waitMs !== undefined) {
       const settled = await awaitWithBudget(promise, waitMs);
       // Budget expired with the work still running: hand back the job id — the
       // work continues and the caller polls, exactly as with `async: true`,
       // except a fast result would have been returned in-band.
-      return settled ?? jobHandle(jobId, 'running', this.store !== undefined);
+      return settled ?? jobHandle(jobId, 'running', this.store !== undefined, this.jobs.get(jobId)?.interactionId);
     }
     return promise;
   }
@@ -606,7 +615,7 @@ export class JobRegistry {
     // new generation.
     if (record.fingerprint !== fingerprint) return undefined;
     if (this.now() - record.updatedAt > DURABLE_JOB_REUSE_MS) return undefined;
-    if (record.status === 'running') return jobHandle(id, 'running', true);
+    if (record.status === 'running') return jobHandle(id, 'running', true, record.interactionId);
     if (record.status !== 'done' || !record.result) return undefined;
     return annotateReused(await refreshMedia(record.result, this.resigner), id);
   }
@@ -681,7 +690,7 @@ export class JobRegistry {
         },
       );
     }
-    if (entry.status === 'running') return jobHandle(jobId, 'running', this.store !== undefined);
+    if (entry.status === 'running') return jobHandle(jobId, 'running', this.store !== undefined, entry.interactionId);
     if (entry.status === 'failed') {
       throw new McpToolError(entry.error?.message ?? 'Job failed.', entry.error?.hint ? { hint: entry.error.hint } : undefined);
     }
@@ -702,7 +711,7 @@ export class JobRegistry {
    * lifecycle problem.
    */
   private async fromRecord(record: JobRecord): Promise<CallToolResult> {
-    if (record.status === 'running') return jobHandle(record.jobId, 'running', true);
+    if (record.status === 'running') return jobHandle(record.jobId, 'running', true, record.interactionId);
     if (record.status === 'failed') {
       throw new McpToolError(record.error?.message ?? 'Job failed.', record.error?.hint ? { hint: record.error.hint } : undefined);
     }

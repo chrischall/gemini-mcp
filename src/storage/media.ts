@@ -2,7 +2,8 @@
  * Where generated media goes.
  *
  * The stdio server writes images/video/audio to the local filesystem. The
- * hosted connector (a Cloudflare Worker) has **no filesystem at all** — no
+ * hosted connector runs on a remote machine with **no access to the caller's
+ * filesystem** — no
  * `writeFile`, no output dir, and therefore no `<image>.json` sidecar — so it
  * puts objects into an R2 bucket and hands back URLs instead of paths.
  *
