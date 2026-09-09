@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.14.0](https://github.com/chrischall/gemini-mcp/compare/v1.13.0...v1.14.0) (2026-09-09)
+
+
+### Features
+
+* **hosted:** add gemini_view_media so a model can see what it generated ([#220](https://github.com/chrischall/gemini-mcp/issues/220)) ([701cd40](https://github.com/chrischall/gemini-mcp/commit/701cd40fe664e1d6606ae31716ea8ce0a7fc628f))
+* **hosted:** give the object store the sidecar the filesystem had ([#222](https://github.com/chrischall/gemini-mcp/issues/222)) ([4827ea3](https://github.com/chrischall/gemini-mcp/commit/4827ea37945b637c6cb2b8670946e60da6efa96e))
+* **media:** omni GA with resolution + extend, and a working Lyria shape ([#216](https://github.com/chrischall/gemini-mcp/issues/216)) ([7638f84](https://github.com/chrischall/gemini-mcp/commit/7638f84195ea96ece745a9a473352748e5c790ed))
+
+
+### Bug Fixes
+
+* **jobs:** gate an idempotency replay on the request, not just the key ([#219](https://github.com/chrischall/gemini-mcp/issues/219)) ([38ad043](https://github.com/chrischall/gemini-mcp/commit/38ad0439b1d1f28a4a1c962b6bc5f5e5631266f0))
+
+
+### Performance
+
+* **storage:** keep chain lookups off records that cannot answer them ([#224](https://github.com/chrischall/gemini-mcp/issues/224)) ([9988770](https://github.com/chrischall/gemini-mcp/commit/998877043d0382c82a093b5b08492ad5cdd49527)), closes [#223](https://github.com/chrischall/gemini-mcp/issues/223)
+
 ## [1.13.0](https://github.com/chrischall/gemini-mcp/compare/v1.12.0...v1.13.0) (2026-09-04)
 
 
