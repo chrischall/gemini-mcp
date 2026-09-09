@@ -39,20 +39,46 @@ describe('gemini_music_generate', () => {
     await h.close();
   });
 
-  it('rejects wav on a clip model (WAV is Pro-only)', async () => {
-    const spy = vi.spyOn(client, 'generateMusic');
+  it('exposes lyria-3.5, the model that generates full-length songs', async () => {
+    const spy = vi.spyOn(client, 'generateMusic').mockResolvedValue({ id: 'm', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] });
     const h = await createTestHarness((srv) => registerMusicTools(srv, client));
-    const res = await h.callTool('gemini_music_generate', { prompt: 'x', audio_format: 'wav', output_dir: dir });
-    expect(res.isError).toBe(true);
-    expect(spy).not.toHaveBeenCalled(); // rejected before any API call
+    await h.callTool('gemini_music_generate', { prompt: 'x', model: 'lyria-3.5', output_dir: dir });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ model: 'lyria-3.5' }));
     await h.close();
   });
 
-  it('allows wav on the Pro model and passes the format through', async () => {
-    const spy = vi.spyOn(client, 'generateMusic').mockResolvedValue({ id: 'm', audios: [{ base64: MP3, mimeType: 'audio/wav' }] });
+  it('offers no audio_format param — the field does not exist upstream', async () => {
+    // `response_format.audio_format` was docs-derived and wrong: every Lyria
+    // model answers `400 Unknown parameter 'audio_format'`. The real field is
+    // `mime_type`, and every value but MP3 is refused per-model today, so
+    // there is no working lever to expose (verified live 2026-09-09).
     const h = await createTestHarness((srv) => registerMusicTools(srv, client));
-    await h.callTool('gemini_music_generate', { prompt: 'x', model: 'lyria-3-pro-preview', audio_format: 'wav', output_dir: dir });
-    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ audioFormat: 'wav', model: 'lyria-3-pro-preview' }));
+    const { tools } = await h.client.listTools();
+    const props = (tools[0].inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(props).not.toHaveProperty('audio_format');
+    await h.close();
+  });
+
+  it('offers no chaining params — Lyria is single-turn', async () => {
+    // A chained call reaches the model and dies there: feeding a generated
+    // track back as input answers `400 Unsupported input mime type for this
+    // model: audio/s16le` (verified live 2026-09-09). Advertising
+    // continue_last would promise a turn that cannot happen.
+    const h = await createTestHarness((srv) => registerMusicTools(srv, client));
+    const { tools } = await h.client.listTools();
+    const props = (tools[0].inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(props).not.toHaveProperty('previous_interaction_id');
+    expect(props).not.toHaveProperty('continue_last');
+    await h.close();
+  });
+
+  it('does not tell the caller to continue the track', async () => {
+    vi.spyOn(client, 'generateMusic').mockResolvedValue({ id: 'm', audios: [{ base64: MP3, mimeType: 'audio/mpeg' }] });
+    const h = await createTestHarness((srv) => registerMusicTools(srv, client));
+    const res = await h.callTool('gemini_music_generate', { prompt: 'x', output_dir: dir });
+    const data = parseToolResult<{ hint?: string; interaction_id: string }>(res);
+    expect(data.hint ?? '').not.toMatch(/previous_interaction_id|continue_last/);
+    expect(data.interaction_id).toBe('m'); // still reported: it is the recovery handle
     await h.close();
   });
 

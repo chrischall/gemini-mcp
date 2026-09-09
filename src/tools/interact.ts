@@ -6,7 +6,7 @@ import { ChainedRequest404Error, type GeminiClient } from '../client.js';
 import { slugify, baseName, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
-import { emit, reportShape, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedImage } from './shared.js';
+import { emit, reportShape, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedImage } from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { attachCost } from '../pricing.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
@@ -46,27 +46,24 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
   // description is built from the sink's capability, not hardcoded.
   const onDiskRuntime = client.mediaSink?.persistsFiles ?? true;
   const recoveryDescription = onDiskRuntime
-    ? 'If a call times out on the client side, the generation usually still completes: the image plus a ' +
-      '`<image>.json` sidecar recording its interaction id land in the output dir, and `continue_last: true` ' +
-      'still resumes that interaction — check the output dir before re-issuing (a re-issue is a second billable generation). ' +
-      'If a chained call 404s, this tool re-anchors itself on the prior output image and re-issues un-chained: ' +
-      'success is reported as `chain_recovered` (the chain was the problem, and you get your image anyway); ' +
-      'a second 404 is reported as the interaction id NOT being the cause (check the model id / files uri instead). '
-    : 'On this connector each result returns an image URL you can open or share directly (see `media[].url`) — show it ' +
-      'to the user rather than assuming they can see the image. There is no filesystem, so no output dir and no ' +
-      '`<image>.json` sidecar: a lost response cannot be recovered from disk and a 404 on a chained call cannot be ' +
-      're-anchored automatically. Capture the returned `interaction_id` from every result, and use `async: true` + ' +
-      'gemini_get_result for long generations. ';
+    ? 'If a call times out client-side the generation usually still completes: the image and an `<image>.json` sidecar ' +
+      'holding its interaction id land in the output dir, and `continue_last: true` still resumes it — look there before ' +
+      're-issuing, which bills a second generation. A chained 404 is re-anchored on the prior output and re-issued ' +
+      'un-chained (`chain_recovered`); a second 404 means the interaction id was not the cause — check the model id / ' +
+      'files uri. '
+    : 'Each result returns an image URL to open or share (`media[].url`) — show it to the user rather than assuming they ' +
+      'can see the image. There is no filesystem here: no output dir, no sidecar, so a lost response cannot be recovered ' +
+      'from disk and a chained 404 cannot be re-anchored. Capture `interaction_id` from every result, and give long ' +
+      'generations a `max_wait_ms` budget. ';
 
   server.registerTool(
     'gemini_interact',
     {
       description:
-        'Preferred tool for iterative or multi-step refinement of a single image — ' +
-        "multi-turn generation/editing via Gemini's Interactions API. " +
-        'To refine, capture the returned interaction `id` and pass it as `previous_interaction_id` ' +
-        'on the next call — do NOT start a new interaction or re-upload the image for each tweak. ' +
-        '`continue_last: true` chains from this session\'s most recent interaction without threading the id. ' +
+        'Preferred tool for iterative refinement of a single image — multi-turn generation and editing via the ' +
+        'Interactions API. To refine, pass the returned interaction `id` as `previous_interaction_id` on the next call; ' +
+        'do NOT start a new interaction or re-send the image for each tweak. `continue_last: true` chains from this ' +
+        "session's most recent interaction without threading the id. " +
         recoveryDescription +
         'Output is JPEG.',
       annotations: { readOnlyHint: false, openWorldHint: true },
@@ -86,13 +83,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           .describe(`Paths to reference input images. ${NEW_REFERENCES_ONLY}`),
         images_url: imagesUrlSchema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
         images_file_uris: imagesFileUrisSchema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
-        images_base64: z
-          .array(z.string().min(1))
-          .optional()
-          .describe(
-            `Reference images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, ` +
-            `which keep image bytes out of the conversation. ${NEW_REFERENCES_ONLY}`,
-          ),
+        images_base64: imagesBase64Schema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
         model: z
           .string()
           .optional()

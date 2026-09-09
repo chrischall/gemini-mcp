@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/@chrischall/gemini-mcp)](https://www.npmjs.com/package/@chrischall/gemini-mcp)
 [![license](https://img.shields.io/npm/l/@chrischall/gemini-mcp)](LICENSE)
 
-MCP server for Google Gemini media generation. Exposes eleven tools to Claude over stdio: list available models, generate/edit/compose images, generate a consistent set of images from a master prompt, multi-turn image refinement (Interactions API), **video** generation (omni), **music** generation (Lyria), an async result poll for long generations, and Files API upload/list/delete for reusable image references. Output is written to disk by default (path returned) or returned inline as base64. Built on the Gemini v1beta API (`generativelanguage.googleapis.com`) using the Nano Banana / Nano Banana Pro (images), omni (video), and Lyria (music) model families.
+MCP server for Google Gemini media generation. Exposes thirteen tools to Claude over stdio: list available models, generate/edit/compose images, generate a consistent set of images from a master prompt, multi-turn image refinement (Interactions API), **video** generation (omni), **music** generation (Lyria), an async result poll for long generations, and Files API upload/list/delete for reusable image references. Output is written to disk by default (path returned) or returned inline as base64. Built on the Gemini v1beta API (`generativelanguage.googleapis.com`) using the Nano Banana / Nano Banana Pro (images), omni (video), and Lyria (music) model families.
 
 Developed and maintained by AI (Claude Code).
 
@@ -80,8 +80,8 @@ progress), two guards make re-issuing safe and unnecessary:
 | `gemini_image_edit` | One-off edits or multi-image composition with a text instruction (for a series of edits, use `gemini_interact`) |
 | `gemini_image_set` | Generate a master image plus N consistent images referencing it |
 | `gemini_interact` | Preferred tool for iterative refinement: multi-turn generation/editing via the Interactions API — chain the returned `interaction_id` via `previous_interaction_id` (or `continue_last: true`) |
-| `gemini_video_generate` | Generate a short video (text→video, image→video, or `edit`) via the Gemini omni model (preview); written to disk as MP4 |
-| `gemini_music_generate` | Generate music from a text prompt via a Lyria model — `lyria-3-clip-preview` (~30s, default) or `lyria-3-pro-preview` (longer, WAV-capable); written to disk as MP3/WAV (preview) |
+| `gemini_video_generate` | Generate a short video (text→video, image→video, two-still interpolation, `edit` or `extend`) via the Gemini omni model; `resolution` 360p/720p/1080p/4k is the cost lever; written to disk as MP4 |
+| `gemini_music_generate` | Generate music from a text prompt via a Lyria model — `lyria-3-clip-preview` (30s, default), `lyria-3.5` (full-length, vocals) or `lyria-3-pro-preview`; single-turn; written to disk as MP3 |
 | `gemini_get_result` | Fetch an async generation started with `async: true` by its `job_id` (status `running` → `done` result). Lets a long generation outlive a host's `tools/call` timeout |
 | `gemini_token_usage` | Token usage and an estimated USD cost for this session so far. Call it before and after a workflow and subtract to attribute that workflow's spend. Priced per call against each call's own model from a dated rate card (`GEMINI_RATE_CARD` overrides it); there is no account-balance endpoint to read, so this is how spend is attributed |
 | `gemini_upload_file` | Upload an image (or video/audio) to the Gemini Files API once — from a `url`, `data_base64`, or a local `path` — and get a reusable `files/<id>` reference |

@@ -5,7 +5,7 @@ import { resolveModel } from '../models.js';
 import type { GeminiClient, GroundingResult } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs, requireImageInput } from '../inputs.js';
-import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, type NamedImage } from './shared.js';
+import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, buildMeta, timeoutRiskHint, resolveVideoInput, videoPathSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, imagesR2KeysSchema, charactersSchema, styleSchema, resolveCharacterRefs, composePrompt, type NamedImage} from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { sumUsage, type TokenUsage } from '../usage.js';
 import { attachCost } from '../pricing.js';
@@ -36,7 +36,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         images_url: imagesUrlSchema(),
         images_file_uris: imagesFileUrisSchema(),
         images_r2_keys: imagesR2KeysSchema(),
-        images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, which keep image bytes out of the conversation'),
+        images_base64: imagesBase64Schema(),
         characters: charactersSchema,
         style: styleSchema,
         video_url: z.string().url().optional().describe('Public YouTube URL (or a previously uploaded Files API uri) as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
@@ -171,7 +171,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         images_url: imagesUrlSchema('Input images'),
         images_file_uris: imagesFileUrisSchema('Input images'),
         images_r2_keys: imagesR2KeysSchema('Input images'),
-        images_base64: z.array(z.string().min(1)).optional().describe('Input images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, which keep image bytes out of the conversation'),
+        images_base64: imagesBase64Schema('Input images'),
         characters: charactersSchema,
         style: styleSchema,
         filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),

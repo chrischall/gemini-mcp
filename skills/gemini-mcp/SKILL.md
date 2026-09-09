@@ -118,6 +118,9 @@ not an error.
   any number of calls until then.
 - On stdio, an `images` path referenced **more than once in a session** is auto-uploaded to the
   Files API (keyed on path + mtime + size) so the bytes stop being re-sent.
+- `images_base64` is uploaded on the **first** sighting, not the second — the tokens are already
+  spent by then. The result reports it under `image_inputs.base64_uploaded[].file_uri`: pass that
+  to `images_file_uris` on the next call instead of pasting the bytes again.
 
 ### Files API
 | Tool | Description |
@@ -145,8 +148,8 @@ curl -X POST https://<hosted deployment>/upload \
 ### Video & Music (preview — funded account)
 | Tool | Description |
 |------|-------------|
-| `gemini_video_generate(prompt, aspect_ratio?, task?, images_url?, images_file_uris?, images?, images_base64?, from_clipboard?, previous_interaction_id?, continue_last?, model?, filename?, output_dir?, timeout_ms?, idempotency_key?, async?)` | Generate a short video via the Gemini omni model: `text_to_video` (default), `image_to_video` / `reference_to_video` (supply reference image[s]), or `edit` (with `previous_interaction_id` / `continue_last`). `aspect_ratio` is `16:9` or `9:16`. Written to disk as **MP4**. Runs long — use `async: true` + `gemini_get_result`, or raise `timeout_ms`. |
-| `gemini_music_generate(prompt, model?, audio_format?, images_url?, images_file_uris?, images?, images_base64?, from_clipboard?, previous_interaction_id?, continue_last?, filename?, output_dir?, inline?, timeout_ms?, idempotency_key?, async?)` | Generate music from a prompt (mood/genre/instruments/structure/lyrics) via a Lyria model: `lyria-3-clip-preview` (~30s, default) or `lyria-3-pro-preview` (longer, WAV-capable). `audio_format` `mp3` (default) or `wav` (**Pro-only**). Written to disk as MP3/WAV, or returned inline. |
+| `gemini_video_generate(prompt, aspect_ratio?, resolution?, task?, images_url?, images_file_uris?, images?, images_base64?, from_clipboard?, previous_interaction_id?, continue_last?, model?, filename?, output_dir?, timeout_ms?, idempotency_key?, async?)` | Generate a short video (~10s) via the Gemini omni model: `text_to_video` (default), `image_to_video` / `reference_to_video` (supply reference image[s]), interpolation (pass first frame then last frame as `images`), or `edit` / `extend` (with `previous_interaction_id` / `continue_last`; extensions add ~3-10s each, to ~40s). `aspect_ratio` is `16:9` or `9:16`; `resolution` is `360p`/`720p` (default)/`1080p`/`4k` and is the cost lever — a 10s 360p clip runs about a third of 720p. Written to disk as **MP4**. Runs long — use `async: true` + `gemini_get_result`, or raise `timeout_ms`. |
+| `gemini_music_generate(prompt, model?, images_url?, images_file_uris?, images?, images_base64?, from_clipboard?, filename?, output_dir?, inline?, timeout_ms?, idempotency_key?, async?)` | Generate music from a prompt (mood/genre/instruments/structure/lyrics) via a Lyria model: `lyria-3-clip-preview` (30s instrumental, default, $0.04), `lyria-3.5` (full-length song with vocals, $0.08) or `lyria-3-pro-preview` ($0.08). Output is MP3. **Single-turn** — there is no follow-up refinement, so put the whole brief in the prompt. Written to disk, or returned inline. |
 
 ### Async / idempotency (any generation tool)
 | Tool | Description |
@@ -217,7 +220,8 @@ gemini_image_edit(
 → returns path to the edited image
 ```
 `images_base64` is for bytes you actually have — a file you `Read`/encode, a URL
-you fetch, or a `data:` URI the user pastes as **text**.
+you fetch, or a `data:` URI the user pastes as **text**. Send them once: the result's
+`image_inputs.base64_uploaded[].file_uri` is a `files/<id>` to reuse via `images_file_uris`.
 
 **Iterate on ONE image conversationally (multi-turn):**
 ```
@@ -231,21 +235,25 @@ r3 = gemini_interact(input: "warmer lighting", continue_last: true)
 ```
 Prefer this over re-running `gemini_image_edit` when you're making a *series* of incremental edits — the model keeps the prior result in context. Every result echoes `interaction_id` (and `previous_interaction_id` when chaining) plus a `hint` with the exact follow-up call.
 
-**Generate a video (preview — runs long, use async):**
+**Generate a video (runs long, use async):**
 ```
 job = gemini_video_generate(prompt: "a paper boat sailing down a rain gutter, cinematic",
-                            aspect_ratio: "16:9", async: true)
+                            aspect_ratio: "16:9", resolution: "360p", async: true)
    → { job_id, status: "running" }   (returns immediately — no host timeout)
 gemini_get_result(job_id: job.job_id)
    → "running" until done, then the MP4 path on disk
+# Draft at 360p, re-run the keeper at 1080p — video bills per output token, so the
+# resolution is roughly the price.
 # Animate a still instead: gemini_video_generate(prompt: "…", task: "image_to_video", images: ["/path/still.png"])
+# Interpolate between two stills: images: ["/path/first.png", "/path/last.png"]
+# Extend a clip: gemini_video_generate(prompt: "…", task: "extend", continue_last: true)
 ```
 
-**Generate music (preview):**
+**Generate music:**
 ```
 gemini_music_generate(prompt: "warm lo-fi hip hop, mellow Rhodes, vinyl crackle, 70bpm")
-   → ~30s MP3 on disk (lyria-3-clip-preview)
-# Longer / WAV: gemini_music_generate(prompt: "…", model: "lyria-3-pro-preview", audio_format: "wav")
+   → 30s MP3 on disk (lyria-3-clip-preview)
+# Full-length song with vocals: gemini_music_generate(prompt: "…", model: "lyria-3.5")
 ```
 **⚠️ Chat-pasted/attached images can't be fed to these tools directly.** A pasted
 image reaches the assistant as a *vision* block — the assistant can SEE it but

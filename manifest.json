@@ -103,11 +103,11 @@
     },
     {
       "name": "gemini_video_generate",
-      "description": "Generate a short video (text→video, image→video, or edit) via the Gemini omni model; written to disk as MP4"
+      "description": "Generate a short video (text→video, image→video, interpolation, edit or extend) via the Gemini omni model, at 360p-4k; written to disk as MP4"
     },
     {
       "name": "gemini_music_generate",
-      "description": "Generate music from a text prompt via a Lyria model (clip or pro); written to disk as MP3/WAV"
+      "description": "Generate music from a text prompt via a Lyria model (clip, 3.5 or pro); single-turn; written to disk as MP3"
     },
     {
       "name": "gemini_get_result",

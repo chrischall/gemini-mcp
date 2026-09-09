@@ -36,12 +36,14 @@ export class SessionState {
   lastInteractionId: string | undefined;
 
   /**
-   * The same, for the media-specific tools, which keep their own chains.
-   * `gemini_music_generate` IS served by the hosted connector, so this one
-   * leaked across tenants exactly as `lastInteractionId` did; video is
-   * stdio-only today but carries the identical hazard, so both are scoped here.
+   * The same, for `gemini_video_generate`, which keeps its own chain. Video is
+   * stdio-only today, but it carries the identical cross-tenant hazard
+   * `lastInteractionId` did, so it is scoped here rather than at module level.
+   *
+   * There is deliberately no music equivalent: Lyria is single-turn (a chained
+   * call 400s on the track it is handed back), so `gemini_music_generate` has
+   * no continue_last to remember.
    */
-  lastMusicInteractionId: string | undefined;
   lastVideoInteractionId: string | undefined;
 
   /**
@@ -148,7 +150,6 @@ export class SessionState {
     this.costUsd = undefined;
     this.pricedCalls = 0;
     this.lastInteractionId = undefined;
-    this.lastMusicInteractionId = undefined;
     this.lastVideoInteractionId = undefined;
     this.writtenOutputs.clear();
     this.uploadCache.clear();

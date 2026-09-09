@@ -6,10 +6,20 @@
  */
 export const DEFAULT_IMAGE_MODEL = 'gemini-3.1-flash-image';
 
-/** Default video model (omni, Interactions API). Preview — overridable per-call. */
-export const DEFAULT_VIDEO_MODEL = 'gemini-omni-flash-preview';
-/** Default music model (Lyria clips, Interactions API). `lyria-3-pro-preview` is
- * the longer-form opt-in; both are preview and need a funded account. */
+/**
+ * Default video model (omni, Interactions API) — overridable per-call.
+ *
+ * GA since 2026-08-27. Its predecessor `gemini-omni-flash-preview` shuts down
+ * 2026-09-30, so this is a migration and not a preference; the GA model bills
+ * at the same rate and adds `resolution` and the `extend` task.
+ */
+export const DEFAULT_VIDEO_MODEL = 'gemini-omni-1.1-flash';
+/**
+ * Default music model (Lyria clips, Interactions API) — 30s, MP3, the cheapest
+ * of the three at $0.04 a song. `lyria-3.5` (minutes-long, vocals) and
+ * `lyria-3-pro-preview` are the opt-ins at twice the price, so neither is the
+ * default. All need a funded account.
+ */
 export const DEFAULT_MUSIC_MODEL = 'lyria-3-clip-preview';
 
 /** A trimmed image-model entry surfaced by `gemini_list_models`. */

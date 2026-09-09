@@ -8,7 +8,7 @@ v0.6.0: Google **Gemini** image-generation MCP server. Wraps the Generative
 Language REST API (`https://generativelanguage.googleapis.com/v1beta`) and
 exposes 13 tools to Claude over stdio: text→image and image→image generation,
 multi-turn conversational editing, consistent image *sets*, **video generation**
-(omni, `gemini_video_generate`), **music generation** (Lyria clips/pro,
+(omni, `gemini_video_generate`), **music generation** (Lyria clip/3.5/pro,
 `gemini_music_generate`), model listing (Nano Banana / Nano Banana Pro
 family), **Files API** upload/list/delete, and a credential
 healthcheck (`gemini_healthcheck`). Reference images can come from an
@@ -104,8 +104,9 @@ src/
                   #   limit on the first real photo)
   inputs.ts       # resolveImageInputs() — THE funnel: paths / base64 / images_url /
                   #   images_file_uris / clipboard → one ImageInput[]. Owns the
-                  #   fetch-once-per-call dedup, the >6MB → Files API promotion, and
-                  #   the stdio "referenced twice → upload once" cache
+                  #   fetch-once-per-call dedup, the >6MB → Files API promotion, the
+                  #   stdio "referenced twice → upload once" cache, and the base64
+                  #   FIRST-sighting upload (see Token cost below)
   fetch-image.ts  # fetchRemoteImage() — server-side URL fetch for images_url.
                   #   https-only, private/loopback/link-local refused, EVERY redirect
                   #   hop revalidated, streamed byte cap. Pure; no module-scope I/O
@@ -233,8 +234,8 @@ shared util, configured non-Bearer.
 | `gemini_image_edit` | `tools/generate.ts` | `POST /v1beta/models/{model}:generateContent` (input images required) | write (binary-out) |
 | `gemini_image_set` | `tools/set.ts` | `POST …:generateContent` ×N (master + scenes; `master`/`chain` ref mode; a failed scene is reported in `failed_scenes`, never thrown — N billed successes must not be lost to one failure) | write (binary-out) |
 | `gemini_interact` | `tools/interact.ts` | `POST /v1beta/interactions` (GA since 2026-07) | write (binary-out) |
-| `gemini_video_generate` | `tools/video.ts` | `POST /v1beta/interactions` (omni, `response_format: video`, preview) | write (binary-out, MP4→disk) |
-| `gemini_music_generate` | `tools/music.ts` | `POST /v1beta/interactions` (Lyria, `response_format: audio`, preview) | write (binary-out, MP3/WAV) |
+| `gemini_video_generate` | `tools/video.ts` | `POST /v1beta/interactions` (omni GA, `response_format: video` + `resolution`) | write (binary-out, MP4→disk) |
+| `gemini_music_generate` | `tools/music.ts` | `POST /v1beta/interactions` (Lyria, `response_format: audio`, single-turn) | write (binary-out, MP3) |
 | `gemini_token_usage` | `tools/usage.ts` | none (session counters) | read |
 | `gemini_get_result` | `tools/jobs.ts` | none, until a killed job needs recovering — then `GET /v1beta/interactions/{id}` + a media download | read (writes recovered media) |
 | `gemini_upload_file` | `tools/files.ts` | `POST /upload/v1beta/files` (resumable) | write |
@@ -262,11 +263,36 @@ chained-404 retry) and `extractInteraction()` (steps → image/video/audio media
 snake/camel-tolerant). Output goes through `emitMedia()` (in `tools/shared.ts`) →
 `writeMedia()` (MIME→extension); **video is disk-only** (MCP has no video content
 block, so an `inline` request is downgraded + noted), audio supports inline
-(`type:'audio'`). Both models are **preview** (funded account required). The
-**video** path was verified live 2026-08-22 (omni generated a 10s MP4; the
-`delivery: 'inline'` we send is a real enum value, and `uri` delivery works too);
-the **music** shapes are still docs-derived — hence the tolerant parsing stays.
+(`type:'audio'`). Both need a funded account. The **video** path was verified
+live 2026-08-22 and again on the GA model 2026-09-09 (`gemini-omni-1.1-flash`;
+the preview it replaced shuts down 2026-09-30); the **music** path was verified
+live 2026-09-09, and what that settled is that its docs-derived request shape
+had never worked — see the two paragraphs below.
 Realtime Lyria (WebSocket) is intentionally out (see `docs/superpowers/specs/…-video-music-tools-design.md`).
+
+**The music request shape was wrong from the day it shipped, and the video
+default was three weeks from shutdown** (both settled live 2026-09-09; details
+in `docs/GEMINI-API.md`). Two rules fell out of it:
+
+- **There is no `audio_format`.** The field the server used to send does not
+  exist — every Lyria model answers `400 Unknown parameter 'audio_format' at
+  'response_format'`, so the parameter never once worked. The real name is
+  `mime_type`, and every value but MP3 is refused per-model today, so nothing
+  is sent and nothing is exposed. Don't re-add a format lever without probing
+  it first; a param whose only non-default value is a guaranteed 400 costs
+  schema tokens on every request and a caller's turn to discover.
+- **Lyria is single-turn.** A chained music call is not refused at the edge —
+  it reaches the model and dies on its own prior output
+  (`400 Unsupported input mime type for this model: audio/s16le`). So
+  `gemini_music_generate` has no `previous_interaction_id` / `continue_last`,
+  and `SessionState` has no music id to leak.
+
+**Probe enums for free.** An invalid enum VALUE is rejected before any
+generation runs, so `{"resolution":"banana-p"}` returns the real enum at no
+cost — that is how `360p|720p|1080p|4k` and the `extend` task were confirmed.
+It does not extend to model *capability*: schema validation runs first, so
+"does this model accept WAV" cannot be masked behind a second bad field, and
+`background: "zzz"` will always answer about `background`.
 
 **What that probe settled, and what now ships** (details in
 `docs/GEMINI-API.md`): `delivery` is schema-valid for image/audio/video but
@@ -454,6 +480,27 @@ Two things to keep right:
   `tests/blob-store.test.ts` restates them independently so a drift fails here
   rather than as a 403 in production. They are also the shapes the retired
   Worker used, which is why links minted before the move still resolve.
+
+## Token cost
+
+The tool surface is a standing cost on every request: `tools/list` for the 13
+stdio tools is ~43.5KB of JSON, ~10.9k tokens, carried before the conversation
+says anything. `tests/tool-surface-budget.test.ts` pins a ceiling so it cannot
+drift back up a paragraph at a time (it was 47.5KB / ~11.9k before the trim
+that added the test). Raising the ceiling is fine and deliberate; growing into
+it by accident is what the test stops. **Rationale belongs in the doc comment
+above a schema, not in its `.describe()`** — one is free, the other is billed
+on every call, on every tool that shares it.
+
+**`images_base64` uploads on the FIRST sighting, unlike every other input.** A
+local path stays inline until its second reference, because the first one is
+free. Base64 is the opposite: the caller spent ~14k tokens per photo emitting
+it before the server ever saw it, so waiting for a second sighting means
+waiting until the cost has been paid twice. `resolveBase64` uploads
+immediately, caches by content digest (so the same photo across calls uploads
+once), and reports the `files/<id>` back under `image_inputs.base64_uploaded`
+— which is what the schema description tells the caller to reuse. Best-effort:
+an upload failure falls back to inline rather than failing the generation.
 
 ## Conventions
 

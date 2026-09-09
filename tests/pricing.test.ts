@@ -135,6 +135,23 @@ describe('video and music', () => {
     expect(estimateCost('gemini-omni-flash-preview', oneSecond)?.usd).toBeCloseTo(0.10136, 5);
   });
 
+  it('prices the GA omni model, not just the preview it replaces', () => {
+    // The default video model moved to gemini-omni-1.1-flash when the preview
+    // was given a 2026-09-30 shutdown date. `normalizeModel` only strips a
+    // `-preview` suffix, so the GA id does NOT fall back to the old entry: it
+    // needs a key of its own, or every video call prices as undefined.
+    const oneSecond = { input_tokens: 0, output_tokens: 5792, total_tokens: 5792, video_tokens: 5792 };
+    expect(estimateCost('gemini-omni-1.1-flash', oneSecond)?.usd).toBeCloseTo(0.10136, 5);
+  });
+
+  it('prices the 360p clip measured live at the figure the token count implies', () => {
+    // 2026-09-09: a 10s 360p clip from gemini-omni-1.1-flash reported 19,310
+    // video output tokens. At $17.50/1M that is $0.34 — the number that makes
+    // `resolution` a cost lever rather than a cosmetic one.
+    const clip360p = { input_tokens: 12, output_tokens: 19992, total_tokens: 20461, video_tokens: 19310 };
+    expect(estimateCost('gemini-omni-1.1-flash', clip360p)!.breakdown.video_usd).toBeCloseTo(0.3379, 4);
+  });
+
   it('bills a Lyria song per generation, ignoring its token counts', () => {
     // Lyria charges per song, so the tokens describe the work and say nothing
     // about the bill. Pricing them too would double-count.
@@ -144,6 +161,9 @@ describe('video and music', () => {
     expect(clip.breakdown.per_generation_usd).toBe(0.04);
     expect(clip.breakdown.audio_usd).toBe(0);
     expect(estimateCost('lyria-3-pro-preview', noisy)?.usd).toBe(0.08);
+    // lyria-3.5 (2026-09-03) is a bare id with no `-preview` to strip, so it
+    // too needs its own key rather than inheriting one.
+    expect(estimateCost('lyria-3.5', noisy)?.usd).toBe(0.08);
   });
 
   it('reconciles gemini-2.5-flash-image against the $0.039 per image it was derived from', () => {

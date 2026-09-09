@@ -403,7 +403,7 @@ describe('generateVideo', () => {
     const r = await c.generateVideo({ input: 'a cat surfing', aspectRatio: '9:16', task: 'text_to_video' });
     expect(cap.calls[0].url).toMatch(/\/v1beta\/interactions$/);
     const sent = JSON.parse(cap.calls[0].init.body as string);
-    expect(sent.model).toBe('gemini-omni-flash-preview');
+    expect(sent.model).toBe('gemini-omni-1.1-flash'); // GA; the preview shuts down 2026-09-30
     expect(sent.response_format.type).toBe('video');
     // uri delivery by default: the inline path caps at ~4MB and a 10s 720p clip
     // is already 2.6MB (verified live 2026-08-22). The bytes are downloaded by
@@ -457,14 +457,17 @@ describe('generateMusic', () => {
     expect(r.audios).toEqual([{ base64: 'AUDIOBYTES', mimeType: 'audio/mpeg' }]);
   });
 
-  it('includes audio_format and uses the given model', async () => {
+  it('uses the given model and sends no format field at all', async () => {
+    // This test used to assert `response_format.audio_format`, a field the API
+    // does not have — it 400s on every Lyria model (verified 2026-09-09). The
+    // request shape it pinned had never been run against a real key.
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = capturingFetch(makeMusicFixture());
     const c = new GeminiClient({ fetchImpl: cap.fn });
-    await c.generateMusic({ input: 'song', model: 'lyria-3-pro-preview', audioFormat: 'wav' });
+    await c.generateMusic({ input: 'song', model: 'lyria-3.5' });
     const sent = JSON.parse(cap.calls[0].init.body as string);
-    expect(sent.model).toBe('lyria-3-pro-preview');
-    expect(sent.response_format.audio_format).toBe('wav');
+    expect(sent.model).toBe('lyria-3.5');
+    expect(sent.response_format).toEqual({ type: 'audio' });
   });
 
   it('throws an actionable error when the response contains no audio', async () => {

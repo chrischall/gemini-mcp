@@ -5,14 +5,21 @@ import type { GeminiClient } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
-import { emitMedia, reportShape, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, type NamedMedia } from './shared.js';
+import { emitMedia, reportShape, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedMedia} from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { attachCost } from '../pricing.js';
 import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 /** omni's own aspect-ratio enum — NOT the image tools' ASPECT_RATIOS. */
 const VIDEO_ASPECT_RATIOS = ['16:9', '9:16'] as const;
-const VIDEO_TASKS = ['text_to_video', 'image_to_video', 'reference_to_video', 'edit'] as const;
+const VIDEO_TASKS = ['text_to_video', 'image_to_video', 'reference_to_video', 'edit', 'extend'] as const;
+/**
+ * omni's output resolutions (GA, verified live 2026-09-09). Unlike `delivery`
+ * this is content and not transport: it is the cost lever on the whole video
+ * path, since omni bills video output per token and a 10s clip came back at
+ * ~$0.34 in 360p against roughly triple that in 720p.
+ */
+const VIDEO_RESOLUTIONS = ['360p', '720p', '1080p', '4k'] as const;
 // `delivery` is transport, not content: uri hands back a Files API link the
 // client downloads with the api key, inline returns base64 capped at ~4MB.
 // Left unset here so the client's verified default (uri) applies; this is an
@@ -32,8 +39,10 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
     'gemini_video_generate',
     {
       description:
-        'Generate a short video via the Gemini omni model (preview): text→video, image→video / reference→video ' +
-        '(supply reference image[s]), or edit a prior video (task: "edit" + previous_interaction_id / continue_last). ' +
+        'Generate a short video (~10s) via the Gemini omni model: text→video, image→video / reference→video ' +
+        '(supply reference image[s]), interpolate between two stills (pass first frame then last frame as images), ' +
+        'or continue a prior video (task: "edit" or "extend" + previous_interaction_id / continue_last; extensions ' +
+        'add ~3-10s each, to ~40s total). Cost scales with `resolution` — draft at 360p, keep at 1080p/4k. ' +
         'Output is written to disk as MP4 (video has no inline MCP block). Video runs long — use `async: true` to get a ' +
         'job_id immediately and poll gemini_get_result, or raise `timeout_ms`. Preview model: needs a funded account.',
       annotations: { readOnlyHint: false, openWorldHint: true },
@@ -41,11 +50,12 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         prompt: z.string().min(1).describe('Description of the video to generate (or the edit instruction when task=edit)'),
         aspect_ratio: z.enum(VIDEO_ASPECT_RATIOS).optional().describe('Exact output aspect ratio (omni: 16:9 or 9:16). `orientation` is the plain-language shorthand; this wins if both are given.'),
         orientation: orientationSchema,
-        task: z.enum(VIDEO_TASKS).optional().describe('text_to_video (default), image_to_video / reference_to_video (need image input), or edit (needs previous_interaction_id)'),
+        task: z.enum(VIDEO_TASKS).optional().describe('text_to_video (default), image_to_video / reference_to_video (need image input), or edit / extend (need previous_interaction_id)'),
+        resolution: z.enum(VIDEO_RESOLUTIONS).optional().describe('Output resolution (default 720p). Video is billed per output token, so 360p costs roughly a third of 720p — use it for drafts'),
         images: z.array(z.string().min(1)).optional().describe('Reference image path(s) for image_to_video / reference_to_video'),
         images_url: imagesUrlSchema('Reference stills'),
         images_file_uris: imagesFileUrisSchema('Reference stills'),
-        images_base64: z.array(z.string().min(1)).optional().describe('Reference images as base64 strings or data URIs. Last resort: prefer images_url or images_file_uris, which keep image bytes out of the conversation'),
+        images_base64: imagesBase64Schema(),
         from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS clipboard as a reference'),
         filename: z.string().optional().describe('Base filename for the output video (extension stripped; default: slugified prompt)'),
         output_dir: z.string().optional().describe('Directory to write the video to (default: $GEMINI_OUTPUT_DIR or cwd)'),
@@ -86,7 +96,9 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
       // fingerprint so "portrait" and "9:16" dedup to one billable job.
       const aspectRatio = resolveAspectRatio(args, VIDEO_ASPECT_RATIOS);
       const fingerprint = fingerprintRequest('gemini_video_generate', {
-        model, prompt: args.prompt, aspect_ratio: aspectRatio, task: args.task,
+        // `resolution` is IN the fingerprint (a 4k render is not the 360p one)
+        // where `delivery` is not (same bytes, different transport).
+        model, prompt: args.prompt, aspect_ratio: aspectRatio, resolution: args.resolution, task: args.task,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
         images_url: args.images_url, images_file_uris: args.images_file_uris,
         previous_interaction_id: previousInteractionId,
@@ -99,6 +111,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
             images: inputs.length ? inputs : undefined,
             model: args.model,
             aspectRatio,
+            resolution: args.resolution,
             task: args.task,
             previousInteractionId,
             timeoutMs: args.timeout_ms,
@@ -114,6 +127,9 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         // The RESOLVED ratio: omni takes only 16:9/9:16, so a caller who asked
         // in words can see which of the two their request became.
         const meta = reportShape({ model, interaction_id: r.id }, { ...args, aspect_ratio: aspectRatio });
+        // Echoed for the same reason the resolved ratio is: it changed what
+        // the caller was billed, so it has to be visible in the result.
+        if (args.resolution) meta.resolution = args.resolution;
         if (previousInteractionId) meta.previous_interaction_id = previousInteractionId;
         if (r.usage) meta.usage = r.usage;
         attachCost(meta, model, r.usage);
