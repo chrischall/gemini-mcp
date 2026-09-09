@@ -84,7 +84,7 @@ describe('gemini_upload_file — url', () => {
     };
     expect(capture({}, true)).toMatch(/up to 100MB/);
     expect(capture({}, false)).toMatch(/up to 25MB/);
-    expect(capture({}, false)).toMatch(/POST the raw bytes to \/upload/);
+    expect(capture({}, false)).toMatch(/gemini_get_upload_url/);
 
     const fetchRemoteImage = vi.fn().mockResolvedValue({
       bytes: PNG_BYTES, mimeType: 'image/png', size: 4, finalUrl: 'https://x/y', requestedUrl: 'https://x/y',

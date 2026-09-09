@@ -99,8 +99,8 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           : ', or `r2_key` (re-upload media this connector generated, from media[].r2_key in an earlier result).') +
         (onDisk
           ? ''
-          : ' This connector also accepts raw bytes over HTTP: POST them to /upload with the same Authorization header ' +
-            'and a Content-Type of image/*, which avoids base64 entirely.'),
+          : ' To upload a local file without base64: mint a signed PUT URL with gemini_get_upload_url, PUT the bytes to it, ' +
+            'then pass the returned r2_key here.'),
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: {
         url: z
@@ -110,7 +110,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           .describe(
             `Public https URL the SERVER downloads and uploads (image/video/audio, up to ${wholeMb(urlMaxBytes)}MB). ` +
               'No bytes pass through the conversation.' +
-              (onDisk ? '' : ' Larger files: POST the raw bytes to /upload, which streams instead of buffering.'),
+              (onDisk ? '' : ' Larger files: PUT them to a gemini_get_upload_url link and pass the r2_key instead — that path does not buffer.'),
           ),
         data_base64: z
           .string()

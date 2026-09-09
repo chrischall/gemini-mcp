@@ -12,12 +12,12 @@ import { step } from '../errors.js';
  *
  *   curl -sS -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "<upload_url>"
  *
- * This closes the last gap in the no-bytes-in-the-conversation story. The two
- * existing byte routes each exclude a common caller: `images_base64` costs
- * ~14k tokens per photo and corrupts silently on a truncated read, and
- * `POST /upload` needs the MCP session's OAuth bearer token, which a sandboxed
- * shell doesn't have. A signed URL is mintable by the session and usable by
- * the shell.
+ * This closes the last gap in the no-bytes-in-the-conversation story. The
+ * alternatives each exclude a common caller: `images_base64` costs ~14k tokens
+ * per photo and corrupts silently on a truncated read, and the Worker's old
+ * `POST /upload` (retired with the Worker) needed the MCP session's OAuth
+ * bearer token, which a sandboxed shell does not have. A signed URL is mintable
+ * by the session and usable by the shell.
  *
  * Hosted only — stdio has no HTTP surface to PUT against (and no need: it reads
  * local paths directly). Gated on `client.uploadUrls`, the same pattern as
