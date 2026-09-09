@@ -48,10 +48,11 @@ live('base64 inputs are promoted to a Files API reference', () => {
     const r = await c.generate({ prompt: 'describe the attached image as a single colour swatch', images: inputs });
     expect(r.images.length).toBeGreaterThan(0);
 
-    // Same bytes again: cached, no second upload.
+    // Same bytes again: cached, no second upload — and still reported, since
+    // the repeat paste is the caller who needs the file_uri.
     const again = await resolveImageInputs({ images_base64: [PNG_B64] }, c);
     expect(again.inputs[0].uri).toBe(inputs[0].uri);
-    expect(again.report?.base64_uploaded).toBeUndefined();
+    expect(again.report?.base64_uploaded?.[0].file_uri).toBe(report?.base64_uploaded?.[0].file_uri);
   }, 180_000);
 });
 

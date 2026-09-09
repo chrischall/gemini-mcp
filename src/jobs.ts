@@ -116,6 +116,18 @@ export function fingerprintRequest(toolName: string, parts: unknown): string {
 }
 
 /**
+ * The in-memory replay key: an idempotency key is only ever honoured for the
+ * REQUEST it was first used with.
+ *
+ * Same NUL separator, same reason, as {@link fingerprintRequest} — and the
+ * fingerprint is already namespaced by tool, so two tools handed the same "1"
+ * cannot collide either.
+ */
+function replayKey(idempotencyKey: string, fingerprint: string): string {
+  return `${idempotencyKey}\u0000${fingerprint}`;
+}
+
+/**
  * Re-mint any media URLs a recorded result carries, before it is replayed.
  *
  * A recorded result can outlive the signed URLs inside it — and after a change
@@ -319,7 +331,18 @@ export class JobRegistry {
   now: () => number = () => Date.now();
 
   private readonly jobs = new Map<string, JobEntry>();
-  private readonly byKey = new Map<string, string>(); // idempotencyKey -> jobId
+  /**
+   * `idempotencyKey + fingerprint` -> jobId. Keyed on BOTH, never the key
+   * alone: an idempotency_key is a habit as often as a promise ("1", "test",
+   * "retry"), so a key-only lookup hands a caller a different prompt's result
+   * and labels it `reused`. This is the rule `durableByKey` has always applied
+   * to the 24h window; the 10-minute in-memory window now applies it too.
+   *
+   * Composite rather than a stored comparison so that reusing a key for a
+   * second request cannot evict the first: both pairings coexist, and a retry
+   * of either still replays.
+   */
+  private readonly byKey = new Map<string, string>();
   private readonly runningByFingerprint = new Map<string, string>(); // fingerprint -> jobId (only while running)
   /** Durable bookkeeping still in flight — awaited by `drain()` in tests. */
   private readonly pending = new Set<Promise<unknown>>();
@@ -436,7 +459,10 @@ export class JobRegistry {
 
   private remove(id: string, entry: JobEntry): void {
     this.jobs.delete(id);
-    if (entry.idempotencyKey !== undefined && this.byKey.get(entry.idempotencyKey) === id) this.byKey.delete(entry.idempotencyKey);
+    if (entry.idempotencyKey !== undefined) {
+      const key = replayKey(entry.idempotencyKey, entry.fingerprint);
+      if (this.byKey.get(key) === id) this.byKey.delete(key);
+    }
     if (this.runningByFingerprint.get(entry.fingerprint) === id) this.runningByFingerprint.delete(entry.fingerprint);
   }
 
@@ -467,7 +493,7 @@ export class JobRegistry {
 
     let hit: JobEntry | undefined;
     if (idempotencyKey !== undefined) {
-      const id = this.byKey.get(idempotencyKey);
+      const id = this.byKey.get(replayKey(idempotencyKey, fingerprint));
       const entry = id ? this.jobs.get(id) : undefined;
       if (entry && entry.status !== 'failed' && !isExpired(entry, now)) hit = entry;
     } else {
@@ -522,7 +548,7 @@ export class JobRegistry {
       ...(earlyInteractionId !== undefined ? { interactionId: earlyInteractionId } : {}),
     };
     this.jobs.set(jobId, entry);
-    if (idempotencyKey !== undefined) this.byKey.set(idempotencyKey, jobId);
+    if (idempotencyKey !== undefined) this.byKey.set(replayKey(idempotencyKey, fingerprint), jobId);
     this.runningByFingerprint.set(fingerprint, jobId);
 
     // Write the "running" record BEFORE the work can finish. A record that only
