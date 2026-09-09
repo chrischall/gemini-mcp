@@ -141,7 +141,9 @@ src/
                   #   reads the <image>.json sidecars as an on-disk chain index;
                   #   backs both chain recoveries in tools/interact.ts. Never throws
                   #   (missing dir / malformed JSON are skipped) — recovery is
-                  #   best-effort and must not fail a recoverable call
+                  #   best-effort and must not fail a recoverable call. The HOSTED
+                  #   twin lives on the sink (writeSidecar/findByInteraction/
+                  #   latestInteractionId in storage/media.ts)
   job-store.ts    # DURABLE job records over the blob store (jobs/<tenant>/…) —
                   #   what makes a job survive the hosted machine stopping.
                   #   Heartbeat + executor-lost rule; best-effort, never throws.
@@ -445,6 +447,25 @@ which is the reason inline must not become the hosted default. The cap on a
 view is the TRANSPORT's, not the model's: an image block is tokenized as an
 image whatever its byte size, but an oversized payload gets rejected or
 truncated on the way out and reads as a broken tool.
+
+**A sidecar is not a filesystem feature.** On disk, `gemini_interact` writes an
+`<image>.json` beside every image recording the interaction id that produced it,
+and that file is what makes a lost response survivable: `continue_last` resumes
+across a restart, and a chained 404 is re-anchored on the image the dead
+interaction actually made. The hosted deployment had none of it and lost the id
+the moment a response was dropped — the exact failure the disk build was
+hardened against. An object store holds a small JSON record perfectly well, so
+it now writes one at `<mediaKey>.json`: beside the object rather than under a
+prefix of its own, so the retention sweep that removes the image removes its
+record with it. `parseMediaKey` skips them, or a listing would offer a JSON blob
+as a recent generation.
+
+Three rules carried over from the disk version. Re-anchoring matches on the
+interaction id ONLY — never "the newest object" — because re-anchoring an edit
+on the wrong picture corrupts it silently, so an unknown id rethrows. Writing is
+best-effort and never throws: the generation is the job. And media with no
+record at all (everything generated before this shipped) keeps its place in a
+listing and simply carries no metadata.
 
 **Hosted on mcp-host.** The same stdio server runs as a child there; mcp-host
 proxies MCP over streamable HTTP to claude.ai and wraps it in per-MCP OAuth, so

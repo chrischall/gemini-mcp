@@ -199,7 +199,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         // A set is a batch someone comes back to: sign its links (and the
         // bundle's) for ~7 days rather than the default ~48h. The sink clamps
         // to the retention window; the disk sink ignores it entirely.
-        return emit(named, { ...args, sink: client.mediaSink, urlTtlMs: SET_URL_TTL_MS }, meta);
+        return emit(named, { ...args, sink: client.mediaSink, urlTtlMs: SET_URL_TTL_MS, sidecar: { prompt: args.master_prompt } }, meta);
       });
     },
   );

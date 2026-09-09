@@ -121,6 +121,36 @@ export interface MediaSink {
    */
   listRecentPage?(opts: { limit?: number; sinceDay?: string }): Promise<{ media: RecentMedia[]; truncated: boolean; scannedPages: number }>;
   /**
+   * Record what produced a stored object, beside the object itself.
+   *
+   * The hosted answer to the `<image>.json` sidecar. On disk that file is what
+   * makes a lost response survivable — the interaction id outlives the
+   * response, so a chain can be continued and a chained 404 can be re-anchored
+   * on the image the dead interaction actually made. Without it the hosted
+   * deployment loses the id the moment a response is dropped, which is the
+   * failure the disk build was hardened against.
+   *
+   * Best-effort and never throws: a record that fails to write must not fail
+   * the generation it describes. Absent on the disk sink, which writes real
+   * sidecars through `onWritten` instead.
+   */
+  writeSidecar?(key: string, record: MediaSidecar): Promise<void>;
+  /**
+   * The stored object a given interaction produced, by id.
+   *
+   * Matched on the id ONLY, never "the newest object": re-anchoring an edit on
+   * the wrong picture corrupts it silently, so an unknown id comes back
+   * undefined and the caller rethrows rather than guessing.
+   */
+  findByInteraction?(interactionId: string): Promise<RecentMedia | undefined>;
+  /**
+   * The most recent interaction id this store has a record for — the hosted
+   * twin of `latestInteractionId` over the output dir. Backs `continue_last`
+   * across a restart, where the in-memory id is gone but the interaction
+   * itself is still alive upstream.
+   */
+  latestInteractionId?(): Promise<string | undefined>;
+  /**
    * One-line, honest description of where the refs point — echoed into the
    * result payload so the caller is never left guessing whether it got a path,
    * a fetchable URL, or an opaque object ref. `undefined` for the disk sink,
@@ -182,6 +212,23 @@ export interface RecentMedia {
   /** A freshly-signed, openable link. */
   url?: string;
   expiresAt?: string;
+  /** From the object's sidecar record, when it has one (see MediaSink.writeSidecar). */
+  interactionId?: string;
+  prompt?: string;
+  model?: string;
+  createdAt?: string;
+}
+
+/**
+ * What a hosted sidecar records. The disk build writes the same shape as
+ * `<image>.json`; this is its object-store twin.
+ */
+export interface MediaSidecar {
+  interaction_id?: string;
+  prompt?: string;
+  model?: string;
+  /** ISO timestamp, filled in by the sink. */
+  created?: string;
 }
 
 export interface R2SinkOptions {
@@ -297,6 +344,21 @@ export function safeKeySegment(base: string): string {
 }
 
 /**
+ * Suffix that turns a media key into its sidecar's key. Beside the object, not
+ * under a prefix of its own, so one retention sweep covers both.
+ */
+const SIDECAR_SUFFIX = '.json';
+
+/**
+ * How far back `findByInteraction` looks. A chain being re-anchored is by
+ * definition recent, and an unbounded scan on a tool call is its own failure.
+ */
+const MAX_INTERACTION_SCAN = 200;
+
+/** Longest prompt a sidecar keeps. Enough to recognise, not to reproduce. */
+const SIDECAR_PROMPT_MAX = 500;
+
+/**
  * The hosted-connector sink: one R2 object per generated item.
  *
  * Keys are `<prefix>/<YYYY-MM-DD>/<random>-<base>.<ext>`. The random component
@@ -355,6 +417,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       // filtering mistake.
       const prefix = await ownPrefix();
       const found: RecentMedia[] = [];
+      const sidecarKeys = new Set<string>();
       let cursor: string | undefined;
       let truncated = false;
       let scannedPages = 0;
@@ -363,6 +426,10 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
         scannedPages = page + 1;
         const listed = await bucket.list({ prefix, cursor, limit: 1000 });
         for (const obj of listed.objects) {
+          // A sidecar shares its media's key plus a suffix, so it lands in this
+          // same listing. It is metadata, not a generation: offering one as
+          // "recent media" would hand back a JSON blob to look at.
+          if (obj.key.endsWith(SIDECAR_SUFFIX)) { sidecarKeys.add(obj.key); continue; }
           const parsed = parseMediaKey(obj.key, prefix);
           if (!parsed) continue; // not a dated object key — skip, never throw
           if (sinceDay && parsed.day < sinceDay) continue;
@@ -383,10 +450,58 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       const media = await Promise.all(
         page.map(async (entry) => {
           const link = await describe(entry.key, expiresAtMs);
-          return { ...entry, ...(link.unavailable ? {} : { url: link.ref, expiresAt: link.expiresAt }) };
+          // Only for objects the walk actually saw a record for — a media entry
+          // with no sidecar (everything generated before they existed, and
+          // anything whose write failed) keeps its place in the listing and
+          // simply carries no metadata.
+          const record = sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`) ? await readSidecar(entry.key) : undefined;
+          return {
+            ...entry,
+            ...(link.unavailable ? {} : { url: link.ref, expiresAt: link.expiresAt }),
+            ...(record?.interaction_id ? { interactionId: record.interaction_id } : {}),
+            ...(record?.prompt ? { prompt: record.prompt } : {}),
+            ...(record?.model ? { model: record.model } : {}),
+            ...(record?.created ? { createdAt: record.created } : {}),
+          };
         }),
       );
       return { media, truncated: truncated || found.length > limit, scannedPages };
+    },
+    /**
+     * `<mediaKey>.json`, deliberately beside the object rather than under a
+     * prefix of its own: the retention sweep that removes the image removes its
+     * record with it, so a sidecar can never outlive the thing it describes.
+     * `parseMediaKey` skips it, so a listing never offers one as media.
+     */
+    async writeSidecar(key, record) {
+      try {
+        if (!(await owned(key))) return;
+        const body = new TextEncoder().encode(JSON.stringify({
+          ...record,
+          // Capped: a record exists to identify a generation later, not to
+          // store the brief. An 8k prompt would put more bytes in metadata than
+          // some images have, on every single object.
+          ...(record.prompt ? { prompt: record.prompt.slice(0, SIDECAR_PROMPT_MAX) } : {}),
+          created: now().toISOString(),
+        }));
+        await bucket.put(`${key}${SIDECAR_SUFFIX}`, body, { httpMetadata: { contentType: 'application/json' } });
+      } catch {
+        // Best-effort by design: the generation is the job, and a record that
+        // fails to write must not fail the image it describes.
+      }
+    },
+    async latestInteractionId() {
+      const { media } = await this.listRecentPage!({ limit: MAX_INTERACTION_SCAN });
+      // `media` is newest-first, so the first record with an id is the answer.
+      return media.find((m) => m.interactionId)?.interactionId;
+    },
+    async findByInteraction(interactionId) {
+      const wanted = interactionId.trim();
+      if (!wanted) return undefined;
+      // The listing already carries every record, so this is a scan over what
+      // listRecentPage read rather than a second walk of the store.
+      const { media } = await this.listRecentPage!({ limit: MAX_INTERACTION_SCAN });
+      return media.find((m) => m.interactionId === wanted);
     },
     async resign(key) {
       if (!(await owned(key))) return undefined;
@@ -424,6 +539,19 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
           : 'Generated media was stored, but this connector has no public media URL configured and no signing route available, so the values above are bare object keys rather than fetchable links. ' +
             'Set MEDIA_PUBLIC_BASE_URL on the Worker, or pass inline: true to receive the bytes directly.',
   };
+
+  /** A stored object's sidecar record, or undefined — never a throw. */
+  async function readSidecar(key: string): Promise<MediaSidecar | undefined> {
+    try {
+      const obj = await bucket.get?.(`${key}${SIDECAR_SUFFIX}`);
+      if (!obj) return undefined;
+      return JSON.parse(new TextDecoder().decode(new Uint8Array(await obj.arrayBuffer()))) as MediaSidecar;
+    } catch {
+      // A malformed or unreadable record is the same as none: this decorates a
+      // listing, and a listing that throws is worse than one without prompts.
+      return undefined;
+    }
+  }
 
   /** One stored object → the ref the caller sees, plus its key and expiry. */
   async function describe(key: string, expiresAtMs: number): Promise<PersistedMedia> {

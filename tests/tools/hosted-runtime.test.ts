@@ -95,8 +95,12 @@ describe('media sink threading', () => {
     );
     await h.close();
 
-    expect(b.keys).toHaveLength(1);
-    expect((body.images as string[])[0]).toBe(`https://media.example.com/${b.keys[0]}`);
+    // Two objects: the image, and the sidecar record beside it that makes a
+    // later listing identifiable (prompt, model, interaction id).
+    const mediaKeys = b.keys.filter((k) => !k.endsWith('.json'));
+    expect(mediaKeys).toHaveLength(1);
+    expect(b.keys.filter((k) => k.endsWith('.json'))).toHaveLength(1);
+    expect((body.images as string[])[0]).toBe(`https://media.example.com/${mediaKeys[0]}`);
     expect(body.storage).toBe('r2');
     expect(String(body.storage_note)).toMatch(/not local file paths|NOT fetchable/i);
   });
