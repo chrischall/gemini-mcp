@@ -488,11 +488,11 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
     note: () =>
       publicBase
         ? 'Generated media was uploaded to R2 and the values above are public URLs (not local file paths) — open or download them directly. ' +
-          'This hosted connector has no filesystem, so `output_dir` is ignored and no <image>.json sidecar is written — capture interaction_id from this result to chain further turns.'
+          'This connector has no filesystem, so `output_dir` is ignored — but the interaction id is recorded beside each image, so continue_last and chain recovery still work.'
         : signedBase
           ? 'Generated media is served by this connector at the signed URLs above — open them in a browser or fetch them with curl; no auth header is needed, the signature is in the link. ' +
             'They expire (see media[].expires_at), and the objects behind them are cleaned up on a retention schedule. ' +
-            'This hosted connector has no filesystem, so `output_dir` is ignored and no <image>.json sidecar is written — capture interaction_id from this result to chain further turns.'
+            'This connector has no filesystem, so `output_dir` is ignored — but the interaction id is recorded beside each image, so continue_last and chain recovery still work.'
           : 'Generated media was stored, but this connector has no public media URL configured and no signing route available, so the values above are bare object keys rather than fetchable links. ' +
             'Set MEDIA_PUBLIC_BASE_URL on the Worker, or pass inline: true to receive the bytes directly.',
   };

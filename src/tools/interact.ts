@@ -88,9 +88,10 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
       'un-chained (`chain_recovered`); a second 404 means the interaction id was not the cause — check the model id / ' +
       'files uri. '
     : 'Each result returns an image URL to open or share (`media[].url`) — show it to the user rather than assuming they ' +
-      'can see the image. There is no filesystem here: no output dir, no sidecar, so a lost response cannot be recovered ' +
-      'from disk and a chained 404 cannot be re-anchored. Capture `interaction_id` from every result, and give long ' +
-      'generations a `max_wait_ms` budget. ';
+      'can see the image. There is no output dir here, but a lost response is still recoverable: the interaction id is ' +
+      'stored beside each image, so `continue_last: true` survives a restart and a chained 404 is re-anchored on the ' +
+      'image that interaction produced (reported as `chain_recovered`). gemini_list_recent_media shows what each stored ' +
+      'image was. Give long generations a `max_wait_ms` budget. ';
 
   server.registerTool(
     'gemini_interact',
