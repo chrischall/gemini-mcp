@@ -383,14 +383,15 @@ result is annotated `reused: true` + `reused_job_id`, and no second upstream
 (billable) call is made. Failed jobs are not reused. Registry is bounded
 (TTL + `JOB_MAX`); `client.session.reset()` clears it between tests.
 
-**A durable replay is gated on the FINGERPRINT, not just the key.** The two
-windows differ because they are bounded by different things — the in-memory one
-by a process that no longer exists, the durable one only by storage retention
-(~30 days). An `idempotency_key` is a habit as often as a promise (`"1"`,
-`"test"`, `"retry"`), so replaying on the key alone would hand back a *different
-prompt's* image weeks later and label it a cache hit. `durableByKey` therefore
-requires `record.fingerprint === fingerprint` and an age inside
-`DURABLE_JOB_REUSE_MS`; anything else is a genuinely new generation.
+**EVERY replay is gated on the FINGERPRINT, not just the key.** An
+`idempotency_key` is a habit as often as a promise (`"1"`, `"test"`, `"retry"`),
+so replaying on the key alone hands back a *different prompt's* image and labels
+it a cache hit. `durableByKey` has always required `record.fingerprint ===
+fingerprint` plus an age inside `DURABLE_JOB_REUSE_MS`. The in-memory window
+did not, which made the same mistake available inside ten minutes — `byKey` is
+now keyed on the key AND the fingerprint. Composite rather than a stored
+comparison, so reusing a key for a second request cannot evict the first: both
+pairings coexist and a retry of either still replays free.
 
 **The registry is per SESSION, not per process** — it lives at
 `client.session.jobs` (`src/session.ts`). Hosted, one
@@ -499,8 +500,15 @@ it before the server ever saw it, so waiting for a second sighting means
 waiting until the cost has been paid twice. `resolveBase64` uploads
 immediately, caches by content digest (so the same photo across calls uploads
 once), and reports the `files/<id>` back under `image_inputs.base64_uploaded`
-— which is what the schema description tells the caller to reuse. Best-effort:
-an upload failure falls back to inline rather than failing the generation.
+— which is what the schema description tells the caller to reuse. The CACHE HIT
+reports too: the repeat paste is the one caller who needs that uri.
+
+It is an optimisation, so it may never cost the generation it was meant to make
+cheaper. The whole body — decoding included, since `decodeImageInput` does not
+validate a `data:` payload and a URL-safe one throws in `atob` — sits inside
+one try that falls back to inline, and the upload carries an
+`AbortSignal.timeout` because `uploadToFilesApi` is otherwise untimed and this
+puts two round trips in front of a call nobody asked to wait for.
 
 ## Conventions
 
