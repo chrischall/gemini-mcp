@@ -358,10 +358,19 @@ export function safeKeySegment(base: string): string {
 }
 
 /**
- * Suffix that turns a media key into its sidecar's key. Beside the object, not
+ * Suffixes that turn a media key into its sidecar's key. Beside the object, not
  * under a prefix of its own, so one retention sweep covers both.
+ *
+ * TWO of them, because only some records can answer "what do I chain from".
+ * `gemini_interact`, video and music produce an interaction id; a plain
+ * `gemini_image_generate` produces a prompt and nothing to resume. Splitting
+ * them by KEY is what lets a lookup skip the ones that can never match without
+ * opening them — forty ordinary generations used to bury the chain and make
+ * continue_last come back empty. Both end in `.json`, so one check still keeps
+ * records out of a media listing.
  */
 const SIDECAR_SUFFIX = '.json';
+const CHAIN_SIDECAR_SUFFIX = '.chain.json';
 
 /**
  * How many sidecar records a lookup will READ before giving up.
@@ -377,6 +386,23 @@ const MAX_SIDECAR_READS = 40;
 
 /** Longest prompt a sidecar keeps. Enough to recognise, not to reproduce. */
 const SIDECAR_PROMPT_MAX = 500;
+
+/** How many record reads a single listing will have open at once. */
+const DECORATE_CONCURRENCY = 8;
+
+/** `Promise.all` with a ceiling on how many run at once, preserving order. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
 
 /**
  * The hosted-connector sink: one R2 object per generated item.
@@ -441,14 +467,17 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       return { media, truncated: truncated || entries.length > limit, scannedPages };
     },
     /**
-     * `<mediaKey>.json`, deliberately beside the object rather than under a
-     * prefix of its own: the retention sweep that removes the image removes its
-     * record with it, so a sidecar can never outlive the thing it describes.
-     * `parseMediaKey` skips it, so a listing never offers one as media.
+     * `<mediaKey>.json` (or `.chain.json`), deliberately beside the object
+     * rather than under a prefix of its own: the retention sweep that removes
+     * the image removes its record with it, so a sidecar can never outlive the
+     * thing it describes. `walk()` is what keeps records out of a media
+     * listing — it skips any key ending in the suffix BEFORE parsing, because
+     * `parseMediaKey` would happily parse one into a valid-looking entry.
      */
     async writeSidecar(key, record) {
       try {
         if (!(await owned(key))) return;
+        const suffix = record.interaction_id ? CHAIN_SIDECAR_SUFFIX : SIDECAR_SUFFIX;
         const body = new TextEncoder().encode(JSON.stringify({
           ...record,
           // Capped: a record exists to identify a generation later, not to
@@ -457,7 +486,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
           ...(record.prompt ? { prompt: record.prompt.slice(0, SIDECAR_PROMPT_MAX) } : {}),
           created: now().toISOString(),
         }));
-        await bucket.put(`${key}${SIDECAR_SUFFIX}`, body, { httpMetadata: { contentType: 'application/json' } });
+        await bucket.put(`${key}${suffix}`, body, { httpMetadata: { contentType: 'application/json' } });
       } catch {
         // Best-effort by design: the generation is the job, and a record that
         // fails to write must not fail the image it describes.
@@ -568,14 +597,19 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
    */
   async function decorate(entries: RecentMedia[], sidecarKeys?: Set<string>, known?: MediaSidecar): Promise<RecentMedia[]> {
     const expiresAtMs = now().getTime() + ttlMs;
-    return Promise.all(
-      entries.map(async (entry) => {
+    // Batched, not one Promise.all over the page: a listing of a hundred fired
+    // a hundred concurrent store reads while the id lookups were carefully
+    // budgeted. One tool call should not open a hundred connections to
+    // decorate a page.
+    return mapLimit(entries, DECORATE_CONCURRENCY, async (entry) => {
         const link = await describe(entry.key, expiresAtMs);
         // Only where the walk actually saw a record — media with none (anything
         // generated before sidecars existed, and anything whose write failed)
         // keeps its place and simply carries no metadata.
-        const has = sidecarKeys ? sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`) : true;
-        const record = known ?? (has ? await readSidecar(entry.key) : undefined);
+        const has = sidecarKeys
+          ? sidecarKeys.has(`${entry.key}${CHAIN_SIDECAR_SUFFIX}`) || sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`)
+          : true;
+        const record = known ?? (has ? await readSidecar(entry.key, sidecarKeys) : undefined);
         return {
           ...entry,
           ...(link.unavailable ? {} : { url: link.ref, expiresAt: link.expiresAt }),
@@ -584,8 +618,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
           ...(record?.model ? { model: record.model } : {}),
           ...(record?.created ? { createdAt: record.created } : {}),
         };
-      }),
-    );
+    });
   }
 
   /**
@@ -602,7 +635,9 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
     const { entries, sidecarKeys } = await walk({});
     let reads = 0;
     for (const entry of entries) {
-      if (!sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`)) continue;
+      // Chain records only: a prompt-only record cannot answer this, and
+      // reading it to find that out is what the budget was being spent on.
+      if (!sidecarKeys.has(`${entry.key}${CHAIN_SIDECAR_SUFFIX}`)) continue;
       if (++reads > MAX_SIDECAR_READS) return undefined;
       const record = await readSidecar(entry.key);
       if (record?.interaction_id && accept(record)) return { entry, record };
@@ -633,7 +668,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
       // Entries are day-descending, so once a day has produced a match every
       // later entry is older and cannot beat it.
       if (bestDay && entry.day < bestDay) break;
-      if (!sidecarKeys.has(`${entry.key}${SIDECAR_SUFFIX}`)) continue;
+      if (!sidecarKeys.has(`${entry.key}${CHAIN_SIDECAR_SUFFIX}`)) continue;
       if (++reads > MAX_SIDECAR_READS) break;
       const record = await readSidecar(entry.key);
       if (!record?.interaction_id || (record.kind ?? 'image') !== kind) continue;
@@ -646,10 +681,14 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
     return best?.id;
   }
 
-  /** A stored object's sidecar record, or undefined — never a throw. */
-  async function readSidecar(key: string): Promise<MediaSidecar | undefined> {
+  /**
+   * A stored object's sidecar record, or undefined — never a throw. Prefers the
+   * chain record: an object has one or the other, never both.
+   */
+  async function readSidecar(key: string, sidecarKeys?: Set<string>): Promise<MediaSidecar | undefined> {
+    const suffix = !sidecarKeys || sidecarKeys.has(`${key}${CHAIN_SIDECAR_SUFFIX}`) ? CHAIN_SIDECAR_SUFFIX : SIDECAR_SUFFIX;
     try {
-      const obj = await bucket.get?.(`${key}${SIDECAR_SUFFIX}`);
+      const obj = await bucket.get?.(`${key}${suffix}`);
       if (!obj) return undefined;
       return JSON.parse(new TextDecoder().decode(new Uint8Array(await obj.arrayBuffer()))) as MediaSidecar;
     } catch {

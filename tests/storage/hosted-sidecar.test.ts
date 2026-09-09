@@ -54,7 +54,9 @@ describe('hosted sidecars', () => {
     const [stored] = await s.persist([{ base: 'poster', base64: PNG, mimeType: 'image/png' }], {});
     await s.writeSidecar!(stored.key!, { interaction_id: 'v1_abc', prompt: 'a red poster', model: 'gemini-3.1-flash-image' });
 
-    const record = JSON.parse(new TextDecoder().decode(b.objects.get(`${stored.key}.json`)!.bytes));
+    // A record carrying an interaction id lands under the CHAIN suffix, which
+    // is what lets a lookup skip prompt-only records without opening them.
+    const record = JSON.parse(new TextDecoder().decode(b.objects.get(`${stored.key}.chain.json`)!.bytes));
     expect(record).toMatchObject({ interaction_id: 'v1_abc', prompt: 'a red poster', model: 'gemini-3.1-flash-image' });
     expect(typeof record.created).toBe('string');
   });
@@ -232,6 +234,64 @@ describe('hosted sidecars', () => {
     const page = await createR2Sink(paged, { tenant: 't', publicBaseUrl: 'https://cdn.example' }).listRecentPage!({ limit: 60 });
     expect(page.media).toHaveLength(60);
     expect(page.truncated).toBe(false);
+  });
+
+  it('does not spend the lookup budget on records that can never match', async () => {
+    // Only interact, video and music produce an interaction id. A plain
+    // gemini_image_generate writes a prompt-only record — useful in a listing,
+    // never an answer to "what do I chain from". Reading them anyway meant
+    // forty ordinary generations could bury the chain and make continue_last
+    // come back empty.
+    const b = bucket();
+    const s = sink(b);
+    const [chained] = await s.persist([{ base: 'chained', base64: PNG, mimeType: 'image/png' }], {});
+    await s.writeSidecar!(chained.key!, { interaction_id: 'v1_chain', kind: 'image' });
+    for (let i = 0; i < 60; i++) {
+      const [plain] = await s.persist([{ base: `plain${i}`, base64: PNG, mimeType: 'image/png' }], {});
+      await s.writeSidecar!(plain.key!, { prompt: `a cat ${i}`, kind: 'image' });
+    }
+
+    let reads = 0;
+    const counting = { ...b, get: async (k: string) => { reads++; return b.get!(k); } };
+    const s2 = sink(counting);
+    expect(await s2.latestInteractionId!('image')).toBe('v1_chain');
+    expect(await s2.findByInteraction!('v1_chain')).toBeDefined();
+    // One record read per lookup: the sixty prompt-only ones are never opened.
+    expect(reads).toBeLessThanOrEqual(2);
+  });
+
+  it('still pairs a prompt-only record with its media in a listing', async () => {
+    const b = bucket();
+    const s = sink(b);
+    const [stored] = await s.persist([{ base: 'plain', base64: PNG, mimeType: 'image/png' }], {});
+    await s.writeSidecar!(stored.key!, { prompt: 'a cat', kind: 'image' });
+    const listed = await s.listRecent!({ limit: 5 });
+    expect(listed[0].prompt).toBe('a cat');
+    expect(listed).toHaveLength(1); // and the record is not itself listed
+  });
+
+  it('reads a listing\'s records in bounded batches, not all at once', async () => {
+    // A listing of a hundred fired a hundred concurrent gets, uncapped, while
+    // the two id lookups were carefully budgeted. One tool call should not open
+    // a hundred connections to decorate a page.
+    const b = bucket();
+    const s = sink(b);
+    for (let i = 0; i < 40; i++) {
+      const [stored] = await s.persist([{ base: `n${i}`, base64: PNG, mimeType: 'image/png' }], {});
+      await s.writeSidecar!(stored.key!, { prompt: `p${i}`, kind: 'image' });
+    }
+    let inFlight = 0;
+    let peak = 0;
+    const counting = {
+      ...b,
+      get: async (k: string) => {
+        inFlight++; peak = Math.max(peak, inFlight);
+        try { return await b.get!(k); } finally { inFlight--; }
+      },
+    };
+    const listed = await sink(counting).listRecent!({ limit: 40 });
+    expect(listed).toHaveLength(40);
+    expect(peak).toBeLessThanOrEqual(10);
   });
 
   it('never throws when the store misbehaves — recovery is best-effort', async () => {
