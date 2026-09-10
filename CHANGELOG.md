@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.14.1](https://github.com/chrischall/gemini-mcp/compare/v1.14.0...v1.14.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deps:** @chrischall/mcp-utils 0.26.1 ([#227](https://github.com/chrischall/gemini-mcp/issues/227)) ([95ff392](https://github.com/chrischall/gemini-mcp/commit/95ff392edf46f00d1d2eff06dc4e1bb151f71d85))
+* **deps:** Bump hono from 4.13.0 to 4.13.7 ([#225](https://github.com/chrischall/gemini-mcp/issues/225)) ([40f2b60](https://github.com/chrischall/gemini-mcp/commit/40f2b6051bea4f5c688ad93a43386c3211e05a38))
+* **deps:** declare the peer floors mcp-utils 0.26.1 requires ([#228](https://github.com/chrischall/gemini-mcp/issues/228)) ([cd086a7](https://github.com/chrischall/gemini-mcp/commit/cd086a741b603ce985619eeb99e636c95564e449))
+
 ## [1.14.0](https://github.com/chrischall/gemini-mcp/compare/v1.13.0...v1.14.0) (2026-09-09)
 
 
