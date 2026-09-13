@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.2](https://github.com/chrischall/gemini-mcp/compare/v1.14.1...v1.14.2) (2026-09-13)
+
+
+### Bug Fixes
+
+* **deps:** Bump zod in the production-dependencies group ([#230](https://github.com/chrischall/gemini-mcp/issues/230)) ([4d3155b](https://github.com/chrischall/gemini-mcp/commit/4d3155bca848d914db4479df75816b6300a35788))
+
 ## [1.14.1](https://github.com/chrischall/gemini-mcp/compare/v1.14.0...v1.14.1) (2026-09-10)
 
 
