@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/chrischall/gemini-mcp/compare/v1.14.2...v2.0.0) (2026-09-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** migrate server to SDK v2 ([#233](https://github.com/chrischall/gemini-mcp/issues/233))
+
+### Features
+
+* **mcp:** migrate server to SDK v2 ([#233](https://github.com/chrischall/gemini-mcp/issues/233)) ([8211e74](https://github.com/chrischall/gemini-mcp/commit/8211e74531939c84b977233f3043651a66525a94))
+
 ## [1.14.2](https://github.com/chrischall/gemini-mcp/compare/v1.14.1...v1.14.2) (2026-09-13)
 
 
