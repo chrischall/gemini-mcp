@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { withProgressHeartbeat } from './shared.js';
@@ -102,7 +102,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           : ' To upload a local file without base64: mint a signed PUT URL with gemini_get_upload_url, PUT the bytes to it, ' +
             'then pass the returned r2_key here.'),
       annotations: { readOnlyHint: false, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         url: z
           .string()
           .url()
@@ -145,7 +145,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           .describe('Override the detected MIME type (sniffed from the bytes / taken from the server response otherwise)'),
         display_name: z.string().min(1).optional().describe('Human-readable name recorded against the upload'),
         confirm: schemaConfirm,
-      },
+      }),
     },
     async (args, extra) => {
       const sources = [args.url && 'url', args.data_base64 && 'data_base64', args.r2_key && 'r2_key', args.path && 'path'].filter(Boolean);
@@ -234,9 +234,9 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
         'List files, images and photos currently uploaded to the Gemini Files API under this API key, with their reusable `file_uri` (`files/<id>`) references, ' +
         'MIME types and expiry times. Retention is ~48h, so an entry that has vanished has expired rather than failed.',
       annotations: { readOnlyHint: true, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         page_size: z.number().int().positive().max(100).optional().describe('Maximum files to return (1-100, default 100)'),
-      },
+      }),
     },
     async (args) => {
       const files = await client.listFiles(args.page_size ?? 100);
@@ -272,9 +272,9 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           'end — re-sign it instead of re-generating (and re-paying for) the image. Keywords: expired link, refresh url, ' +
           're-sign, media url, download again.',
         annotations: { readOnlyHint: true, openWorldHint: false },
-        inputSchema: {
+        inputSchema: z.object({
           r2_key: z.string().min(1).describe('The `media[].r2_key` from an earlier generation result'),
-        },
+        }),
       },
       async (args) => {
         const sink = client.mediaSink;
@@ -325,9 +325,9 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           'Costs image tokens on the turns you use it, which is why it is a separate call and not part of every result. ' +
           'Keywords: see the image, view, look at, verify output, check the result, preview.',
         annotations: { readOnlyHint: true, openWorldHint: false },
-        inputSchema: {
+        inputSchema: z.object({
           r2_key: z.string().min(1).describe('The `media[].r2_key` from a generation result or gemini_list_recent_media'),
-        },
+        }),
       },
       async (args) => {
         const key = args.r2_key.trim();
@@ -360,14 +360,14 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           'to find what already exists BEFORE re-running (and re-paying for) it. Keywords: lost result, orphaned job, ' +
           'missing image, what did I generate, recover, recent media.',
         annotations: { readOnlyHint: true, openWorldHint: false },
-        inputSchema: {
+        inputSchema: z.object({
           limit: z.number().int().positive().max(100).optional().describe('How many to return (default 20, newest first)'),
           since_day: z
             .string()
             .regex(/^\d{4}-\d{2}-\d{2}$/)
             .optional()
             .describe('Only media stored on or after this UTC day, e.g. "2026-08-18"'),
-        },
+        }),
       },
       async (args) => {
         const sink = client.mediaSink;
@@ -417,10 +417,10 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
         'Delete an uploaded file, image or photo (by file_uri) from the Gemini Files API before its ~48h expiry. Any tool call still referencing it ' +
         'will then fail with a generic 404, so delete only references you are finished with.',
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         file_uri: z.string().min(1).describe('The `files/<id>` reference (or full uri) to delete'),
         confirm: schemaConfirm,
-      },
+      }),
     },
     async (args) => {
       // Deleting is a remote mutation with no undo — confirm-gated per the

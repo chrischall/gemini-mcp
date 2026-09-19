@@ -75,8 +75,8 @@ describe('gemini_upload_file — url', () => {
     const capture = (methods: Record<string, unknown>, onDisk: boolean) => {
       const seen: Record<string, string> = {};
       const server = {
-        registerTool: (name: string, config: { inputSchema?: Record<string, { description?: string }> }) => {
-          seen[name] = config.inputSchema?.url?.description ?? '';
+        registerTool: (name: string, config: { inputSchema?: { shape: Record<string, { description?: string }> } }) => {
+          seen[name] = config.inputSchema?.shape.url?.description ?? '';
         },
       };
       registerFileTools(server as never, stub(methods, onDisk) as never);

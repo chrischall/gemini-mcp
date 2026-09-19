@@ -443,7 +443,6 @@ describe('gemini_interact timeout & recovery', () => {
     const progress: unknown[] = [];
     await h.client.callTool(
       { name: 'gemini_interact', arguments: { input: 'circle', output_dir: dir } },
-      undefined,
       { onprogress: (p) => progress.push(p) },
     );
     expect(progress.length).toBeGreaterThanOrEqual(1);

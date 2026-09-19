@@ -52,7 +52,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 
 /** How often a running job re-stamps its record so a reader can see it is alive. */
 export const HEARTBEAT_MS = 60_000;

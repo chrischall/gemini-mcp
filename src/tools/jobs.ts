@@ -1,5 +1,5 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { McpServer } from '@modelcontextprotocol/server';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import { TERMINAL_INTERACTION_STATUSES, type GeminiClient } from '../client.js';
@@ -30,10 +30,10 @@ export function registerJobTools(server: McpServer, client: GeminiClient): void 
       // NOT read-only any more: recovering a killed job writes the media it
       // pulls back, exactly as the generation tool would have.
       annotations: { readOnlyHint: false, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         job_id: z.string().min(1).describe('The job_id returned by a generation tool called with async: true'),
         output_dir: z.string().optional().describe('Where to write media recovered from a killed job (default: $GEMINI_OUTPUT_DIR or cwd)'),
-      },
+      }),
     },
     async (args) => {
       try {

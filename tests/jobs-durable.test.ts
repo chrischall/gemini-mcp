@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { JobRegistry } from '../src/jobs.js';
 import { createBlobJobStore, EXECUTOR_LOST_AFTER_MS, type JobStoreBucket } from '../src/job-store.js';
 import { textResult } from '@chrischall/mcp-utils';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 
 /**
  * The reported bug, end to end.

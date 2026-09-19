@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { McpToolError, ApiError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { ChainedRequest404Error, type GeminiClient, type ImageInput } from '../client.js';
@@ -104,7 +104,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         recoveryDescription +
         'Output is JPEG.',
       annotations: { readOnlyHint: false, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         input: z.string().min(1).describe('Text prompt or editing instruction'),
         previous_interaction_id: z
           .string()
@@ -176,7 +176,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           .optional()
           .describe('Use the image currently on the macOS system clipboard as an input (downscaled to JPEG)'),
         confirm: schemaConfirm,
-      },
+      }),
     },
     async (args, extra) => {
       assertLocalInputsAvailable(client.mediaSink, args);

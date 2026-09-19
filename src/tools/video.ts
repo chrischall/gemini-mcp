@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
@@ -46,7 +46,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         'Output is written to disk as MP4 (video has no inline MCP block). Video runs long — give it a `max_wait_ms` budget ' +
         '(or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account.',
       annotations: { readOnlyHint: false, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         prompt: z.string().min(1).describe('Description of the video to generate (or the edit instruction when task=edit)'),
         aspect_ratio: z.enum(VIDEO_ASPECT_RATIOS).optional().describe('Exact output aspect ratio (omni: 16:9 or 9:16). `orientation` is the plain-language shorthand; this wins if both are given.'),
         orientation: orientationSchema,
@@ -73,7 +73,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         async: asyncSchema,
         max_wait_ms: maxWaitMsSchema,
         confirm: schemaConfirm,
-      },
+      }),
     },
     async (args, extra) => {
       assertLocalInputsAvailable(client.mediaSink, args);

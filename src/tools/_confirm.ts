@@ -1,4 +1,4 @@
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { minifiedResult, schemaConfirm } from '@chrischall/mcp-utils';
 import { previewImageInput, previewVideoInput, type LocalInputPreview } from '../images.js';
 

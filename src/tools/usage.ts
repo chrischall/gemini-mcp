@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { minifiedResult, toolAnnotations } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { PRICED_AT } from '../pricing.js';
@@ -40,12 +40,12 @@ export function registerUsageTools(server: McpServer, client: GeminiClient): voi
         'Call it before and after a workflow and subtract to get that workflow\'s cost; call it after a ' +
         'single generation for that call\'s. Reports tokens AND an estimated USD cost, priced per call against each call\'s own model and stamped with the date its rates were read (override with GEMINI_RATE_CARD). Note there is no account-balance endpoint to query — Google Cloud is post-paid and its billing data lags by hours — so this is the accurate way to attribute spend to a call.',
       annotations: toolAnnotations({ readOnly: true }),
-      inputSchema: {
+      inputSchema: z.object({
         reset: z
           .boolean()
           .optional()
           .describe('Zero the running total after reporting it, so the next call measures from here. Use it to bracket a workflow without arithmetic.'),
-      },
+      }),
     },
     async (args) => {
       const usage = client.session.usageTotal;
