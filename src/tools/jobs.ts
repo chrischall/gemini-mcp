@@ -1,5 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/server';
-import type { CallToolResult } from '@modelcontextprotocol/server';
+import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import { TERMINAL_INTERACTION_STATUSES, type GeminiClient } from '../client.js';
