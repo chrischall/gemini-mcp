@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { LIBRARY_NAME_PATTERN, type CharacterLibrary, type LibraryImage } from '../library.js';
@@ -84,7 +84,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
         '— so a name saved once keeps working in every later session. Re-saving a name replaces it. ' +
         USE_CHARACTERS_HINT,
       annotations: { readOnlyHint: false, openWorldHint: false },
-      inputSchema: {
+      inputSchema: z.object({
         name: NAME_FIELD,
         description: z
           .string()
@@ -96,7 +96,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
           .optional()
           .describe('Reference image already in this connector\'s store: an `r2_key` from gemini_get_upload_url + PUT, or from a generation result\'s media[].r2_key'),
         image_url: z.string().url().optional().describe('Reference image as a public https URL the SERVER fetches'),
-      },
+      }),
     },
     async (args, extra) => {
       const image = (await withProgressHeartbeat(extra, 'Loading the reference image', () =>
@@ -122,7 +122,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
         'List this account\'s saved characters (persistent reference library): names, descriptions and timestamps. ' +
         USE_CHARACTERS_HINT,
       annotations: { readOnlyHint: true, openWorldHint: false },
-      inputSchema: {},
+      inputSchema: z.object({}),
     },
     async () => {
       const characters = await library.listCharacters();
@@ -147,7 +147,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
     {
       description: 'Delete a saved character from this account\'s reference library. Generation calls naming it will then fail until it is re-saved.',
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-      inputSchema: { name: NAME_FIELD, confirm: schemaConfirm },
+      inputSchema: z.object({ name: NAME_FIELD, confirm: schemaConfirm }),
     },
     async (args) => {
       const gate = previewUnlessConfirmed(args.confirm, 'Delete a saved character (its reference image and description)', 'DELETE', `characters/${args.name}`);
@@ -168,7 +168,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
         'optionally a reference image) that a single word then applies to any generation. No expiry; re-saving a name replaces it. ' +
         USE_STYLE_HINT,
       annotations: { readOnlyHint: false, openWorldHint: false },
-      inputSchema: {
+      inputSchema: z.object({
         name: NAME_FIELD,
         prompt_fragment: z
           .string()
@@ -176,7 +176,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
           .describe('The style text appended to generation prompts, e.g. "bold cartoon style, thick outlines, saturated colors"'),
         image_r2_key: z.string().min(1).optional().describe('Optional style reference image already in this connector\'s store (an r2_key)'),
         image_url: z.string().url().optional().describe('Optional style reference image as a public https URL the SERVER fetches'),
-      },
+      }),
     },
     async (args, extra) => {
       const image = await withProgressHeartbeat(extra, 'Loading the style reference image', () =>
@@ -200,7 +200,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
     {
       description: 'List this account\'s saved style presets (persistent reference library). ' + USE_STYLE_HINT,
       annotations: { readOnlyHint: true, openWorldHint: false },
-      inputSchema: {},
+      inputSchema: z.object({}),
     },
     async () => {
       const styles = await library.listStyles();
@@ -223,7 +223,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
     {
       description: 'Delete a saved style preset from this account\'s reference library.',
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-      inputSchema: { name: NAME_FIELD, confirm: schemaConfirm },
+      inputSchema: z.object({ name: NAME_FIELD, confirm: schemaConfirm }),
     },
     async (args) => {
       const gate = previewUnlessConfirmed(args.confirm, 'Delete a saved style preset', 'DELETE', `styles/${args.name}`);

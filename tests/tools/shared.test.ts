@@ -162,8 +162,10 @@ describe('withProgressHeartbeat', () => {
 
   function extraWithToken() {
     return {
-      _meta: { progressToken: 'tok-1' },
-      sendNotification: vi.fn().mockResolvedValue(undefined),
+      mcpReq: {
+        _meta: { progressToken: 'tok-1' },
+        notify: vi.fn().mockResolvedValue(undefined),
+      },
     };
   }
 
@@ -172,12 +174,12 @@ describe('withProgressHeartbeat', () => {
     let resolveFn!: (v: string) => void;
     const p = withProgressHeartbeat(extra, 'Generating image', () => new Promise<string>((r) => { resolveFn = r; }));
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(extra.sendNotification).toHaveBeenCalledWith(expect.objectContaining({
+    expect(extra.mcpReq.notify).toHaveBeenCalledWith(expect.objectContaining({
       method: 'notifications/progress',
       params: expect.objectContaining({ progressToken: 'tok-1', progress: 1, message: expect.stringContaining('Generating image') }),
     }));
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(extra.sendNotification).toHaveBeenCalledTimes(2);
+    expect(extra.mcpReq.notify).toHaveBeenCalledTimes(2);
     resolveFn('done');
     await expect(p).resolves.toBe('done');
   });
@@ -186,22 +188,22 @@ describe('withProgressHeartbeat', () => {
     const extra = extraWithToken();
     await withProgressHeartbeat(extra, 'x', () => Promise.resolve('ok'));
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(extra.sendNotification).not.toHaveBeenCalled();
+    expect(extra.mcpReq.notify).not.toHaveBeenCalled();
   });
 
   it('propagates fn rejection and stops the heartbeat', async () => {
     const extra = extraWithToken();
     await expect(withProgressHeartbeat(extra, 'x', () => Promise.reject(new Error('boom')))).rejects.toThrow('boom');
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(extra.sendNotification).not.toHaveBeenCalled();
+    expect(extra.mcpReq.notify).not.toHaveBeenCalled();
   });
 
   it('is a pass-through when the caller sent no progressToken', async () => {
-    const extra = { _meta: {}, sendNotification: vi.fn() };
+    const extra = { mcpReq: { _meta: {}, notify: vi.fn() } };
     const result = await withProgressHeartbeat(extra, 'x', () => Promise.resolve(42));
     expect(result).toBe(42);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(extra.sendNotification).not.toHaveBeenCalled();
+    expect(extra.mcpReq.notify).not.toHaveBeenCalled();
   });
 
   // Diagnostics (GEMINI_DEBUG): stderr lines surface in the host's MCP log
@@ -224,7 +226,7 @@ describe('withProgressHeartbeat', () => {
   it('logs a "no progressToken" diagnostic when the host omits the token', async () => {
     process.env.GEMINI_DEBUG = '1';
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const extra = { _meta: {}, sendNotification: vi.fn() };
+    const extra = { mcpReq: { _meta: {}, notify: vi.fn() } };
     await withProgressHeartbeat(extra, 'Generating image', () => Promise.resolve('ok'));
     expect(err).toHaveBeenCalledWith(expect.stringContaining('no progressToken'));
   });
@@ -240,10 +242,12 @@ describe('withProgressHeartbeat', () => {
     expect(err).not.toHaveBeenCalled();
   });
 
-  it('survives sendNotification rejections (client may have gone away)', async () => {
+  it('survives notify rejections (client may have gone away)', async () => {
     const extra = {
-      _meta: { progressToken: 7 },
-      sendNotification: vi.fn().mockRejectedValue(new Error('connection closed')),
+      mcpReq: {
+        _meta: { progressToken: 7 },
+        notify: vi.fn().mockRejectedValue(new Error('connection closed')),
+      },
     };
     let resolveFn!: (v: string) => void;
     const p = withProgressHeartbeat(extra, 'x', () => new Promise<string>((r) => { resolveFn = r; }));
@@ -258,7 +262,7 @@ describe('withProgressHeartbeat', () => {
     let resolveFn!: (v: string) => void;
     const p = withProgressHeartbeat(extra, 'x', () => new Promise<string>((r) => { resolveFn = r; }));
     await vi.advanceTimersByTimeAsync(150);
-    expect(extra.sendNotification).toHaveBeenCalledTimes(3);
+    expect(extra.mcpReq.notify).toHaveBeenCalledTimes(3);
     resolveFn('ok');
     await p;
 
@@ -267,7 +271,7 @@ describe('withProgressHeartbeat', () => {
     let resolveOff!: (v: string) => void;
     const pOff = withProgressHeartbeat(off, 'x', () => new Promise<string>((r) => { resolveOff = r; }));
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(off.sendNotification).not.toHaveBeenCalled();
+    expect(off.mcpReq.notify).not.toHaveBeenCalled();
     resolveOff('ok');
     await pOff;
   });

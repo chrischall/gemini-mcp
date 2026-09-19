@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { GeminiClient } from '../client.js';
 import { slugify, baseName } from '../images.js';
@@ -38,7 +38,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         'cannot be refined by a follow-up call, so put the whole brief in the prompt. Runs long — give it a `max_wait_ms` ' +
         'budget (or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account.',
       annotations: { readOnlyHint: false, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         prompt: z.string().min(1).describe('Description of the music: mood, genre, instruments, tempo, structure, or lyrics'),
         model: z.enum(MUSIC_MODELS).optional().describe(`Lyria model (default: ${DEFAULT_MUSIC_MODEL} — 30s, $0.04). lyria-3.5 and lyria-3-pro-preview run minutes-long at $0.08.`),
         images: z.array(z.string().min(1)).optional().describe('Optional reference image path(s) to condition the music'),
@@ -55,7 +55,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         async: asyncSchema,
         max_wait_ms: maxWaitMsSchema,
         confirm: schemaConfirm,
-      },
+      }),
     },
     async (args, extra) => {
       assertLocalInputsAvailable(client.mediaSink, args);

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import type { GeminiClient, GroundingResult } from '../client.js';
@@ -28,7 +28,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         'Generate image(s) from a text prompt with a Gemini image model (Nano Banana / Nano Banana Pro). ' +
         'If the result will likely be refined iteratively, prefer gemini_interact (multi-turn) as the entry point.',
       annotations: { readOnlyHint: false, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         prompt: z.string().min(1).describe('Text prompt describing the image'),
         count: z.number().int().positive().max(8).optional().describe('Number of independent images (default 1)'),
         filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
@@ -43,7 +43,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         video_path: videoPathSchema,
         confirm: schemaConfirm,
         ...sharedImageSchema,
-      },
+      }),
     },
     async (args, extra) => {
       // Local-path / clipboard / disk-upload inputs simply do not exist on the
@@ -165,7 +165,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         'and avoids re-processing the full image each round; use gemini_image_edit for one-off edits or composing multiple distinct inputs. ' +
         'Gemini over-preserves the input; there is no edit-strength control — for large structural changes, reroll with a different `seed` or more forceful wording.',
       annotations: { readOnlyHint: false, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         prompt: z.string().min(1).describe('Instruction describing the edit or composition'),
         images: z.array(z.string().min(1)).optional().describe('Paths to input image file(s) (1 = edit, 2+ = compose)'),
         images_url: imagesUrlSchema('Input images'),
@@ -177,7 +177,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
         confirm: schemaConfirm,
         ...sharedImageSchema,
-      },
+      }),
     },
     async (args, extra) => {
       assertLocalInputsAvailable(client.mediaSink, args);

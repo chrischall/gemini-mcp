@@ -21,7 +21,7 @@
  */
 
 import { McpToolError } from '@chrischall/mcp-utils';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 
 /** How far down a `cause` chain to walk before assuming it is pathological. */
 const MAX_CAUSE_DEPTH = 5;

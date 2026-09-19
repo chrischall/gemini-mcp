@@ -3,7 +3,7 @@ import { timeoutRiskHint } from '../../src/tools/shared.js';
 import { JobRegistry } from '../../src/jobs.js';
 import { createBlobJobStore, type JobStoreBucket } from '../../src/job-store.js';
 import { textResult } from '@chrischall/mcp-utils';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 
 /**
  * The advice, and the behaviour behind it.

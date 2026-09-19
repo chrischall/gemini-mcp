@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { McpToolError } from '@chrischall/mcp-utils';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { JobRegistry, fingerprintRequest } from '../src/jobs.js';
 
 // A fresh registry per test — which is also the production shape: one registry

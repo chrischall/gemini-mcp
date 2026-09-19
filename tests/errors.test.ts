@@ -76,7 +76,7 @@ describe('surfaceToolErrors', () => {
     return createTestHarness((s) => {
       surfaceToolErrors(s).registerTool(
         'gemini_demo',
-        { description: 'demo', inputSchema: { a: z.string().optional() } },
+        { description: 'demo', inputSchema: z.object({ a: z.string().optional() }) },
         handler as never,
       );
     });
@@ -114,7 +114,7 @@ describe('surfaceToolErrors', () => {
       const wrapped = surfaceToolErrors(s);
       expect(typeof wrapped.registerResource).toBe('function');
       expect(wrapped.server).toBe(s.server);
-      wrapped.registerTool('gemini_demo', { description: 'd', inputSchema: {} }, (async () => textResult({})) as never);
+      wrapped.registerTool('gemini_demo', { description: 'd', inputSchema: z.object({}) }, (async () => textResult({})) as never);
     });
     expect((await h.listTools!()).map((t: { name: string }) => t.name)).toEqual(['gemini_demo']);
     await h.close();

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { McpToolError, minifiedResult, readEnvVar } from '@chrischall/mcp-utils';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { GeminiClient, GeneratedImage, GeneratedMedia, ImageInput } from '../client.js';
 import { resolveVideoPath, videoMimeType } from '../images.js';
 import { IMAGE_URL_MAX_BYTES, IMAGE_INLINE_MAX_BYTES } from '../fetch-image.js';
@@ -435,15 +435,17 @@ export function pickSeed(seed?: number): number {
 const HEARTBEAT_DEFAULT_MS = 10_000;
 
 /**
- * The slice of the SDK's `RequestHandlerExtra` the heartbeat needs — kept
+ * The slice of the SDK's `ServerContext` the heartbeat needs — kept
  * structural so tests can pass a plain object.
  */
 export interface ProgressExtra {
-  _meta?: { progressToken?: string | number };
-  sendNotification?: (notification: {
-    method: 'notifications/progress';
-    params: { progressToken: string | number; progress: number; message?: string };
-  }) => Promise<void>;
+  mcpReq?: {
+    _meta?: { progressToken?: string | number };
+    notify?: (notification: {
+      method: 'notifications/progress';
+      params: { progressToken: string | number; progress: number; message?: string };
+    }) => Promise<void>;
+  };
 }
 
 /**
@@ -457,8 +459,8 @@ export async function withProgressHeartbeat<T>(
   message: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const progressToken = extra?._meta?.progressToken;
-  const send = extra?.sendNotification;
+  const progressToken = extra?.mcpReq?._meta?.progressToken;
+  const send = extra?.mcpReq?.notify;
   const env = Number(readEnvVar('GEMINI_HEARTBEAT_MS'));
   const intervalMs = Number.isFinite(env) ? env : HEARTBEAT_DEFAULT_MS;
   const debug = !!readEnvVar('GEMINI_DEBUG');

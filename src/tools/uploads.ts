@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { minifiedResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 import { UPLOAD_MAX_BYTES, RASTER_IMAGE_TYPE_PATTERN } from '../upload-url.js';
@@ -58,7 +58,7 @@ export function registerUploadUrlTools(server: McpServer, client: GeminiClient):
         `${wholeMb(UPLOAD_MAX_BYTES)}MB. The PUT must send exactly the Content-Type this URL was minted for — the signature ` +
         'covers it, so a mismatched header is rejected.',
       annotations: { readOnlyHint: true, openWorldHint: false },
-      inputSchema: {
+      inputSchema: z.object({
         filename: z
           .string()
           .min(1)
@@ -70,7 +70,7 @@ export function registerUploadUrlTools(server: McpServer, client: GeminiClient):
           // serves from the connector's own origin (see RASTER_IMAGE_TYPE_PATTERN).
           .regex(RASTER_IMAGE_TYPE_PATTERN, 'must be a raster image MIME type like image/jpeg (SVG is not accepted)')
           .describe('MIME type of the bytes that will be PUT — raster images only (jpeg/png/webp/gif/avif/heic/heif/bmp/tiff; not SVG). The PUT must send exactly this Content-Type.'),
-      },
+      }),
     },
     async (args) => {
       // `step` names the operation in the message, and `surfaceToolErrors`

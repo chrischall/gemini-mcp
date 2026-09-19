@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { downloadFilename } from './media-name.js';
 import { HEARTBEAT_MS, type JobRecord, type JobStore } from './job-store.js';
 import { annotateReusedUsage } from './usage.js';
