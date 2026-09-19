@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.0](https://github.com/chrischall/gemini-mcp/compare/v2.0.0...v2.1.0) (2026-09-19)
+
+
+### Features
+
+* **deps:** take mcp-utils 1.0.0 for a modern-era stdio server ([#238](https://github.com/chrischall/gemini-mcp/issues/238)) ([0b5d7dd](https://github.com/chrischall/gemini-mcp/commit/0b5d7dd34a43df11749e8a05a8ea0c06dc686342))
+
+
+### Bug Fixes
+
+* **deps:** raise the manifest node floor to match mcp-utils 1.0.0 ([#239](https://github.com/chrischall/gemini-mcp/issues/239)) ([07065ad](https://github.com/chrischall/gemini-mcp/commit/07065adfee3ba427978a0f7c58c7cf798d1f93bd))
+* **mcp:** name the v2 notify channel in the heartbeat diagnostic ([#236](https://github.com/chrischall/gemini-mcp/issues/236)) ([37959e8](https://github.com/chrischall/gemini-mcp/commit/37959e8b52d81232af3b093569ced03689296087)), closes [#234](https://github.com/chrischall/gemini-mcp/issues/234)
+
 ## [2.0.0](https://github.com/chrischall/gemini-mcp/compare/v1.14.2...v2.0.0) (2026-09-19)
 
 
