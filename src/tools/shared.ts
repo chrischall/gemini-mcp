@@ -478,7 +478,7 @@ export async function withProgressHeartbeat<T>(
       const reason = progressToken === undefined
         ? 'no progressToken from host (host cannot extend its tools/call timeout; long calls will hit it)'
         : !send
-          ? 'host provided no sendNotification channel'
+          ? 'no mcpReq.notify on the request extra (SDK v2 renamed v1\'s sendNotification; without it there is no channel to send progress on)'
           : 'heartbeat disabled (GEMINI_HEARTBEAT_MS=0)';
       console.error(`[gemini-mcp] heartbeat inactive: ${reason} — ${message}`);
     }
