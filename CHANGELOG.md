@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/chrischall/gemini-mcp/compare/v2.1.0...v2.1.1) (2026-09-21)
+
+
+### Documentation
+
+* AGENTS.md pointed at a directory that does not exist ([#242](https://github.com/chrischall/gemini-mcp/issues/242)) ([763c371](https://github.com/chrischall/gemini-mcp/commit/763c371a847b9b571e59db38b5dcf37bb234fc6b))
+
 ## [2.1.0](https://github.com/chrischall/gemini-mcp/compare/v2.0.0...v2.1.0) (2026-09-19)
 
 
