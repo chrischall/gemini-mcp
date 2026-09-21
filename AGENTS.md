@@ -1,12 +1,12 @@
 # AGENTS.md — gemini-mcp
 
-Guidance for Codex working in this repo.
+Guidance for Claude working in this repo.
 
 ## TL;DR
 
 v0.6.0: Google **Gemini** image-generation MCP server. Wraps the Generative
 Language REST API (`https://generativelanguage.googleapis.com/v1beta`) and
-exposes 13 tools to Codex over stdio: text→image and image→image generation,
+exposes 13 tools to Claude over stdio: text→image and image→image generation,
 multi-turn conversational editing, consistent image *sets*, **video generation**
 (omni, `gemini_video_generate`), **music generation** (Lyria clip/3.5/pro,
 `gemini_music_generate`), model listing (Nano Banana / Nano Banana Pro
@@ -251,7 +251,7 @@ shared util, configured non-Bearer.
 | `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | `tools/library.ts` | R2 `lib/<tenant>/styles/…` (no expiry) — **hosted only** | write / read / write |
 
 **The signed upload URL assumes a shell.** `gemini_get_upload_url` hands back a
-curl line, which is no use to a Codex *mobile* user — and MCP has no
+curl line, which is no use to a Claude *mobile* user — and MCP has no
 client→server file channel to fall back on (form elicitation is primitive-typed
 only; an attached photo reaches the model as vision tokens, not bytes it can
 re-emit). `docs/MOBILE-UPLOADS.md` records what was ruled out and on what
@@ -487,7 +487,7 @@ picture chain could resume an omni interaction, or a Lyria one, where a chained
 call is a documented 400.
 
 **Hosted on mcp-host.** The same stdio server runs as a child there; mcp-host
-proxies MCP over streamable HTTP to Codex.ai and wraps it in per-MCP OAuth, so
+proxies MCP over streamable HTTP to claude.ai and wraps it in per-MCP OAuth, so
 this repo has no Worker, no `createConnector`, and no HTTP surface of its own.
 
 What the host DOES offer is a shared blob store — signed `PUT`/`GET`/`DELETE`
@@ -583,7 +583,7 @@ puts two round trips in front of a call nobody asked to wait for.
   Cloudflare Worker connector was retired when this MCP moved to mcp-host, and
   `src/worker.ts` / `src/gemini-auth.ts` no longer exist. **Add new gates here,
   not to the workflow file** — a PR that edits `.github/workflows/*` can't be auto-reviewed (the
-  Codex App validates the workflow against the default branch, so the review
+  Claude App validates the workflow against the default branch, so the review
   emits no verdict and the PR never arms), which turns a one-line CI change into
   a manual merge. `tests/ci-gates.test.ts` guards the chain.
 - **Errors.** Throw `McpToolError` (from `@chrischall/mcp-utils`) with an
@@ -677,12 +677,12 @@ puts two round trips in front of a call nobody asked to wait for.
     caller sent a `progressToken`, and even then it only *extends* the host's
     timeout if the host resets its clock on `notifications/progress`
     (`resetTimeoutOnProgress`). **Claude Desktop does neither reliably** and
-    exposes no per-server timeout knob (unlike Codex's `MCP_TOOL_TIMEOUT`
+    exposes no per-server timeout knob (unlike Claude Code's `MCP_TOOL_TIMEOUT`
     env), so under Desktop a long generation hits Desktop's fixed ~30s ceiling
     regardless of heartbeats — sidecar recovery (above) is the mitigation there,
     not the heartbeat. Set **`GEMINI_DEBUG=1`** to emit stderr diagnostics
     (`[gemini-mcp] heartbeat active|inactive: …`, surfaced in
-    `~/Library/Logs/Codex/mcp-server-*.log`) that reveal whether the host sent a
+    `~/Library/Logs/Claude/mcp-server-*.log`) that reveal whether the host sent a
     `progressToken` at all — the root-cause signal. Don't add a leading/faster
     heartbeat to "fix" a host that ignores progress: if it ignores progress, more
     progress changes nothing.
@@ -733,7 +733,7 @@ puts two round trips in front of a call nobody asked to wait for.
   (vitest wraps workerd's global fetch in plain JS, which hides the check).
 - **No module-level mutable state in `src/` — it leaks across tenants.**
   one process can serve several sessions, so
-  a module-level `Map`/`let` is shared by every authenticated Codex.ai session
+  a module-level `Map`/`let` is shared by every authenticated claude.ai session
   in that isolate. The per-session `GeminiClient` isolates the API key and
   nothing else. When the job registry and `lastInteractionId` lived at module
   scope, a colliding `idempotency_key` handed user B user A's recorded result
