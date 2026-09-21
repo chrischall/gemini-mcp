@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.2](https://github.com/chrischall/gemini-mcp/compare/v2.1.1...v2.1.2) (2026-09-21)
+
+
+### Documentation
+
+* fix AGENTS.md's self-description, and guard it against drifting again ([#245](https://github.com/chrischall/gemini-mcp/issues/245)) ([820ea3a](https://github.com/chrischall/gemini-mcp/commit/820ea3a45c9a98f84daf4d39b8af8d4c328db179)), closes [#243](https://github.com/chrischall/gemini-mcp/issues/243)
+
 ## [2.1.1](https://github.com/chrischall/gemini-mcp/compare/v2.1.0...v2.1.1) (2026-09-21)
 
 
