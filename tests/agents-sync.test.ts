@@ -43,9 +43,15 @@ describe('AGENTS.md stays in sync with CLAUDE.md', () => {
 
   it('never calls a Claude artifact a Codex one', () => {
     // The specific corruption class: paths and product names that name
-    // CLAUDE things. `~/.codex/AGENTS.md` is the one legitimate Codex path.
+    // CLAUDE things. `~/.codex/AGENTS.md` is the one legitimate mention.
+    //
+    // CASE-INSENSITIVE on purpose. The first version matched /\bCodex\b/
+    // with no `i`, which never matched the lowercase pointer — so the
+    // exception below was unreachable dead code AND a lowercase corruption
+    // like `.codex-plugin/` would have sailed through. With the flag, the
+    // exception does real work and the check covers both spellings.
     const agents = readFileSync(join(ROOT, 'AGENTS.md'), 'utf8');
-    const offenders = [...agents.matchAll(/^.*\bCodex\b.*$/gm)]
+    const offenders = [...agents.matchAll(/^.*\bcodex\b.*$/gim)]
       .map((m) => m[0].trim())
       .filter((l) => !l.includes('~/.codex/AGENTS.md'));
     expect(offenders).toEqual([]);
