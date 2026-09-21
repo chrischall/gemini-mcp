@@ -1,6 +1,6 @@
 # AGENTS.md — gemini-mcp
 
-Guidance for Claude working in this repo.
+Guidance for coding agents working in this repo.
 
 ## TL;DR
 
