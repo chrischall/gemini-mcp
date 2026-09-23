@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createFakeGateway } from './fixtures/blob-gateway.js';
 import { blobStoreFromEnv } from '../src/blob-store.js';
 import { hostedStorage } from '../src/client.js';
-import { pinnedTenant, TENANT_PIN_KEY } from '../src/tenant.js';
+import { pinnedTenant, tenantResolver, TENANT_PIN_KEY } from '../src/tenant.js';
 import { tenantIdFor } from '../src/storage/media.js';
 
 /**
@@ -131,5 +131,38 @@ describe('stores do not cache a failed tenant resolution', () => {
     await expect(sink.persist([item], {})).rejects.toThrow(/503/);
     const [persisted] = await sink.persist([item], {});
     expect(persisted.key).toMatch(/^gen\/aaaaaaaaaaaa\//);
+  });
+});
+
+describe('tenantResolver', () => {
+  it('passes a static tenant through (including undefined)', async () => {
+    await expect(tenantResolver('abc')()).resolves.toBe('abc');
+    await expect(tenantResolver<string | undefined>(undefined)()).resolves.toBeUndefined();
+  });
+
+  it('resolves a function source once and caches the success', async () => {
+    const source = vi.fn(async () => 'abc123abc123');
+    const resolve = tenantResolver(source);
+    await expect(resolve()).resolves.toBe('abc123abc123');
+    await expect(resolve()).resolves.toBe('abc123abc123');
+    expect(source).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one in-flight resolution between concurrent callers', async () => {
+    const source = vi.fn(async () => 't');
+    const resolve = tenantResolver(source);
+    await Promise.all([resolve(), resolve(), resolve()]);
+    expect(source).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a rejected resolution instead of caching it', async () => {
+    const source = vi.fn()
+      .mockRejectedValueOnce(new Error('store blip'))
+      .mockResolvedValueOnce('recovered');
+    const resolve = tenantResolver<string>(source);
+    await expect(resolve()).rejects.toThrow('store blip');
+    await expect(resolve()).resolves.toBe('recovered');
+    await expect(resolve()).resolves.toBe('recovered');
+    expect(source).toHaveBeenCalledTimes(2);
   });
 });
