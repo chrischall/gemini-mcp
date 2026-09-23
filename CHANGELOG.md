@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.3](https://github.com/chrischall/gemini-mcp/compare/v2.1.2...v2.1.3) (2026-09-23)
+
+
+### Bug Fixes
+
+* **deps:** require zod ^4.6.5 to match @chrischall/mcp-utils 2.4.0 ([#252](https://github.com/chrischall/gemini-mcp/issues/252)) ([4c49c0a](https://github.com/chrischall/gemini-mcp/commit/4c49c0aaf886ddd09a0cdff4716f7b51bb5cb9fd)), closes [#250](https://github.com/chrischall/gemini-mcp/issues/250)
+* **deps:** upgrade @chrischall/mcp-utils to 2.4.0 and @fetchproxy/* to 3.2.0 ([#249](https://github.com/chrischall/gemini-mcp/issues/249)) ([1bf3fe9](https://github.com/chrischall/gemini-mcp/commit/1bf3fe98e35d7fe54a66c74fcc69967df79f2b78))
+
 ## [2.1.2](https://github.com/chrischall/gemini-mcp/compare/v2.1.1...v2.1.2) (2026-09-21)
 
 
