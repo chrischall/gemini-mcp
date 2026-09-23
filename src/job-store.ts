@@ -140,8 +140,8 @@ export interface JobStore {
 export interface JobStoreOptions {
   /**
    * Account namespace — a string, or a thunk when it resolves per request. May
-   * be async: the hosted tenant id is a SHA-256 of the session's API key, and
-   * the key is read at request time rather than at construction.
+   * be async: the hosted tenant id is read from a pin in the store
+   * (src/tenant.ts), resolved at request time rather than at construction.
    */
   tenant: string | (() => string | Promise<string>);
   now?: () => number;

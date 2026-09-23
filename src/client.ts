@@ -5,7 +5,8 @@ import { readUsage, type TokenUsage } from './usage.js';
 import { createDiskSink, createR2Sink, tenantIdFor, type MediaSink } from './storage/media.js';
 import { createR2Library, type CharacterLibrary } from './library.js';
 import { createUploadUrlMinter, type UploadUrlMinter } from './upload-url.js';
-import { blobStoreFromEnv } from './blob-store.js';
+import { blobStoreFromEnv, type BlobStore } from './blob-store.js';
+import { pinnedTenant } from './tenant.js';
 import { createBlobJobStore, type JobStore } from './job-store.js';
 import { SessionState } from './session.js';
 import { fetchRemoteImage, readCapped, MAX_REDIRECTS, type CapSubject, type FetchedImage } from './fetch-image.js';
@@ -1489,19 +1490,22 @@ function isDeliveryUnsupported(err: unknown): boolean {
  *
  * Side-effect-free at module scope: reading two env vars and closing over them.
  */
-function hostedStorage(): {
+export function hostedStorage(blob: BlobStore | undefined = blobStoreFromEnv()): {
   mediaSink?: MediaSink;
   library?: CharacterLibrary;
   uploadUrls?: UploadUrlMinter;
   jobStore?: JobStore;
 } {
-  const blob = blobStoreFromEnv();
   if (!blob) return {};
-  // Namespaced by API key like the connector was. One registration is one
-  // user here, so this is belt-and-braces rather than the tenancy boundary —
-  // that is the blob store's per-registration key. Lazy because the key is
-  // read at request time, not at construction (deferred-config-error).
-  const tenant = () => tenantIdFor(readEnvVar('GEMINI_API_KEY') ?? 'local');
+  // One registration is one user here, so the namespace is belt-and-braces
+  // rather than the tenancy boundary — that is the blob store's
+  // per-registration key. It must be STABLE, though: it used to be a hash of
+  // GEMINI_API_KEY, so rotating the key orphaned the whole library, every job
+  // record and every chain sidecar (chrischall/fleet-audit#116). It is now
+  // pinned in the store on first use — derived from the current key so the
+  // data already there stays reachable — and never re-derived after that.
+  // Lazy because the key is read at request time (deferred-config-error).
+  const tenant = pinnedTenant(blob.bucket, () => tenantIdFor(readEnvVar('GEMINI_API_KEY') ?? 'local'));
   return {
     mediaSink: createR2Sink(blob.bucket, {
       // The SAME `links` object the minter gets below. Media GETs and upload
