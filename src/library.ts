@@ -117,7 +117,15 @@ export interface LibraryOptions {
 export function createR2Library(bucket: LibraryBucket, opts: LibraryOptions): CharacterLibrary {
   const now = opts.now ?? (() => new Date());
   let tenantCache: Promise<string> | undefined;
-  const tenantId = () => (tenantCache ??= Promise.resolve(typeof opts.tenant === 'function' ? opts.tenant() : opts.tenant));
+  // A rejected resolution is dropped, not cached: the hosted tenant is read
+  // from the store (src/tenant.ts), and one transient failure must not wedge
+  // the library for the rest of the process.
+  const tenantId = () => {
+    if (tenantCache) return tenantCache;
+    const attempt = Promise.resolve(typeof opts.tenant === 'function' ? opts.tenant() : opts.tenant);
+    attempt.catch(() => { if (tenantCache === attempt) tenantCache = undefined; });
+    return (tenantCache = attempt);
+  };
 
   const assertName = (name: string): string => {
     if (!isValidLibraryName(name)) {

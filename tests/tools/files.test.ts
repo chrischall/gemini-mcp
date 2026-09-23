@@ -132,19 +132,80 @@ describe('gemini_upload_file — data_base64 and path', () => {
   it('uploads a local path once confirmed, and dry-runs first without confirm', async () => {
     const p = join(dir, 'local.png');
     writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
-    const uploadBytes = vi.fn().mockResolvedValue(uploaded());
-    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadBytes })));
+    const uploadFile = vi.fn().mockResolvedValue(uploaded());
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadFile })));
 
     // A prompt-injected `path` would otherwise ship an arbitrary local file to
     // Google, so the dry-run must show the resolved path and upload nothing.
     const preview = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_upload_file', { path: p }));
     expect(preview.dryRun).toBe(true);
     expect(JSON.stringify(preview.willSend)).toContain(p);
-    expect(uploadBytes).not.toHaveBeenCalled();
+    expect(uploadFile).not.toHaveBeenCalled();
 
     await h.callTool('gemini_upload_file', { path: p, confirm: true });
-    expect(uploadBytes).toHaveBeenCalledWith(PNG_BYTES, 'image/png', 'local.png');
+    expect(uploadFile).toHaveBeenCalledWith(p, 'image/png', 'local.png');
     await h.close();
+  });
+
+  /**
+   * chrischall/fleet-audit#117: the tool advertises video and audio, but the
+   * `path` branch went through the IMAGE reader, whose sniffer knows PNG/JPEG/
+   * WebP and otherwise answers image/png — so a local .mp4/.mp3/.gif/.heic was
+   * uploaded (and previewed) as image/png, and the whole file was buffered
+   * three times over (Buffer → base64 string → bytes).
+   */
+  it.each([
+    ['clip.mp4', 'video/mp4'],
+    ['clip.mov', 'video/mov'],
+    ['song.mp3', 'audio/mp3'],
+    ['voice.wav', 'audio/wav'],
+    ['loop.gif', 'image/gif'],
+    ['photo.heic', 'image/heic'],
+  ])('streams %s as %s — never mislabelled image/png', async (name, mime) => {
+    const p = join(dir, name);
+    writeFileSync(p, Buffer.from('not an image, not png bytes'));
+    const uploadFile = vi.fn().mockResolvedValue(uploaded());
+    const uploadBytes = vi.fn();
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadFile, uploadBytes })));
+
+    const preview = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_upload_file', { path: p }));
+    expect(JSON.stringify(preview.willSend)).toContain(`"mimeType":"${mime}"`);
+
+    await h.callTool('gemini_upload_file', { path: p, confirm: true });
+    await h.close();
+    // Streamed from disk by path, not read into memory and re-encoded.
+    expect(uploadFile).toHaveBeenCalledWith(p, mime, name);
+    expect(uploadBytes).not.toHaveBeenCalled();
+  });
+
+  it('trusts the bytes over the extension for the image formats it can sniff', async () => {
+    const p = join(dir, 'mislabelled.jpg');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    const uploadFile = vi.fn().mockResolvedValue(uploaded());
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadFile })));
+    await h.callTool('gemini_upload_file', { path: p, confirm: true });
+    await h.close();
+    expect(uploadFile).toHaveBeenCalledWith(p, 'image/png', 'mislabelled.jpg');
+  });
+
+  it('refuses a file it cannot identify instead of calling it image/png, and names mime_type', async () => {
+    const p = join(dir, 'mystery.xyz');
+    writeFileSync(p, Buffer.from('opaque bytes'));
+    const uploadFile = vi.fn().mockResolvedValue(uploaded());
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadFile })));
+    const res = await h.callTool('gemini_upload_file', { path: p, confirm: true });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/mime_type/);
+    expect(uploadFile).not.toHaveBeenCalled();
+
+    // An explicit mime_type is the escape hatch, in the preview and the upload.
+    const preview = parseToolResult<Record<string, unknown>>(
+      await h.callTool('gemini_upload_file', { path: p, mime_type: 'application/pdf' }),
+    );
+    expect(JSON.stringify(preview.willSend)).toContain('"mimeType":"application/pdf"');
+    await h.callTool('gemini_upload_file', { path: p, mime_type: 'application/pdf', confirm: true });
+    await h.close();
+    expect(uploadFile).toHaveBeenCalledWith(p, 'application/pdf', 'mystery.xyz');
   });
 
   it('refuses `path` on the hosted connector and points at the live alternatives', async () => {
@@ -192,8 +253,8 @@ describe('gemini_upload_file — display-name fallback', () => {
   });
 
   it('falls back to "upload" for a path with no usable basename', async () => {
-    const uploadBytes = vi.fn().mockResolvedValue(uploaded());
-    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadBytes })));
+    const uploadFile = vi.fn().mockResolvedValue(uploaded());
+    const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadFile })));
     // The path branch derives from the resolved filename; assert the shape of
     // the fallback expression rather than contriving an unnameable file.
     const p = join(dir, 'named.png');
@@ -201,7 +262,7 @@ describe('gemini_upload_file — display-name fallback', () => {
     await h.callTool('gemini_upload_file', { path: p, confirm: true });
     await h.close();
 
-    expect(uploadBytes.mock.calls[0][2]).toBe('named.png');
+    expect(uploadFile.mock.calls[0][2]).toBe('named.png');
   });
 
   it('still prefers a real filename from the URL over the fallback', async () => {

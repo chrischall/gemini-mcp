@@ -933,6 +933,32 @@ const fileObj = (state: string) => ({
   expirationTime: '2026-06-14T15:26:39Z',
 });
 
+describe('uploadFile', () => {
+  it('streams any local file (not just video) with the given MIME and display name', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'gemini-upload-file-'));
+    try {
+      const p = join(d, 'song.mp3');
+      writeFileSync(p, Buffer.from('twelve bytes'));
+      process.env.GEMINI_API_KEY = 'test-key';
+      const mock = uploadFetch([
+        { headers: { 'x-goog-upload-url': UPLOAD_URL } },
+        { body: { file: { ...fileObj('ACTIVE'), mimeType: 'audio/mp3' } } },
+      ]);
+      const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+      const up = await c.uploadFile(p, 'audio/mp3', 'my-song');
+      expect(up.mimeType).toBe('audio/mp3');
+      const sh = new Headers(mock.calls[0].init.headers as HeadersInit);
+      expect(sh.get('x-goog-upload-header-content-type')).toBe('audio/mp3');
+      expect(sh.get('x-goog-upload-header-content-length')).toBe('12');
+      expect(JSON.parse(mock.calls[0].init.body as string)).toEqual({ file: { display_name: 'my-song' } });
+      // A file-backed Blob, streamed — never a base64 round-trip.
+      expect(mock.calls[1].init.body).toBeInstanceOf(Blob);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('uploadVideo', () => {
   let dir: string;
   let videoPath: string;

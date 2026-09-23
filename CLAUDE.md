@@ -144,6 +144,10 @@ src/
                   #   best-effort and must not fail a recoverable call. The HOSTED
                   #   twin lives on the sink (writeSidecar/findByInteraction/
                   #   latestInteractionId in storage/media.ts)
+  tenant.ts       # pinnedTenant() — the hosted <tenant> namespace, pinned in
+                  #   lib/tenant.json on first use (derived from the key THEN)
+                  #   and never re-derived, so rotating GEMINI_API_KEY does not
+                  #   orphan the library / job records / sidecars
   job-store.ts    # DURABLE job records over the blob store (jobs/<tenant>/…) —
                   #   what makes a job survive the hosted machine stopping.
                   #   Heartbeat + executor-lost rule; best-effort, never throws.
