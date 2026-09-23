@@ -639,6 +639,18 @@ export class GeminiClient {
   }
 
   /**
+   * Upload ANY local file (image, video, audio) by streaming it from disk —
+   * the {@link uploadVideo} path without the video label. `gemini_upload_file`
+   * `path` uses this: reading the file into a Buffer, base64-encoding it and
+   * decoding it back held ~3x the file in memory and hit V8's max string
+   * length on a few-hundred-MB video (chrischall/fleet-audit#117).
+   */
+  async uploadFile(path: string, mimeType: string, displayName: string = basename(path)): Promise<UploadedFile> {
+    const blob = await fileBlob(path, { type: mimeType, maxBytes: FILE_MAX_BYTES, label: 'File' });
+    return this.uploadToFilesApi(blob, mimeType, displayName, blob.size);
+  }
+
+  /**
    * Upload already-in-memory bytes (a fetched `images_url`, a `data_base64`
    * payload, an inline `gemini_upload_file` body) to the Files API. Same three
    * steps as {@link uploadVideo}, minus the filesystem — which is what makes it

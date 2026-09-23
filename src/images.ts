@@ -26,8 +26,13 @@ export async function uniquePath(dir: string, base: string, ext: string): Promis
   return candidate;
 }
 
-/** Sniff MIME type from the first bytes of an image buffer. */
+/** Sniff MIME type from the first bytes of an image buffer (PNG fallback). */
 function sniffMimeBytes(buf: Buffer): string {
+  return sniffImageMime(buf) ?? 'image/png';
+}
+
+/** PNG/JPEG/WebP from the leading bytes, or `undefined` when it is none of them. */
+function sniffImageMime(buf: Buffer): string | undefined {
   // PNG: 89 50 4E 47
   if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
     return 'image/png';
@@ -44,7 +49,7 @@ function sniffMimeBytes(buf: Buffer): string {
   ) {
     return 'image/webp';
   }
-  return 'image/png';
+  return undefined;
 }
 
 /** File extension for a media MIME (image/video/audio). Falls back to the MIME
@@ -185,6 +190,53 @@ export async function previewVideoInput(path: string): Promise<LocalInputPreview
   const resolved = resolveVideoPath(path);
   const { size } = await stat(resolved);
   return { path: resolved, mimeType: videoMimeType(resolved), size };
+}
+
+/**
+ * Image and audio types the Files API accepts, by extension. Video comes from
+ * {@link VIDEO_MIME_BY_EXT} so the two lists cannot disagree.
+ */
+const UPLOAD_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  wav: 'audio/wav',
+  mp3: 'audio/mp3',
+  aiff: 'audio/aiff',
+  aif: 'audio/aiff',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  ...VIDEO_MIME_BY_EXT,
+};
+
+async function readHead(path: string, n = 16): Promise<Buffer> {
+  const fh = await open(path, 'r');
+  try {
+    const head = Buffer.alloc(n);
+    const { bytesRead } = await fh.read(head, 0, n, 0);
+    return head.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * The MIME a local file should be uploaded to the Files API as, or `undefined`
+ * when it cannot be identified. Bytes win for the image formats we can sniff
+ * (a PNG saved as `.jpg` is still a PNG); otherwise the extension decides,
+ * over image, video AND audio types. Never guesses: `gemini_upload_file` used
+ * to label every unrecognised file image/png (chrischall/fleet-audit#117).
+ */
+export async function detectUploadMime(resolvedPath: string): Promise<string | undefined> {
+  const sniffed = sniffImageMime(await readHead(resolvedPath));
+  if (sniffed) return sniffed;
+  const ext = resolvedPath.includes('.') ? resolvedPath.slice(resolvedPath.lastIndexOf('.') + 1).toLowerCase() : '';
+  return UPLOAD_MIME_BY_EXT[ext];
 }
 
 /** Read an image file into `{ base64, mimeType }` for an inline_data part. */

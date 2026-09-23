@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { stat } from 'node:fs/promises';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { McpToolError, minifiedResult } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
@@ -6,7 +7,7 @@ import { withProgressHeartbeat } from './shared.js';
 import { base64ToBytes, bytesToBase64, formatMb, wholeMb } from '../bytes.js';
 import { fileNameFromUrl } from '../fetch-image.js';
 import { downloadFilename } from '../media-name.js';
-import { previewUnlessConfirmed, previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
+import { previewUnlessConfirmed, schemaConfirm } from './_confirm.js';
 
 /**
  * First-class Gemini Files API access.
@@ -157,6 +158,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
         );
       }
 
+      let localUpload: { path: string; mimeType: string } | undefined;
       if (args.path) {
         if (!onDisk) {
           throw new McpToolError(
@@ -166,16 +168,30 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
             { hint: 'Use `url`, `r2_key` (gemini_get_upload_url), or `data_base64`.' },
           );
         }
+        // Resolve and identify BEFORE the gate, so the preview shows the MIME
+        // that will actually be sent. An unidentifiable file is refused rather
+        // than labelled image/png — the old image-only sniffer's default, which
+        // shipped every video, audio clip, GIF and HEIC mislabelled (#117).
+        const { resolveImagePath, detectUploadMime } = await import('../images.js');
+        const resolved = resolveImagePath(args.path);
+        const mimeType = args.mime_type ?? (await detectUploadMime(resolved));
+        if (!mimeType) {
+          throw new McpToolError(
+            `Cannot tell what kind of file ${resolved} is from its bytes or extension — pass \`mime_type\` ` +
+              '(e.g. video/mp4, audio/mp3, image/gif) so it is not uploaded under the wrong type.',
+            { hint: 'Pass mime_type explicitly.' },
+          );
+        }
         // Same gate as every other local-file input: a prompt-injected `path`
         // would otherwise ship an arbitrary local file to Google, and an
         // uploaded file is readable by anyone holding the api key for ~48h.
-        const gate = await previewLocalInputsUnlessConfirmed(
-          args.confirm,
-          'Upload a local file to the Gemini Files API',
-          '/upload/v1beta/files',
-          [args.path],
-        );
-        if (gate) return gate;
+        if (args.confirm !== true) {
+          const { size } = await stat(resolved);
+          return previewUnlessConfirmed(args.confirm, 'Upload a local file to the Gemini Files API', 'POST', '/upload/v1beta/files', {
+            inputs: [{ path: resolved, mimeType, size }],
+          })!;
+        }
+        localUpload = { path: resolved, mimeType };
       }
 
       const uploaded = await withProgressHeartbeat(extra, 'Uploading to the Gemini Files API', async () => {
@@ -212,14 +228,12 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           const bytes = base64ToBytes(decoded.base64);
           return client.uploadBytes(bytes, args.mime_type ?? decoded.mimeType, args.display_name ?? 'upload');
         }
-        const { readImageAsInline, resolveImagePath } = await import('../images.js');
-        const resolved = resolveImagePath(args.path!);
-        const inline = await readImageAsInline(resolved);
-        const bytes = base64ToBytes(inline.base64);
-        return client.uploadBytes(
-          bytes,
-          args.mime_type ?? inline.mimeType,
-          args.display_name ?? (resolved.split(/[\\/]/).pop() || 'upload'),
+        // Streamed from disk (fileBlob), never buffered and re-encoded.
+        const local = localUpload!;
+        return client.uploadFile(
+          local.path,
+          local.mimeType,
+          args.display_name ?? (local.path.split(/[\\/]/).pop() || 'upload'),
         );
       });
 
