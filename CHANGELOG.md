@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.4](https://github.com/chrischall/gemini-mcp/compare/v2.1.3...v2.1.4) (2026-09-23)
+
+
+### Bug Fixes
+
+* keep the hosted library when GEMINI_API_KEY is rotated, and upload local media files under their real MIME type ([#253](https://github.com/chrischall/gemini-mcp/issues/253)) ([4162f81](https://github.com/chrischall/gemini-mcp/commit/4162f81c8f8179f61a9df496edd2840db2b40f44))
+
+
+### Refactor
+
+* share the tenant resolver between the hosted library and media sink ([#256](https://github.com/chrischall/gemini-mcp/issues/256)) ([c17e023](https://github.com/chrischall/gemini-mcp/commit/c17e0230155e63d262fd9f12197f7bae0b82375c)), closes [#254](https://github.com/chrischall/gemini-mcp/issues/254)
+
 ## [2.1.3](https://github.com/chrischall/gemini-mcp/compare/v2.1.2...v2.1.3) (2026-09-23)
 
 
