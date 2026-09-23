@@ -15,6 +15,7 @@
 
 import { base64ToBytes } from '../bytes.js';
 import { signedLinks, type SignedLinks } from '../signed-url.js';
+import { tenantResolver } from '../tenant.js';
 
 /** One generated item to persist: raw base64 bytes plus the name to store it under. */
 export interface MediaItem {
@@ -420,15 +421,8 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
   const ttlMs = opts.urlTtlMs ?? 0;
 
   const readPrefixes = [prefix, ...(opts.readPrefixes ?? [])];
-  let tenantCache: Promise<string | undefined> | undefined;
-  // A rejected resolution is dropped, not cached (see src/tenant.ts): one
-  // transient store failure must not wedge the sink for the whole process.
-  const tenantId = () => {
-    if (tenantCache) return tenantCache;
-    const attempt = Promise.resolve(typeof opts.tenant === 'function' ? opts.tenant() : opts.tenant);
-    attempt.catch(() => { if (tenantCache === attempt) tenantCache = undefined; });
-    return (tenantCache = attempt);
-  };
+  // Cached per sink; a rejected resolution is retried, not cached.
+  const tenantId = tenantResolver(opts.tenant);
   /** `<prefix>/` or `<prefix>/<tenant>/` — where every WRITE goes. */
   const ownPrefix = async () => {
     const tenant = await tenantId();

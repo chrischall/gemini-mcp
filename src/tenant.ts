@@ -85,3 +85,22 @@ export function pinnedTenant(
     return attempt;
   };
 }
+
+/**
+ * Memoise a tenant source (a static value, or a possibly-async resolver) for
+ * one sink/library. Concurrent callers share one in-flight resolution and a
+ * success is cached for the process, but a REJECTED resolution is dropped, not
+ * cached: the hosted tenant is read from the store (`pinnedTenant`), and one
+ * transient failure must not wedge its consumer for the rest of the process.
+ */
+export function tenantResolver<T>(source: T | (() => Promise<T> | T)): () => Promise<T> {
+  let cache: Promise<T> | undefined;
+  return () => {
+    if (cache) return cache;
+    const attempt = Promise.resolve(
+      typeof source === 'function' ? (source as () => Promise<T> | T)() : source,
+    );
+    attempt.catch(() => { if (cache === attempt) cache = undefined; });
+    return (cache = attempt);
+  };
+}

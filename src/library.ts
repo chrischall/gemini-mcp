@@ -30,6 +30,8 @@
  * Worker-safe: no node imports, no module-scope state, structural bucket type.
  */
 
+import { tenantResolver } from './tenant.js';
+
 /** Key prefix for the library — the one prefix the retention sweep must skip. */
 export const LIBRARY_KEY_PREFIX = 'lib';
 
@@ -116,16 +118,8 @@ export interface LibraryOptions {
 /** Build the R2-backed library for one session. */
 export function createR2Library(bucket: LibraryBucket, opts: LibraryOptions): CharacterLibrary {
   const now = opts.now ?? (() => new Date());
-  let tenantCache: Promise<string> | undefined;
-  // A rejected resolution is dropped, not cached: the hosted tenant is read
-  // from the store (src/tenant.ts), and one transient failure must not wedge
-  // the library for the rest of the process.
-  const tenantId = () => {
-    if (tenantCache) return tenantCache;
-    const attempt = Promise.resolve(typeof opts.tenant === 'function' ? opts.tenant() : opts.tenant);
-    attempt.catch(() => { if (tenantCache === attempt) tenantCache = undefined; });
-    return (tenantCache = attempt);
-  };
+  // Cached per library; a rejected resolution is retried, not cached.
+  const tenantId = tenantResolver(opts.tenant);
 
   const assertName = (name: string): string => {
     if (!isValidLibraryName(name)) {
