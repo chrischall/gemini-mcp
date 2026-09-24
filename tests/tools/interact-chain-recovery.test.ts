@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
+import { callConfirmed } from '../confirm-helpers.js';
 import { ApiError } from '@chrischall/mcp-utils';
 import { registerInteractTools } from '../../src/tools/interact.js';
 import { client, ChainedRequest404Error } from '../../src/client.js';
@@ -89,10 +90,10 @@ describe('automatic re-anchor when an interaction id is gone upstream', () => {
       .mockResolvedValueOnce(ok('id-v12'));
     const h = await createTestHarness((srv) => registerInteractTools(srv, client));
 
-    await h.callTool('gemini_interact', {
-      // confirm: true — a local-file input is confirm-gated; without it the
-      // call returns a dry-run preview and never reaches the API.
-      input: 'apply this style', previous_interaction_id: 'id-v11', images: [reference], confirm: true, output_dir: dir,
+    await callConfirmed(h, 'gemini_interact', {
+      // A local-file input is confirm-gated: callConfirmed runs the preview
+      // phase first, then repeats the call with its token.
+      input: 'apply this style', previous_interaction_id: 'id-v11', images: [reference], output_dir: dir,
     });
 
     expect(spy.mock.calls[1][0].images).toHaveLength(2);

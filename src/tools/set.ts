@@ -9,7 +9,7 @@ import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, b
 import { fingerprintRequest } from '../jobs.js';
 import { sumUsage, type TokenUsage } from '../usage.js';
 import { attachCost } from '../pricing.js';
-import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
+import { confirmLocalInputs, confirmNote, confirmTokenParam } from './_confirm.js';
 
 export function registerSetTools(server: McpServer, client: GeminiClient): void {
   server.registerTool(
@@ -17,7 +17,8 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
     {
       description:
         'Generate a consistent SET of images: a master image from master_prompt, then one image per scene that references the master so the subject/style stays consistent. Provide `scenes` (explicit per-image prompts) OR `count` (variations of the master). ' +
-        'Scene generations run in parallel (reference_mode "master", the default). On the hosted connector: saved `characters` and a saved `style` can seed the whole set by name, multi-image results include a `bundle_url` zip of every image (one curl instead of N), and `max_wait_ms` returns a pollable job handle if the batch runs long.',
+        'Scene generations run in parallel (reference_mode "master", the default). On the hosted connector: saved `characters` and a saved `style` can seed the whole set by name, multi-image results include a `bundle_url` zip of every image (one curl instead of N), and `max_wait_ms` returns a pollable job handle if the batch runs long. ' +
+        confirmNote('Local file inputs are confirmed first'),
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: z.object({
         master_prompt: z.string().min(1).describe('Prompt for the master/reference image'),
@@ -32,7 +33,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         characters: charactersSchema,
         style: styleSchema,
         master_images_base64: imagesBase64Schema('Reference images for the master generation', 'master_images'),
-        confirm: schemaConfirm,
+        confirmToken: confirmTokenParam,
         ...sharedImageSchema,
       }),
     },
@@ -43,8 +44,12 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         throw new McpToolError('Provide exactly one of `scenes` or `count`.');
       }
       // Confirm-gate local file inputs: only `master_images` (paths) can read a
-      // local file; base64 references pass through ungated. Dry-run makes NO API call.
-      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local master image input(s) to the Gemini API', '/v1beta/models/{model}:generateContent', args.master_images);
+      // local file; base64 references pass through ungated. The preview makes NO API call.
+      const { confirmToken, ...request } = args;
+      const gate = await confirmLocalInputs(extra, {
+        tool: 'gemini_image_set', action: 'image.set', description: 'Send local master image input(s) to the Gemini API', endpoint: '/v1beta/models/{model}:generateContent',
+        imagePaths: args.master_images, request, confirmToken,
+      });
       if (gate) return gate;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       // Resolve shape BEFORE fingerprinting: `orientation: 'portrait'` and

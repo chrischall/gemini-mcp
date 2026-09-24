@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
+import { callConfirmed, phaseOne } from '../confirm-helpers.js';
 import { registerFileTools } from '../../src/tools/files.js';
 import { SessionState } from '../../src/session.js';
 import { createDiskSink, createR2Sink } from '../../src/storage/media.js';
@@ -129,20 +130,21 @@ describe('gemini_upload_file — data_base64 and path', () => {
     expect(body.file_uri).toBe('files/abc123');
   });
 
-  it('uploads a local path once confirmed, and dry-runs first without confirm', async () => {
+  it('previews a local path first (phase 1), and uploads only with the confirmToken (phase 2)', async () => {
     const p = join(dir, 'local.png');
     writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
     const uploadFile = vi.fn().mockResolvedValue(uploaded());
     const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadFile })));
 
     // A prompt-injected `path` would otherwise ship an arbitrary local file to
-    // Google, so the dry-run must show the resolved path and upload nothing.
-    const preview = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_upload_file', { path: p }));
-    expect(preview.dryRun).toBe(true);
-    expect(JSON.stringify(preview.willSend)).toContain(p);
+    // Google, so phase 1 must show the resolved path and upload nothing.
+    const first = await phaseOne(h, 'gemini_upload_file', { path: p });
+    expect(first.preview).toMatchObject({ method: 'POST', path: '/upload/v1beta/files' });
+    expect(JSON.stringify(first.preview.willSend)).toContain(p);
     expect(uploadFile).not.toHaveBeenCalled();
 
-    await h.callTool('gemini_upload_file', { path: p, confirm: true });
+    await callConfirmed(h, 'gemini_upload_file', { path: p });
+    expect(uploadFile).toHaveBeenCalledOnce();
     expect(uploadFile).toHaveBeenCalledWith(p, 'image/png', 'local.png');
     await h.close();
   });
@@ -168,10 +170,10 @@ describe('gemini_upload_file — data_base64 and path', () => {
     const uploadBytes = vi.fn();
     const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadFile, uploadBytes })));
 
-    const preview = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_upload_file', { path: p }));
+    const { preview } = await phaseOne(h, 'gemini_upload_file', { path: p });
     expect(JSON.stringify(preview.willSend)).toContain(`"mimeType":"${mime}"`);
 
-    await h.callTool('gemini_upload_file', { path: p, confirm: true });
+    await callConfirmed(h, 'gemini_upload_file', { path: p });
     await h.close();
     // Streamed from disk by path, not read into memory and re-encoded.
     expect(uploadFile).toHaveBeenCalledWith(p, mime, name);
@@ -183,7 +185,7 @@ describe('gemini_upload_file — data_base64 and path', () => {
     writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
     const uploadFile = vi.fn().mockResolvedValue(uploaded());
     const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadFile })));
-    await h.callTool('gemini_upload_file', { path: p, confirm: true });
+    await callConfirmed(h, 'gemini_upload_file', { path: p });
     await h.close();
     expect(uploadFile).toHaveBeenCalledWith(p, 'image/png', 'mislabelled.jpg');
   });
@@ -193,17 +195,15 @@ describe('gemini_upload_file — data_base64 and path', () => {
     writeFileSync(p, Buffer.from('opaque bytes'));
     const uploadFile = vi.fn().mockResolvedValue(uploaded());
     const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadFile })));
-    const res = await h.callTool('gemini_upload_file', { path: p, confirm: true });
+    const res = await h.callTool('gemini_upload_file', { path: p });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/mime_type/);
     expect(uploadFile).not.toHaveBeenCalled();
 
     // An explicit mime_type is the escape hatch, in the preview and the upload.
-    const preview = parseToolResult<Record<string, unknown>>(
-      await h.callTool('gemini_upload_file', { path: p, mime_type: 'application/pdf' }),
-    );
+    const { preview } = await phaseOne(h, 'gemini_upload_file', { path: p, mime_type: 'application/pdf' });
     expect(JSON.stringify(preview.willSend)).toContain('"mimeType":"application/pdf"');
-    await h.callTool('gemini_upload_file', { path: p, mime_type: 'application/pdf', confirm: true });
+    await callConfirmed(h, 'gemini_upload_file', { path: p, mime_type: 'application/pdf' });
     await h.close();
     expect(uploadFile).toHaveBeenCalledWith(p, 'application/pdf', 'mystery.xyz');
   });
@@ -211,7 +211,7 @@ describe('gemini_upload_file — data_base64 and path', () => {
   it('refuses `path` on the hosted connector and points at the live alternatives', async () => {
     const uploadBytes = vi.fn();
     const h = await createTestHarness((s) => registerFileTools(s, stub({ uploadBytes }, false)));
-    const res = await h.callTool('gemini_upload_file', { path: '/etc/passwd', confirm: true });
+    const res = await h.callTool('gemini_upload_file', { path: '/etc/passwd' });
     await h.close();
 
     expect(res.isError).toBe(true);
@@ -259,7 +259,7 @@ describe('gemini_upload_file — display-name fallback', () => {
     // the fallback expression rather than contriving an unnameable file.
     const p = join(dir, 'named.png');
     writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
-    await h.callTool('gemini_upload_file', { path: p, confirm: true });
+    await callConfirmed(h, 'gemini_upload_file', { path: p });
     await h.close();
 
     expect(uploadFile.mock.calls[0][2]).toBe('named.png');
@@ -452,22 +452,23 @@ describe('gemini_list_files', () => {
 });
 
 describe('gemini_delete_file', () => {
-  it('dry-runs without confirm and deletes nothing', async () => {
+  it('previews on the first call (phase 1) and deletes nothing', async () => {
     const deleteFile = vi.fn();
     const h = await createTestHarness((s) => registerFileTools(s, stub({ deleteFile })));
-    const body = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_delete_file', { file_uri: 'files/a1' }));
+    const first = await phaseOne(h, 'gemini_delete_file', { file_uri: 'files/a1' });
     await h.close();
 
-    expect(body.dryRun).toBe(true);
+    expect(first.preview).toMatchObject({ method: 'DELETE', path: '/v1beta/files/a1' });
     expect(deleteFile).not.toHaveBeenCalled();
   });
 
-  it('deletes when confirmed', async () => {
+  it('deletes exactly once with the phase-1 confirmToken', async () => {
     const deleteFile = vi.fn().mockResolvedValue(undefined);
     const h = await createTestHarness((s) => registerFileTools(s, stub({ deleteFile })));
-    const body = parseToolResult<{ deleted: string }>(await h.callTool('gemini_delete_file', { file_uri: 'files/a1', confirm: true }));
+    const body = parseToolResult<{ deleted: string }>(await callConfirmed(h, 'gemini_delete_file', { file_uri: 'files/a1' }));
     await h.close();
 
+    expect(deleteFile).toHaveBeenCalledOnce();
     expect(deleteFile).toHaveBeenCalledWith('files/a1');
     expect(body.deleted).toBe('files/a1');
   });

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
+import { callConfirmed } from '../confirm-helpers.js';
 import { registerInteractTools } from '../../src/tools/interact.js';
 import { client } from '../../src/client.js';
 
@@ -53,11 +54,10 @@ describe('gemini_interact chained re-attach guard', () => {
     writeFileSync(fresh, Buffer.from(PNG, 'base64'));
 
     spy.mockResolvedValue({ id: 'guard-mixed-2', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
-    const res2 = await h.callTool('gemini_interact', {
+    const res2 = await callConfirmed(h, 'gemini_interact', {
       input: 'match this style',
       previous_interaction_id: 'guard-mixed-1',
       images: [out1, fresh],
-      confirm: true,
       output_dir: dir,
     });
     expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -75,7 +75,7 @@ describe('gemini_interact chained re-attach guard', () => {
     const out1 = parseToolResult<{ images: string[] }>(res1).images[0];
 
     spy.mockResolvedValue({ id: 'guard-fresh-2', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
-    const res2 = await h.callTool('gemini_interact', { input: 'reimagine this poster', images: [out1], confirm: true, output_dir: dir });
+    const res2 = await callConfirmed(h, 'gemini_interact', { input: 'reimagine this poster', images: [out1], output_dir: dir });
     expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({
       images: [expect.objectContaining({ mimeType: 'image/jpeg' })],
     }));
@@ -93,11 +93,10 @@ describe('gemini_interact chained re-attach guard', () => {
     writeFileSync(fresh, Buffer.from(PNG, 'base64'));
 
     spy.mockResolvedValue({ id: 'guard-unrelated-2', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
-    const res2 = await h.callTool('gemini_interact', {
+    const res2 = await callConfirmed(h, 'gemini_interact', {
       input: 'add this logo',
       previous_interaction_id: 'guard-unrelated-1',
       images: [fresh],
-      confirm: true,
       output_dir: dir,
     });
     expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({

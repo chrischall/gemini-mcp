@@ -20,6 +20,23 @@ Developed and maintained by AI (Claude Code).
 | `GEMINI_HEARTBEAT_MS` | No | Progress-notification cadence in ms while a generation runs (default: `10000`; `0` disables) — keeps MCP hosts that reset their timeout on progress from timing out long generations |
 | `GEMINI_CHAIN_RETRY_MS` | No | How long to wait out interactions-store lag when a chained call 404s (default: `120000`; `0` disables retrying) |
 
+### Confirmations
+
+Sending a **local file** to Google (the `images` / `master_images` / `video_path` inputs, or
+`gemini_upload_file`'s `path`) and every **delete** ask for confirmation first. A client that can
+show a confirmation prompt (Claude Code) gets the real prompt. Elsewhere the first call does
+nothing and returns a preview (the resolved local paths with their MIME types and sizes, or the
+method/path being deleted) plus a `confirmToken`; only a repeat call with the same arguments and
+that token proceeds. The token is single-use, expires, and is bound to the exact arguments — a
+changed prompt or a swapped file between the two calls is refused. Pure text prompts, URLs,
+`files/` references and base64 inputs are not gated.
+
+| variable | default | |
+|---|---|---|
+| `MCP_CONFIRM_MODE` | `ask-user` | What a write does on a client that cannot show a confirmation prompt (claude.ai, Claude Desktop). `ask-user`: two steps — the first call does nothing and returns a preview plus a token, and the model must get your approval in chat before calling again with it. `auto`: the same two steps, but the model may use the token after reviewing the preview itself. `refuse`: writes are refused on such clients. A client that can show prompts (Claude Code) always gets the real prompt. An unrecognised value is treated as `refuse`. |
+| `MCP_CONFIRM_TTL_SECONDS` | `600` | How long a token stays valid. |
+| `MCP_CONFIRM_SECRET` | random per process | Signing key; set it only if tokens must survive a server restart. |
+
 ### Long generations and client timeouts
 
 4K / Pro-model generations can outrun an MCP host's own `tools/call` timeout (error `-32001`).
@@ -86,7 +103,7 @@ progress), two guards make re-issuing safe and unnecessary:
 | `gemini_token_usage` | Token usage and an estimated USD cost for this session so far. Call it before and after a workflow and subtract to attribute that workflow's spend. Priced per call against each call's own model from a dated rate card (`GEMINI_RATE_CARD` overrides it); there is no account-balance endpoint to read, so this is how spend is attributed |
 | `gemini_upload_file` | Upload an image (or video/audio) to the Gemini Files API once — from a `url`, `data_base64`, or a local `path` — and get a reusable `files/<id>` reference |
 | `gemini_list_files` | List the files currently uploaded under this API key, with MIME types and expiry times |
-| `gemini_delete_file` | Delete an uploaded file before its ~48h expiry (confirm-gated) |
+| `gemini_delete_file` | Delete an uploaded file before its ~48h expiry (confirmed first — see [Confirmations](#confirmations)) |
 | `gemini_sign_media` | *(hosted deployments only)* Mint a fresh signed URL for generated media from its `r2_key` — an expired link is not a dead end |
 | `gemini_view_media` | *(hosted deployments only)* Return a generated image as an inline image block from its `r2_key`, so a model can actually see what it made before refining it |
 | `gemini_get_upload_url` | *(hosted deployments only)* Mint a short-lived signed PUT URL so a shell can upload a reference image with no auth header; the PUT returns an `r2_key` usable in `images_r2_keys`, `gemini_save_character`, or `gemini_upload_file` |

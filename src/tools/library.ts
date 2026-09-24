@@ -5,7 +5,7 @@ import type { GeminiClient } from '../client.js';
 import { LIBRARY_NAME_PATTERN, type CharacterLibrary, type LibraryImage } from '../library.js';
 import { acceptableUploadType } from '../upload-url.js';
 import { withProgressHeartbeat } from './shared.js';
-import { previewUnlessConfirmed, schemaConfirm } from './_confirm.js';
+import { confirmNote, confirmTokenParam, confirmWrite } from './_confirm.js';
 
 /**
  * Tools over the per-account reference library (src/library.ts): named
@@ -145,12 +145,22 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
   server.registerTool(
     'gemini_delete_character',
     {
-      description: 'Delete a saved character from this account\'s reference library. Generation calls naming it will then fail until it is re-saved.',
+      description: 'Delete a saved character from this account\'s reference library. Generation calls naming it will then fail until it is re-saved. ' + confirmNote(),
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-      inputSchema: z.object({ name: NAME_FIELD, confirm: schemaConfirm }),
+      inputSchema: z.object({ name: NAME_FIELD, confirmToken: confirmTokenParam }),
     },
-    async (args) => {
-      const gate = previewUnlessConfirmed(args.confirm, 'Delete a saved character (its reference image and description)', 'DELETE', `characters/${args.name}`);
+    async (args, extra) => {
+      const gate = await confirmWrite(extra, {
+        tool: 'gemini_delete_character',
+        action: 'character.delete',
+        message: 'Review and confirm this deletion:',
+        description: 'Delete a saved character (its reference image and description)',
+        method: 'DELETE',
+        path: `characters/${args.name}`,
+        target: args.name,
+        payload: { name: args.name },
+        confirmToken: args.confirmToken,
+      });
       if (gate) return gate;
       const existed = await library.deleteCharacter(args.name);
       if (!existed) {
@@ -221,12 +231,22 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
   server.registerTool(
     'gemini_delete_style',
     {
-      description: 'Delete a saved style preset from this account\'s reference library.',
+      description: 'Delete a saved style preset from this account\'s reference library. ' + confirmNote(),
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-      inputSchema: z.object({ name: NAME_FIELD, confirm: schemaConfirm }),
+      inputSchema: z.object({ name: NAME_FIELD, confirmToken: confirmTokenParam }),
     },
-    async (args) => {
-      const gate = previewUnlessConfirmed(args.confirm, 'Delete a saved style preset', 'DELETE', `styles/${args.name}`);
+    async (args, extra) => {
+      const gate = await confirmWrite(extra, {
+        tool: 'gemini_delete_style',
+        action: 'style.delete',
+        message: 'Review and confirm this deletion:',
+        description: 'Delete a saved style preset',
+        method: 'DELETE',
+        path: `styles/${args.name}`,
+        target: args.name,
+        payload: { name: args.name },
+        confirmToken: args.confirmToken,
+      });
       if (gate) return gate;
       const existed = await library.deleteStyle(args.name);
       if (!existed) {
