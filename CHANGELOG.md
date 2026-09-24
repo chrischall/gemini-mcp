@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/chrischall/gemini-mcp/compare/v2.1.4...v2.2.0) (2026-09-24)
+
+
+### Features
+
+* confirm writes with a preview token instead of confirm: true ([#257](https://github.com/chrischall/gemini-mcp/issues/257)) ([5e8b59b](https://github.com/chrischall/gemini-mcp/commit/5e8b59b39ebd6e62416139ffa1dc01816097dc43))
+
 ## [2.1.4](https://github.com/chrischall/gemini-mcp/compare/v2.1.3...v2.1.4) (2026-09-23)
 
 
