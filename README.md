@@ -189,6 +189,15 @@ safe form, and a markdown link is a reasonable enhancement where you know it ren
 Signed-URL lifetime is clamped to `MEDIA_TTL_DAYS`, so a link never outlives the object it
 points at.
 
+**Prompts are stored too.** Each generated object on a hosted deployment gets a small JSON
+record beside it holding the prompt (first 500 characters), model and interaction id — that is
+what `gemini_list_recent_media` shows and what lets a lost turn be recovered. The record lives
+and is swept with its object, so it is kept for the same `MEDIA_TTL_DAYS` window, not longer.
+Locally, `gemini_interact` writes an `<image>.json` sidecar (model, interaction id, options and
+any text the model replied with — not the prompt itself) next to each image in the output dir;
+those files are yours to keep or delete and never expire on their own. If your
+prompts describe real people, bear in mind they sit in your bucket for the retention window.
+
 ## Sending reference images without burning context
 
 Every tool that takes a reference image — `gemini_image_generate`, `gemini_image_edit`,

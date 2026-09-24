@@ -190,6 +190,55 @@ describe('confirm-gate: local file inputs need a confirmed token', () => {
     await h.close();
   });
 
+  // fleet-audit#929: an unidentifiable local file used to be previewed AND
+  // sent as image/png (the old sniffer's default), so the preview mislabelled
+  // a prompt-injected secret. It is now refused before the gate, with no preview
+  // token and no API call.
+  describe('refuses a local image input whose bytes are not PNG/JPEG/WebP', () => {
+    const KEY = '-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n-----END OPENSSH PRIVATE KEY-----\n';
+    function writeKey(): string {
+      const p = join(dir, 'id_rsa');
+      writeFileSync(p, KEY);
+      return p;
+    }
+    const cases: Array<[string, (h: string) => Record<string, unknown>]> = [
+      ['gemini_image_edit', (k) => ({ prompt: 'make it blue', images: [k], output_dir: dir })],
+      ['gemini_image_generate', (k) => ({ prompt: 'style', images: [k], output_dir: dir })],
+      ['gemini_image_set', (k) => ({ master_prompt: 'a set', master_images: [k], count: 1, output_dir: dir })],
+      ['gemini_interact', (k) => ({ input: 'describe', images: [k], output_dir: dir })],
+      ['gemini_video_generate', (k) => ({ prompt: 'animate', images: [k], output_dir: dir })],
+      ['gemini_music_generate', (k) => ({ prompt: 'score it', images: [k], output_dir: dir })],
+    ];
+    for (const [tool, mkArgs] of cases) {
+      it(`${tool}: no confirmation token, no API call`, async () => {
+        const spies = [
+          vi.spyOn(client, 'generate'),
+          vi.spyOn(client, 'interact'),
+          vi.spyOn(client, 'generateVideo'),
+          vi.spyOn(client, 'generateMusic'),
+          vi.spyOn(client, 'uploadFile'),
+          vi.spyOn(client, 'uploadBytes'),
+        ];
+        const k = writeKey();
+        const h = await createTestHarness((srv) => {
+          registerGenerateTools(srv, client);
+          registerSetTools(srv, client);
+          registerInteractTools(srv, client);
+          registerVideoTools(srv, client);
+          registerMusicTools(srv, client);
+        });
+        const res = await h.callTool(tool, mkArgs(k));
+        expect(res.isError).toBe(true);
+        const text = JSON.stringify(res.content);
+        expect(text).toMatch(/cannot tell what kind of (image|file)/i);
+        expect(text).not.toMatch(/confirmToken/);
+        expect(text).not.toMatch(/image\/png/);
+        for (const s of spies) expect(s).not.toHaveBeenCalled();
+        await h.close();
+      });
+    }
+  });
+
   it('binds the whole request: a changed prompt between the phases is DRAFT_CHANGED and generates nothing', async () => {
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const inPath = writePng('ref.png');

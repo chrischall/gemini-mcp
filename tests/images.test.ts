@@ -62,6 +62,12 @@ describe('readImageAsInline', () => {
     const r = await readImageAsInline(p);
     expect(r.mimeType).toBe('image/webp');
   });
+
+  it('refuses a file that is not PNG/JPEG/WebP instead of labelling it image/png (fleet-audit#929)', async () => {
+    const p = join(dir, 'notes.txt');
+    writeFileSync(p, 'plain text, not an image');
+    await expect(readImageAsInline(p)).rejects.toThrow(/cannot tell what kind of image/i);
+  });
 });
 
 describe('decodeImageInput', () => {
