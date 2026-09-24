@@ -10,7 +10,7 @@ import { emit, reportShape, resolveAspectRatio, orientationSchema, ASPECT_RATIOS
 import { bytesToBase64 } from '../bytes.js';
 import { fingerprintRequest } from '../jobs.js';
 import { attachCost } from '../pricing.js';
-import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
+import { confirmLocalInputs, confirmNote, confirmTokenParam } from './_confirm.js';
 
 // The last-interaction id and the written-outputs set used to live here, at
 // module scope. On the hosted connector that leaks across tenants — one
@@ -102,7 +102,8 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         'do NOT start a new interaction or re-send the image for each tweak. `continue_last: true` chains from this ' +
         "session's most recent interaction without threading the id. " +
         recoveryDescription +
-        'Output is JPEG.',
+        'Output is JPEG. ' +
+        confirmNote('Local file inputs are confirmed first'),
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: z.object({
         input: z.string().min(1).describe('Text prompt or editing instruction'),
@@ -175,7 +176,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           .boolean()
           .optional()
           .describe('Use the image currently on the macOS system clipboard as an input (downscaled to JPEG)'),
-        confirm: schemaConfirm,
+        confirmToken: confirmTokenParam,
       }),
     },
     async (args, extra) => {
@@ -221,8 +222,13 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
       // Confirm-gate local file inputs AFTER the re-attach split, so the preview
       // reflects the paths actually sent (dropped prior-output paths aren't). A
       // prompt-injected `images`/`video_path` could exfiltrate a local file;
-      // base64/clipboard inputs pass through ungated. Dry-run makes NO API call.
-      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local file input(s) to the Gemini Interactions API', '/v1beta/interactions', images, args.video_path);
+      // base64/clipboard inputs pass through ungated. The preview makes NO API call.
+      const { confirmToken, ...request } = args;
+      const gate = await confirmLocalInputs(extra, {
+        tool: 'gemini_interact', action: 'interaction.create', description: 'Send local file input(s) to the Gemini Interactions API', endpoint: '/v1beta/interactions',
+        imagePaths: images, videoPath: args.video_path,
+        request: { ...request, images, previous_interaction_id: previousInteractionId }, confirmToken,
+      });
       if (gate) return gate;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       // Resolved before the fingerprint so "portrait" and "9:16" are one job.

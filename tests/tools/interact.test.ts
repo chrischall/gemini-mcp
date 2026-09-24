@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
+import { callConfirmed } from '../confirm-helpers.js';
 import { registerInteractTools } from '../../src/tools/interact.js';
 import { client } from '../../src/client.js';
 
@@ -160,7 +161,7 @@ describe('gemini_interact', () => {
       images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }],
     });
     const h = await createTestHarness((srv) => registerInteractTools(srv, client));
-    await h.callTool('gemini_interact', { input: 'edit this', images: [inPath], confirm: true, output_dir: dir });
+    await callConfirmed(h, 'gemini_interact', { input: 'edit this', images: [inPath], output_dir: dir });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
     }));
@@ -477,7 +478,7 @@ describe('gemini_interact video_path (Files API upload)', () => {
     const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
     const spy = vi.spyOn(client, 'interact').mockResolvedValue({ id: 'i1', images: [{ base64: JPEG_BASE64, mimeType: 'image/jpeg' }] });
     const h = await createTestHarness((srv) => registerInteractTools(srv, client));
-    const res = await h.callTool('gemini_interact', { input: 'flag', video_path: videoPath, confirm: true, output_dir: dir });
+    const res = await callConfirmed(h, 'gemini_interact', { input: 'flag', video_path: videoPath, output_dir: dir });
     expect(up).toHaveBeenCalledWith(videoPath, 'video/webm');
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: FILE_URI, videoMimeType: 'video/webm' }));
     const data = parseToolResult<{ video_file: { uri: string } }>(res);
@@ -487,12 +488,15 @@ describe('gemini_interact video_path (Files API upload)', () => {
 
   it('rejects video_path together with video_url', async () => {
     const up = vi.spyOn(client, 'uploadVideo');
+    // The file exists so the confirmation preview succeeds; the conflict is
+    // refused after it, exactly as it was once confirmed before.
+    const videoPath = join(dir, 'clip.mp4');
+    writeFileSync(videoPath, Buffer.from('vid'));
     const h = await createTestHarness((srv) => registerInteractTools(srv, client));
-    const res = await h.callTool('gemini_interact', {
+    const res = await callConfirmed(h, 'gemini_interact', {
       input: 'flag',
-      video_path: '/tmp/clip.mp4',
+      video_path: videoPath,
       video_url: 'https://www.youtube.com/watch?v=abc',
-      confirm: true,
     });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/not both/i);

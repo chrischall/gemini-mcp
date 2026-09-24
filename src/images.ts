@@ -157,7 +157,7 @@ export function videoMimeType(p: string): string {
   return mime;
 }
 
-/** A resolved local input file, described for a confirm-gate dry-run preview. */
+/** A resolved local input file, described for a confirmation preview. */
 export interface LocalInputPreview { path: string; mimeType: string; size: number }
 
 /**
@@ -169,7 +169,7 @@ export interface LocalInputPreview { path: string; mimeType: string; size: numbe
 export async function previewImageInput(path: string): Promise<LocalInputPreview> {
   const resolved = resolveImagePath(path);
   // Read only the header bytes needed to sniff the MIME (≤12), and take the size
-  // from stat() — a dry-run must not load a large reference image into memory
+  // from stat() — a preview must not load a large reference image into memory
   // just to report it (matches previewVideoInput).
   const { size } = await stat(resolved);
   const fh = await open(resolved, 'r');

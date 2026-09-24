@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
+import { callConfirmed } from '../confirm-helpers.js';
 import { registerGenerateTools } from '../../src/tools/generate.js';
 import { client } from '../../src/client.js';
 
@@ -410,7 +411,7 @@ describe('gemini_image_edit', () => {
     writeFileSync(inPath, Buffer.from(PNG, 'base64'));
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
-    const res = await h.callTool('gemini_image_edit', { prompt: 'make it blue', images: [inPath], confirm: true, output_dir: dir });
+    const res = await callConfirmed(h, 'gemini_image_edit', { prompt: 'make it blue', images: [inPath], output_dir: dir });
     expect(parseToolResult<{ images: string[] }>(res).images).toHaveLength(1);
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ images: [{ base64: PNG, mimeType: 'image/png' }] }),
@@ -423,11 +424,10 @@ describe('gemini_image_edit', () => {
     writeFileSync(inPath, Buffer.from(PNG, 'base64'));
     vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
-    const res = await h.callTool('gemini_image_edit', {
+    const res = await callConfirmed(h, 'gemini_image_edit', {
       prompt: 'make it blue',
       images: [inPath],
       filename: 'edited-output',
-      confirm: true,
       output_dir: dir,
     });
     const data = parseToolResult<{ images: string[] }>(res);
@@ -466,7 +466,7 @@ describe('gemini_image_generate input-dir resolution via GEMINI_INPUT_DIR', () =
 
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
-    const res = await h.callTool('gemini_image_generate', { prompt: 'style transfer', images: ['ref.png'], confirm: true, output_dir: dir });
+    const res = await callConfirmed(h, 'gemini_image_generate', { prompt: 'style transfer', images: ['ref.png'], output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
@@ -485,7 +485,7 @@ describe('gemini_image_edit input-dir resolution via GEMINI_INPUT_DIR', () => {
 
     const spy = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
-    const res = await h.callTool('gemini_image_edit', { prompt: 'make it blue', images: ['edit-src.png'], confirm: true, output_dir: dir });
+    const res = await callConfirmed(h, 'gemini_image_edit', { prompt: 'make it blue', images: ['edit-src.png'], output_dir: dir });
     expect(res.isError).toBeFalsy();
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       images: expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png' })]),
@@ -504,7 +504,7 @@ describe('gemini_image_generate video_path (Files API upload)', () => {
     const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
     const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
-    const res = await h.callTool('gemini_image_generate', { prompt: 'flag', video_path: videoPath, confirm: true, output_dir: dir });
+    const res = await callConfirmed(h, 'gemini_image_generate', { prompt: 'flag', video_path: videoPath, output_dir: dir });
     expect(up).toHaveBeenCalledWith(videoPath, 'video/mp4');
     expect(gen).toHaveBeenCalledWith(expect.objectContaining({ videoUrl: FILE_URI, videoMimeType: 'video/mp4' }));
     // meta surfaces the uploaded file so callers can reuse the uri (48h TTL)
@@ -519,7 +519,7 @@ describe('gemini_image_generate video_path (Files API upload)', () => {
     const up = vi.spyOn(client, 'uploadVideo').mockResolvedValue(uploaded);
     const gen = vi.spyOn(client, 'generate').mockResolvedValue({ images: [{ base64: PNG, mimeType: 'image/png' }] });
     const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
-    await h.callTool('gemini_image_generate', { prompt: 'flag', video_path: videoPath, count: 3, confirm: true, output_dir: dir });
+    await callConfirmed(h, 'gemini_image_generate', { prompt: 'flag', video_path: videoPath, count: 3, output_dir: dir });
     expect(up).toHaveBeenCalledTimes(1);
     expect(gen).toHaveBeenCalledTimes(3);
     await h.close();
@@ -527,12 +527,15 @@ describe('gemini_image_generate video_path (Files API upload)', () => {
 
   it('rejects video_path together with video_url', async () => {
     const up = vi.spyOn(client, 'uploadVideo');
+    // The file exists so the confirmation preview succeeds; the conflict is
+    // refused after it, exactly as it was once confirmed before.
+    const videoPath = join(dir, 'clip.mp4');
+    writeFileSync(videoPath, Buffer.from('vid'));
     const h = await createTestHarness((srv) => registerGenerateTools(srv, client));
-    const res = await h.callTool('gemini_image_generate', {
+    const res = await callConfirmed(h, 'gemini_image_generate', {
       prompt: 'flag',
-      video_path: '/tmp/clip.mp4',
+      video_path: videoPath,
       video_url: 'https://www.youtube.com/watch?v=abc',
-      confirm: true,
     });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/not both/i);

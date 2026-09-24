@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
+import { callConfirmed, phaseOne } from '../confirm-helpers.js';
 import { registerLibraryTools } from '../../src/tools/library.js';
 import { createR2Library, type LibraryBucket } from '../../src/library.js';
 import { SessionState } from '../../src/session.js';
@@ -137,7 +138,7 @@ describe('gemini_save_character', () => {
 });
 
 describe('list / delete characters', () => {
-  it('lists what was saved and deletes only with confirm', async () => {
+  it('lists what was saved and deletes only with a confirmed token', async () => {
     const client = stub();
     const h = await createTestHarness((s) => registerLibraryTools(s, client));
     await h.callTool('gemini_save_character', { name: 'finn', description: 'boy', image_url: 'https://x.example/finn.jpg' });
@@ -149,16 +150,16 @@ describe('list / delete characters', () => {
     expect(listed.count).toBe(2);
     expect(listed.characters.map((c) => c.name)).toEqual(['finn', 'mel']);
 
-    // No confirm ⇒ dry-run, nothing deleted.
-    const dry = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_delete_character', { name: 'mel' }));
-    expect(dry.dryRun).toBe(true);
+    // Phase 1 ⇒ preview only, nothing deleted.
+    const first = await phaseOne(h, 'gemini_delete_character', { name: 'mel' });
+    expect(first.preview).toMatchObject({ method: 'DELETE', path: 'characters/mel' });
     expect(parseToolResult<{ count: number }>(await h.callTool('gemini_list_characters', {})).count).toBe(2);
 
-    const deleted = parseToolResult<Record<string, unknown>>(await h.callTool('gemini_delete_character', { name: 'mel', confirm: true }));
+    const deleted = parseToolResult<Record<string, unknown>>(await callConfirmed(h, 'gemini_delete_character', { name: 'mel' }));
     expect(deleted.deleted).toBe('character');
     expect(parseToolResult<{ count: number }>(await h.callTool('gemini_list_characters', {})).count).toBe(1);
 
-    const missing = await h.callTool('gemini_delete_character', { name: 'mel', confirm: true });
+    const missing = await callConfirmed(h, 'gemini_delete_character', { name: 'mel' });
     expect(missing.isError).toBe(true);
     expect(JSON.stringify(missing.content)).toMatch(/No saved character/);
     await h.close();
@@ -183,7 +184,11 @@ describe('styles', () => {
     const listed = parseToolResult<{ styles: Array<{ name: string }> }>(await h.callTool('gemini_list_styles', {}));
     expect(listed.styles.map((s) => s.name)).toEqual(['bold-cartoon-sports', 'painterly']);
 
-    await h.callTool('gemini_delete_style', { name: 'painterly', confirm: true });
+    // Phase 1 previews and deletes nothing; phase 2 with its token deletes.
+    const first = await phaseOne(h, 'gemini_delete_style', { name: 'painterly' });
+    expect(first.preview).toMatchObject({ method: 'DELETE', path: 'styles/painterly' });
+    expect(parseToolResult<{ count: number }>(await h.callTool('gemini_list_styles', {})).count).toBe(2);
+    await h.callTool('gemini_delete_style', { name: 'painterly', confirmToken: first.confirmToken });
     expect(parseToolResult<{ count: number }>(await h.callTool('gemini_list_styles', {})).count).toBe(1);
     await h.close();
   });

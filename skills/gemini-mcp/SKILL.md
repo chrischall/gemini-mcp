@@ -125,9 +125,9 @@ not an error.
 ### Files API
 | Tool | Description |
 |------|-------------|
-| `gemini_upload_file(url? \| data_base64? \| path?, mime_type?, display_name?, confirm?)` | Upload once, get a reusable `files/<id>`. Exactly one source. `url` is fetched by the server (image/video/audio, ≤100MB); `path` is stdio-only and confirm-gated; `data_base64` is the last resort |
+| `gemini_upload_file(url? \| data_base64? \| path?, mime_type?, display_name?, confirmToken?)` | Upload once, get a reusable `files/<id>`. Exactly one source. `url` is fetched by the server (image/video/audio, ≤100MB); `path` is stdio-only and confirmed first (see Notes); `data_base64` is the last resort |
 | `gemini_list_files(page_size?)` | List current uploads with MIME types and expiry |
-| `gemini_delete_file(file_uri, confirm)` | Delete an upload before its ~48h expiry |
+| `gemini_delete_file(file_uri, confirmToken?)` | Delete an upload before its ~48h expiry (confirmed first — see Notes) |
 
 On the **hosted hosted deployment** there is also `POST /upload`, behind the same OAuth token as
 `/mcp` — the zero-base64 path for an agent with a shell:
@@ -307,6 +307,7 @@ Condensed from Google's official Nano Banana prompting guide. Core rule:
 
 ## Notes
 
+- **Confirmations.** Local file inputs (`images`, `master_images`, `video_path`, `gemini_upload_file`'s `path`) and every delete are confirmed before anything is sent: a confirmation prompt where the client supports one; otherwise the first call does nothing and returns `status: "confirmation-required"` with a `preview` (resolved paths, MIME types, sizes — or the method/path being deleted) and a `confirmToken`. Show the preview to the user, and only after they approve call again with the **same arguments** plus `confirmToken`. The token is single-use, expires (default 10 min), and is bound to those exact arguments — change anything and the call is refused (`DRAFT_CHANGED`, with a fresh preview and token). `MCP_CONFIRM_MODE` on the server picks `ask-user` (default), `auto` (the model may approve after reviewing the preview) or `refuse`. Text prompts, URLs, `files/` references and base64 inputs are not gated.
 - **Input images** accept either file **paths** (`images` / `master_images`) or **base64/data-URI values** (`images_base64` / `master_images_base64`).
 - **`seed`** makes a result reproducible; it's echoed in the result metadata (a random one is chosen + echoed when omitted). `count>1` uses `seed, seed+1, …` so the images differ. Determinism isn't fully guaranteed by the model.
 - **`filename`/`basename`** set the output name (extension stripped); names never overwrite (a `-2`, `-3` suffix is added). The result echoes the absolute path(s), `model`, `seed`, and aspect/size.

@@ -620,6 +620,18 @@ puts two round trips in front of a call nobody asked to wait for.
   — `buildMeta` calls it, and so do the two hand-rolled metas
   (`gemini_interact`, `gemini_video_generate`) that are built around
   `interaction_id` rather than a seed and so cannot use `buildMeta`.
+- **Confirmations use the confirm-token flow** (`src/tools/_confirm.ts` over
+  mcp-utils' `requireConfirmationWithFallback` + `confirmationFromEnv`). Local
+  file inputs (`confirmLocalInputs`) and deletes/uploads (`confirmWrite`) ask via
+  an elicitation prompt where the client supports one; otherwise phase 1 returns
+  the preview (method/path/`willSend`, with each resolved local path, MIME and
+  size) plus a `confirmToken`, and only a repeat call with that token proceeds.
+  The token binds the whole request (args minus the token, plus the resolved
+  inputs), so a changed prompt or swapped file between the phases is
+  `DRAFT_CHANGED`. `MCP_CONFIRM_MODE` (`ask-user` | `auto` | `refuse`),
+  `MCP_CONFIRM_TTL_SECONDS`, `MCP_CONFIRM_SECRET` — see README. There is no
+  `confirm: true` parameter any more; tests drive both phases with
+  `tests/confirm-helpers.ts`.
 - **Binary-output-to-disk is NOT confirm-gated.** Writing a generated image is a
   *local* file write, not a remote mutation, so there's no confirmation token /
   `readOnlyHint`-style gate. (Generation tools set `readOnlyHint: false` only

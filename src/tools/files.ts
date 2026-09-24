@@ -7,7 +7,7 @@ import { withProgressHeartbeat } from './shared.js';
 import { base64ToBytes, bytesToBase64, formatMb, wholeMb } from '../bytes.js';
 import { fileNameFromUrl } from '../fetch-image.js';
 import { downloadFilename } from '../media-name.js';
-import { previewUnlessConfirmed, schemaConfirm } from './_confirm.js';
+import { confirmNote, confirmTokenParam, confirmWrite } from './_confirm.js';
 
 /**
  * First-class Gemini Files API access.
@@ -99,7 +99,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           ? ', or `path` (a local file).'
           : ', or `r2_key` (re-upload media this connector generated, from media[].r2_key in an earlier result).') +
         (onDisk
-          ? ''
+          ? ' ' + confirmNote('A local `path` is confirmed first')
           : ' To upload a local file without base64: mint a signed PUT URL with gemini_get_upload_url, PUT the bytes to it, ' +
             'then pass the returned r2_key here.'),
       annotations: { readOnlyHint: false, openWorldHint: true },
@@ -145,7 +145,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           .optional()
           .describe('Override the detected MIME type (sniffed from the bytes / taken from the server response otherwise)'),
         display_name: z.string().min(1).optional().describe('Human-readable name recorded against the upload'),
-        confirm: schemaConfirm,
+        confirmToken: confirmTokenParam,
       }),
     },
     async (args, extra) => {
@@ -185,12 +185,21 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
         // Same gate as every other local-file input: a prompt-injected `path`
         // would otherwise ship an arbitrary local file to Google, and an
         // uploaded file is readable by anyone holding the api key for ~48h.
-        if (args.confirm !== true) {
-          const { size } = await stat(resolved);
-          return previewUnlessConfirmed(args.confirm, 'Upload a local file to the Gemini Files API', 'POST', '/upload/v1beta/files', {
-            inputs: [{ path: resolved, mimeType, size }],
-          })!;
-        }
+        const { size } = await stat(resolved);
+        const inputs = [{ path: resolved, mimeType, size }];
+        const gate = await confirmWrite(extra, {
+          tool: 'gemini_upload_file',
+          action: 'file.upload',
+          message: 'Review and confirm uploading this local file to Google:',
+          description: 'Upload a local file to the Gemini Files API',
+          method: 'POST',
+          path: '/upload/v1beta/files',
+          body: { inputs },
+          target: resolved,
+          payload: { inputs, display_name: args.display_name },
+          confirmToken: args.confirmToken,
+        });
+        if (gate) return gate;
         localUpload = { path: resolved, mimeType };
       }
 
@@ -429,17 +438,28 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
     {
       description:
         'Delete an uploaded file, image or photo (by file_uri) from the Gemini Files API before its ~48h expiry. Any tool call still referencing it ' +
-        'will then fail with a generic 404, so delete only references you are finished with.',
+        'will then fail with a generic 404, so delete only references you are finished with. ' +
+        confirmNote(),
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: z.object({
         file_uri: z.string().min(1).describe('The `files/<id>` reference (or full uri) to delete'),
-        confirm: schemaConfirm,
+        confirmToken: confirmTokenParam,
       }),
     },
-    async (args) => {
+    async (args, extra) => {
       // Deleting is a remote mutation with no undo — confirm-gated per the
       // fleet convention (unlike writing a generated image, which is local).
-      const gate = previewUnlessConfirmed(args.confirm, 'Delete an uploaded Gemini file', 'DELETE', `/v1beta/${args.file_uri}`);
+      const gate = await confirmWrite(extra, {
+        tool: 'gemini_delete_file',
+        action: 'file.delete',
+        message: 'Review and confirm this deletion:',
+        description: 'Delete an uploaded Gemini file',
+        method: 'DELETE',
+        path: `/v1beta/${args.file_uri}`,
+        target: args.file_uri,
+        payload: { file_uri: args.file_uri },
+        confirmToken: args.confirmToken,
+      });
       if (gate) return gate;
       await client.deleteFile(args.file_uri);
       return minifiedResult({ deleted: args.file_uri });

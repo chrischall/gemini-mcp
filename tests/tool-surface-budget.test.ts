@@ -25,11 +25,14 @@ import { GeminiClient } from '../src/client.js';
 /**
  * Bytes of `tools/list` JSON, at roughly four bytes to the token.
  *
- * 47,542 before the trim (~11.9k tokens), 43,456 after (~10.9k). The ceiling
- * sits above the second figure with room for a parameter or two, and well
- * below the first.
+ * 47,542 before the trim (~11.9k tokens), 43,456 after (~10.9k). Raised
+ * deliberately to 49,000 when the fleet moved from `confirm: true` to the
+ * confirm-token flow: every gated tool now carries mcp-utils' `confirmToken`
+ * description (it tells the model never to invent or reuse a token) and a
+ * one-sentence note on the two-step flow — 47,882 bytes, ~4.4KB of it that.
+ * Room for a parameter or two above that, still not a licence to drift.
  */
-const BUDGET_BYTES = 44_000;
+const BUDGET_BYTES = 49_000;
 
 /** No single tool should dominate — the largest today is ~7.5KB. */
 const PER_TOOL_BUDGET_BYTES = 9_000;

@@ -7,7 +7,7 @@ import { DEFAULT_MUSIC_MODEL } from '../models.js';
 import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedMedia} from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { attachCost } from '../pricing.js';
-import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
+import { confirmLocalInputs, confirmNote, confirmTokenParam } from './_confirm.js';
 
 const MUSIC_MODELS = ['lyria-3-clip-preview', 'lyria-3.5', 'lyria-3-pro-preview'] as const;
 
@@ -36,7 +36,8 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         'lyria-3-clip-preview (30s instrumental clip, default, cheapest), lyria-3.5 (full-length song with vocals) or ' +
         'lyria-3-pro-preview (longer-form). Output is MP3, written to disk (or returned inline). Single-turn: a track ' +
         'cannot be refined by a follow-up call, so put the whole brief in the prompt. Runs long — give it a `max_wait_ms` ' +
-        'budget (or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account.',
+        'budget (or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account. ' +
+        confirmNote('Local file inputs are confirmed first'),
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: z.object({
         prompt: z.string().min(1).describe('Description of the music: mood, genre, instruments, tempo, structure, or lyrics'),
@@ -54,13 +55,17 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         idempotency_key: idempotencyKeySchema,
         async: asyncSchema,
         max_wait_ms: maxWaitMsSchema,
-        confirm: schemaConfirm,
+        confirmToken: confirmTokenParam,
       }),
     },
     async (args, extra) => {
       assertLocalInputsAvailable(client.mediaSink, args);
       const model = args.model ?? DEFAULT_MUSIC_MODEL;
-      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local image input(s) to the Gemini Lyria API', '/v1beta/interactions', args.images);
+      const { confirmToken, ...request } = args;
+      const gate = await confirmLocalInputs(extra, {
+        tool: 'gemini_music_generate', action: 'music.generate', description: 'Send local image input(s) to the Gemini Lyria API', endpoint: '/v1beta/interactions',
+        imagePaths: args.images, request, confirmToken,
+      });
       if (gate) return gate;
       const fingerprint = fingerprintRequest('gemini_music_generate', {
         model, prompt: args.prompt,

@@ -184,7 +184,7 @@ describe('sidecars are gated on a real filesystem', () => {
     // than one that just says no.
     const client = stub(createR2Sink(bucket(), {}));
     const h = await createTestHarness((s) => registerGenerateTools(s, client));
-    const res = await h.callTool('gemini_image_edit', { prompt: 'x', images: ['/tmp/ref.png'], confirm: true });
+    const res = await h.callTool('gemini_image_edit', { prompt: 'x', images: ['/tmp/ref.png'] });
     const text = JSON.stringify(res.content);
     expect(res.isError).toBe(true);
     expect(text).not.toMatch(/POST \/upload/);
@@ -202,7 +202,7 @@ describe('sidecars are gated on a real filesystem', () => {
     // listing four routes it will discover one at a time that it cannot use.
     const client = stub(createR2Sink(bucket(), {}));
     const h = await createTestHarness((s) => registerGenerateTools(s, client));
-    const res = await h.callTool('gemini_image_edit', { prompt: 'x', images: ['/tmp/ref.png'], confirm: true });
+    const res = await h.callTool('gemini_image_edit', { prompt: 'x', images: ['/tmp/ref.png'] });
     expect(JSON.stringify(res.content)).toMatch(/cannot make HTTP requests|no network/i);
     await h.close();
   });
@@ -254,7 +254,7 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
     const generate = vi.fn();
     const client = stub(hosted(), { generate });
     const h = await createTestHarness((s) => registerGenerateTools(s, client));
-    const res = await h.callTool('gemini_image_generate', { prompt: 'x', images: ['/etc/passwd'], confirm: true });
+    const res = await h.callTool('gemini_image_generate', { prompt: 'x', images: ['/etc/passwd'] });
     await h.close();
 
     expect(res.isError).toBe(true);
@@ -287,7 +287,7 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
     const uploadVideo = vi.fn();
     const client = stub(hosted(), { generate: vi.fn(), uploadVideo });
     const h = await createTestHarness((s) => registerGenerateTools(s, client));
-    const res = await h.callTool('gemini_image_generate', { prompt: 'x', video_path: '/tmp/clip.mp4', confirm: true });
+    const res = await h.callTool('gemini_image_generate', { prompt: 'x', video_path: '/tmp/clip.mp4' });
     await h.close();
 
     expect(res.isError).toBe(true);
@@ -299,7 +299,7 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
   it('rejects master_images on gemini_image_set', async () => {
     const client = stub(hosted(), { generate: vi.fn() });
     const h = await createTestHarness((s) => registerSetTools(s, client));
-    const res = await h.callTool('gemini_image_set', { master_prompt: 'x', count: 1, master_images: ['/etc/passwd'], confirm: true });
+    const res = await h.callTool('gemini_image_set', { master_prompt: 'x', count: 1, master_images: ['/etc/passwd'] });
     await h.close();
 
     expect(res.isError).toBe(true);
@@ -310,7 +310,7 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
     const interact = vi.fn();
     const client = stub(hosted(), { interact });
     const h = await createTestHarness((s) => registerInteractTools(s, client));
-    const res = await h.callTool('gemini_interact', { input: 'x', images: ['/etc/passwd'], confirm: true });
+    const res = await h.callTool('gemini_interact', { input: 'x', images: ['/etc/passwd'] });
     await h.close();
 
     expect(res.isError).toBe(true);
@@ -407,7 +407,7 @@ describe('disk-only INPUTS fail gracefully on the hosted connector', () => {
     const h = await createTestHarness((s) => registerGenerateTools(s, client));
     // A local path that does not exist must still produce the ORIGINAL
     // "Image not found" error, not the hosted-connector one.
-    const res = await h.callTool('gemini_image_generate', { prompt: 'x', images: ['/nope/missing.png'], confirm: true });
+    const res = await h.callTool('gemini_image_generate', { prompt: 'x', images: ['/nope/missing.png'] });
     await h.close();
 
     const text = errorText(res);

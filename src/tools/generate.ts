@@ -9,7 +9,7 @@ import { emit, resolveAspectRatio, ASPECT_RATIOS, sharedImageSchema, pickSeed, b
 import { fingerprintRequest } from '../jobs.js';
 import { sumUsage, type TokenUsage } from '../usage.js';
 import { attachCost } from '../pricing.js';
-import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
+import { confirmLocalInputs, confirmNote, confirmTokenParam } from './_confirm.js';
 
 const GENERATE_ENDPOINT = '/v1beta/models/{model}:generateContent';
 const SEND_LOCAL_ACTION = 'Send local file input(s) to the Gemini API';
@@ -26,7 +26,8 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
     {
       description:
         'Generate image(s) from a text prompt with a Gemini image model (Nano Banana / Nano Banana Pro). ' +
-        'If the result will likely be refined iteratively, prefer gemini_interact (multi-turn) as the entry point.',
+        'If the result will likely be refined iteratively, prefer gemini_interact (multi-turn) as the entry point. ' +
+        confirmNote('Local file inputs are confirmed first'),
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: z.object({
         prompt: z.string().min(1).describe('Text prompt describing the image'),
@@ -41,7 +42,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         style: styleSchema,
         video_url: z.string().url().optional().describe('Public YouTube URL (or a previously uploaded Files API uri) as a video reference (video→image; use a Flash model e.g. gemini-3.1-flash-image)'),
         video_path: videoPathSchema,
-        confirm: schemaConfirm,
+        confirmToken: confirmTokenParam,
         ...sharedImageSchema,
       }),
     },
@@ -52,8 +53,12 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
       assertLocalInputsAvailable(client.mediaSink, args);
       // Confirm-gate local file inputs: a prompt-injected `images`/`video_path`
       // could exfiltrate a local file. Pure text-to-image calls (no local input)
-      // are unaffected. Dry-run makes NO API call.
-      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, SEND_LOCAL_ACTION, GENERATE_ENDPOINT, args.images, args.video_path);
+      // are unaffected. The preview makes NO API call.
+      const { confirmToken, ...request } = args;
+      const gate = await confirmLocalInputs(extra, {
+        tool: 'gemini_image_generate', action: 'image.generate', description: SEND_LOCAL_ACTION, endpoint: GENERATE_ENDPOINT,
+        imagePaths: args.images, videoPath: args.video_path, request, confirmToken,
+      });
       if (gate) return gate;
       const count = args.count ?? 1;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
@@ -163,7 +168,8 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         'Edit or compose images: provide one or more input images (paths or base64), plus a text instruction. ' +
         'For a SERIES of successive edits to the same image, prefer gemini_interact (multi-turn) — it keeps edit context ' +
         'and avoids re-processing the full image each round; use gemini_image_edit for one-off edits or composing multiple distinct inputs. ' +
-        'Gemini over-preserves the input; there is no edit-strength control — for large structural changes, reroll with a different `seed` or more forceful wording.',
+        'Gemini over-preserves the input; there is no edit-strength control — for large structural changes, reroll with a different `seed` or more forceful wording. ' +
+        confirmNote('Local file inputs are confirmed first'),
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: z.object({
         prompt: z.string().min(1).describe('Instruction describing the edit or composition'),
@@ -175,7 +181,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         characters: charactersSchema,
         style: styleSchema,
         filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
-        confirm: schemaConfirm,
+        confirmToken: confirmTokenParam,
         ...sharedImageSchema,
       }),
     },
@@ -186,7 +192,11 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
       if (!args.characters?.length) requireImageInput(args);
       // Confirm-gate local file inputs (see gemini_image_generate). base64 /
       // clipboard inputs are not local-path reads and pass through ungated.
-      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, SEND_LOCAL_ACTION, GENERATE_ENDPOINT, args.images);
+      const { confirmToken, ...request } = args;
+      const gate = await confirmLocalInputs(extra, {
+        tool: 'gemini_image_edit', action: 'image.edit', description: SEND_LOCAL_ACTION, endpoint: GENERATE_ENDPOINT,
+        imagePaths: args.images, request, confirmToken,
+      });
       if (gate) return gate;
       const model = resolveModel(args.model, readEnvVar('GEMINI_IMAGE_MODEL'));
       // Resolve shape BEFORE fingerprinting: `orientation: 'portrait'` and

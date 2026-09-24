@@ -8,7 +8,7 @@ import { DEFAULT_VIDEO_MODEL } from '../models.js';
 import { emitMedia, reportShape, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedMedia} from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { attachCost } from '../pricing.js';
-import { previewLocalInputsUnlessConfirmed, schemaConfirm } from './_confirm.js';
+import { confirmLocalInputs, confirmNote, confirmTokenParam } from './_confirm.js';
 
 /** omni's own aspect-ratio enum — NOT the image tools' ASPECT_RATIOS. */
 const VIDEO_ASPECT_RATIOS = ['16:9', '9:16'] as const;
@@ -44,7 +44,8 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         'or continue a prior video (task: "edit" or "extend" + previous_interaction_id / continue_last; extensions ' +
         'add ~3-10s each, to ~40s total). Cost scales with `resolution` — draft at 360p, keep at 1080p/4k. ' +
         'Output is written to disk as MP4 (video has no inline MCP block). Video runs long — give it a `max_wait_ms` budget ' +
-        '(or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account.',
+        '(or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account. ' +
+        confirmNote('Local file inputs are confirmed first'),
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: z.object({
         prompt: z.string().min(1).describe('Description of the video to generate (or the edit instruction when task=edit)'),
@@ -72,7 +73,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         idempotency_key: idempotencyKeySchema,
         async: asyncSchema,
         max_wait_ms: maxWaitMsSchema,
-        confirm: schemaConfirm,
+        confirmToken: confirmTokenParam,
       }),
     },
     async (args, extra) => {
@@ -88,7 +89,11 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
       }
       // Confirm-gate local file inputs (a prompt-injected `images` path could
       // exfiltrate a local file); base64 / clipboard pass through ungated.
-      const gate = await previewLocalInputsUnlessConfirmed(args.confirm, 'Send local image input(s) to the Gemini omni API', '/v1beta/interactions', args.images);
+      const { confirmToken, ...request } = args;
+      const gate = await confirmLocalInputs(extra, {
+        tool: 'gemini_video_generate', action: 'video.generate', description: 'Send local image input(s) to the Gemini omni API', endpoint: '/v1beta/interactions',
+        imagePaths: args.images, request: { ...request, previous_interaction_id: previousInteractionId }, confirmToken,
+      });
       if (gate) return gate;
       const model = args.model?.trim() || DEFAULT_VIDEO_MODEL;
       // omni has no square, so `orientation: 'square'` is refused here rather
