@@ -26,9 +26,29 @@ export async function uniquePath(dir: string, base: string, ext: string): Promis
   return candidate;
 }
 
-/** Sniff MIME type from the first bytes of an image buffer (PNG fallback). */
+/** Sniff MIME type from the first bytes of an image buffer (PNG fallback).
+ * Only for bytes that arrive as base64 with no other type information; a LOCAL
+ * file goes through {@link localImageMime}, which never guesses. */
 function sniffMimeBytes(buf: Buffer): string {
   return sniffImageMime(buf) ?? 'image/png';
+}
+
+/**
+ * The MIME of a LOCAL image input (PNG/JPEG/WebP, sniffed from its bytes), or a
+ * refusal. Never defaults: an unidentifiable file used to be previewed and sent
+ * as image/png, so a prompt-injected `images: ['~/.ssh/id_rsa']` showed up in
+ * the confirmation preview mislabelled as a PNG (chrischall/fleet-audit#929).
+ */
+function localImageMime(resolvedPath: string, head: Buffer): string {
+  const mime = sniffImageMime(head);
+  if (!mime) {
+    throw new McpToolError(
+      `Cannot tell what kind of image ${resolvedPath} is — its bytes are not PNG, JPEG or WebP, ` +
+        'so it is not sent to Gemini as a reference image.',
+      { hint: 'Pass a PNG, JPEG or WebP file (convert other formats first).' },
+    );
+  }
+  return mime;
 }
 
 /** PNG/JPEG/WebP from the leading bytes, or `undefined` when it is none of them. */
@@ -176,7 +196,7 @@ export async function previewImageInput(path: string): Promise<LocalInputPreview
   try {
     const head = Buffer.alloc(16);
     const { bytesRead } = await fh.read(head, 0, 16, 0);
-    return { path: resolved, mimeType: sniffMimeBytes(head.subarray(0, bytesRead)), size };
+    return { path: resolved, mimeType: localImageMime(resolved, head.subarray(0, bytesRead)), size };
   } finally {
     await fh.close();
   }
@@ -243,7 +263,7 @@ export async function detectUploadMime(resolvedPath: string): Promise<string | u
 export async function readImageAsInline(path: string): Promise<{ base64: string; mimeType: string }> {
   const resolved = resolveImagePath(path);
   const buf = await readFile(resolved);
-  const mimeType = sniffMimeBytes(buf);
+  const mimeType = localImageMime(resolved, buf);
   return { base64: buf.toString('base64'), mimeType };
 }
 
