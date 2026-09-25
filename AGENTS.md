@@ -40,6 +40,8 @@ GEMINI_API_KEY=<key>        # Required. Create at https://aistudio.google.com/ap
 GEMINI_IMAGE_MODEL=<id>     # Optional. Default model override (bare id, e.g. gemini-3.1-flash-image)
 GEMINI_OUTPUT_DIR=<dir>     # Optional. Where generated images are written (default: cwd)
 GEMINI_INPUT_DIR=<dir>      # Optional. Base dir searched for relative input image paths
+GEMINI_UPLOAD_DIR=<dirs>    # Optional. Confine local-file Files-API uploads (upload_file `path`, `video_path`)
+                            #   to these dirs (path.delimiter-separated, `~` ok). Unset = unconfined.
 GEMINI_TIMEOUT_MS=<ms>      # Optional. Upstream timeout (default 60000; 120000 for 4K; per-call timeout_ms wins)
 GEMINI_HEARTBEAT_MS=<ms>    # Optional. notifications/progress cadence during generation (default 10000; 0 disables)
 GEMINI_CHAIN_RETRY_MS=<ms>  # Optional. How long to wait out interactions-store lag on a chained 404 (default 120000; 0 disables retrying)
@@ -55,7 +57,7 @@ mcpb bundles omit `dotenv`; the host provides env). `readEnvVar` (from
 `@chrischall/mcp-utils`) treats blank, `"undefined"`, `"null"`, and unsubstituted
 `${FOO}` placeholders as unset. All but `GEMINI_HEARTBEAT_MS`, `GEMINI_DEBUG` and
 `GEMINI_CHAIN_RETRY_MS` map to `manifest.json`'s `user_config` (`gemini_api_key`,
-`gemini_image_model`, `gemini_input_dir`, `gemini_output_dir`,
+`gemini_image_model`, `gemini_input_dir`, `gemini_upload_dir`, `gemini_output_dir`,
 `gemini_timeout_ms`).
 
 ## Architecture

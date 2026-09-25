@@ -16,6 +16,7 @@ Developed and maintained by AI (Claude Code).
 | `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-3.1-flash-image`) |
 | `GEMINI_OUTPUT_DIR` | No | Default directory for generated images (default: current working directory) |
 | `GEMINI_INPUT_DIR` | No | Directory to resolve bare input-image filenames against (so `images: ["foo.jpg"]` works) |
+| `GEMINI_UPLOAD_DIR` | No | Restrict local files streamed to the Gemini Files API (`gemini_upload_file` `path`, `video_path`) to these directories — one or more, separated by `:` (`;` on Windows); `~` allowed. A path outside is refused before any upload. Unset: no restriction |
 | `GEMINI_TIMEOUT_MS` | No | Upstream request timeout in ms (default: `60000`, or `120000` for `image_size: "4K"`); each generation tool also takes a per-call `timeout_ms` |
 | `GEMINI_HEARTBEAT_MS` | No | Progress-notification cadence in ms while a generation runs (default: `10000`; `0` disables) — keeps MCP hosts that reset their timeout on progress from timing out long generations |
 | `GEMINI_CHAIN_RETRY_MS` | No | How long to wait out interactions-store lag when a chained call 404s (default: `120000`; `0` disables retrying) |

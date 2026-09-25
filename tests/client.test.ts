@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GeminiClient, ChainedRequest404Error } from '../src/client.js';
 
@@ -957,6 +957,94 @@ describe('uploadFile', () => {
       rmSync(d, { recursive: true, force: true });
     }
   });
+});
+
+// ── GEMINI_UPLOAD_DIR confinement ───────────────────────────────────────────
+// `path` / `video_path` are model-chosen, so a prompt-injected path could
+// otherwise stream ANY readable local file to Google. When GEMINI_UPLOAD_DIR
+// is set, both disk-streaming uploads refuse a path outside it BEFORE any
+// byte (or even the resumable-session start) goes upstream.
+describe('GEMINI_UPLOAD_DIR confinement', () => {
+  const ORIG_UPLOAD_DIR = process.env.GEMINI_UPLOAD_DIR;
+  let allowed: string;
+  let outside: string;
+  beforeAll(() => {
+    allowed = mkdtempSync(join(tmpdir(), 'gemini-upload-allowed-'));
+    outside = mkdtempSync(join(tmpdir(), 'gemini-upload-outside-'));
+    writeFileSync(join(allowed, 'ok.mp4'), Buffer.from('inside bytes'));
+    writeFileSync(join(outside, 'secret.mp4'), Buffer.from('outside bytes'));
+  });
+  afterAll(() => {
+    rmSync(allowed, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+  afterEach(() => {
+    if (ORIG_UPLOAD_DIR === undefined) delete process.env.GEMINI_UPLOAD_DIR;
+    else process.env.GEMINI_UPLOAD_DIR = ORIG_UPLOAD_DIR;
+  });
+
+  const okFlow = () => uploadFetch([
+    { headers: { 'x-goog-upload-url': UPLOAD_URL } },
+    { body: { file: fileObj('ACTIVE') } },
+  ]);
+
+  for (const method of ['uploadFile', 'uploadVideo'] as const) {
+    it(`${method} refuses a path outside GEMINI_UPLOAD_DIR without contacting Google`, async () => {
+      process.env.GEMINI_API_KEY = 'test-key';
+      process.env.GEMINI_UPLOAD_DIR = allowed;
+      const mock = okFlow();
+      const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+      await expect(c[method](join(outside, 'secret.mp4'), 'video/mp4')).rejects.toThrow(/GEMINI_UPLOAD_DIR/);
+      expect(mock.calls).toHaveLength(0);
+    });
+
+    it(`${method}'s refusal puts the remediation in the MESSAGE (hosts drop the hint)`, async () => {
+      process.env.GEMINI_API_KEY = 'test-key';
+      process.env.GEMINI_UPLOAD_DIR = allowed;
+      const c = new GeminiClient({ fetchImpl: okFlow().fn, sleep: async () => {} });
+      await expect(c[method](join(outside, 'secret.mp4'), 'video/mp4')).rejects.toThrow(
+        /Move the file into GEMINI_UPLOAD_DIR, or add its directory to GEMINI_UPLOAD_DIR/,
+      );
+    });
+
+    it(`${method} refuses a ../ escape out of GEMINI_UPLOAD_DIR`, async () => {
+      process.env.GEMINI_API_KEY = 'test-key';
+      process.env.GEMINI_UPLOAD_DIR = allowed;
+      const mock = okFlow();
+      const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+      const escape = join(allowed, '..', outside.split(/[\\/]/).pop()!, 'secret.mp4');
+      await expect(c[method](escape, 'video/mp4')).rejects.toThrow(/GEMINI_UPLOAD_DIR/);
+      expect(mock.calls).toHaveLength(0);
+    });
+
+    it(`${method} uploads a path inside GEMINI_UPLOAD_DIR`, async () => {
+      process.env.GEMINI_API_KEY = 'test-key';
+      process.env.GEMINI_UPLOAD_DIR = allowed;
+      const mock = okFlow();
+      const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+      const up = await c[method](join(allowed, 'ok.mp4'), 'video/mp4');
+      expect(up.uri).toBe(FILE_URI);
+      expect(mock.calls).toHaveLength(2);
+    });
+
+    it(`${method} accepts any of several ${'path.delimiter'}-separated roots`, async () => {
+      process.env.GEMINI_API_KEY = 'test-key';
+      process.env.GEMINI_UPLOAD_DIR = [join(tmpdir(), 'gemini-no-such-root'), outside].join(delimiter);
+      const mock = okFlow();
+      const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+      const up = await c[method](join(outside, 'secret.mp4'), 'video/mp4');
+      expect(up.uri).toBe(FILE_URI);
+    });
+
+    it(`${method} is unconfined when GEMINI_UPLOAD_DIR is unset (unchanged behaviour)`, async () => {
+      process.env.GEMINI_API_KEY = 'test-key';
+      delete process.env.GEMINI_UPLOAD_DIR;
+      const mock = okFlow();
+      const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+      const up = await c[method](join(outside, 'secret.mp4'), 'video/mp4');
+      expect(up.uri).toBe(FILE_URI);
+    });
+  }
 });
 
 describe('uploadVideo', () => {

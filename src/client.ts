@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { basename, delimiter } from 'node:path';
 import { readEnvVar, McpToolError, ApiError, createApiClient, formatApiError, fileBlob, type ApiClient } from '@chrischall/mcp-utils';
 import { resolveModel, filterImageModels, DEFAULT_VIDEO_MODEL, DEFAULT_MUSIC_MODEL, type GeminiModel, type RawModel } from './models.js';
 import { readUsage, type TokenUsage } from './usage.js';
@@ -437,6 +437,33 @@ export interface GeminiClientOptions {
   jobStore?: JobStore;
 }
 
+/**
+ * `GEMINI_UPLOAD_DIR` — the optional allow-list for local files streamed to
+ * the Files API (`gemini_upload_file` `path`, `video_path`). One or more
+ * directories separated by the platform path delimiter (`:` / `;`); `~` is
+ * expanded by mcp-utils. Unset → `undefined` → uploads stay unconfined.
+ * The paths are model-chosen, so a prompt-injected path could otherwise send
+ * any readable file to Google.
+ */
+function uploadRoots(): string[] | undefined {
+  const roots = readEnvVar('GEMINI_UPLOAD_DIR')?.split(delimiter).map((r) => r.trim()).filter(Boolean);
+  return roots && roots.length > 0 ? roots : undefined;
+}
+
+/**
+ * Turn mcp-utils' bare "outside the allowed directories" refusal into an
+ * actionable tool error. The remediation is in the MESSAGE — hosts show the
+ * message and drop the hint (see CLAUDE.md, Errors).
+ */
+function explainOutsideUploadDir(err: unknown): never {
+  if (err instanceof Error && err.message.startsWith('Path is outside the allowed directories')) {
+    throw new McpToolError(
+      'Refusing to upload a file outside GEMINI_UPLOAD_DIR, which restricts which local files can be uploaded to Google. Move the file into GEMINI_UPLOAD_DIR, or add its directory to GEMINI_UPLOAD_DIR.',
+    );
+  }
+  throw err;
+}
+
 export class GeminiClient {
   /**
    * A key handed in explicitly (the connector's per-session key). When absent
@@ -634,7 +661,10 @@ export class GeminiClient {
    * (enforced locally before any bytes are sent).
    */
   async uploadVideo(path: string, mimeType: string): Promise<UploadedFile> {
-    const blob = await fileBlob(path, { type: mimeType, maxBytes: FILE_MAX_BYTES, label: 'Video' });
+    const roots = uploadRoots();
+    const blob = await fileBlob(path, {
+      type: mimeType, maxBytes: FILE_MAX_BYTES, label: 'Video', ...(roots ? { allowedRoots: roots } : {}),
+    }).catch(explainOutsideUploadDir);
     return this.uploadToFilesApi(blob, mimeType, basename(path), blob.size);
   }
 
@@ -646,7 +676,10 @@ export class GeminiClient {
    * length on a few-hundred-MB video (chrischall/fleet-audit#117).
    */
   async uploadFile(path: string, mimeType: string, displayName: string = basename(path)): Promise<UploadedFile> {
-    const blob = await fileBlob(path, { type: mimeType, maxBytes: FILE_MAX_BYTES, label: 'File' });
+    const roots = uploadRoots();
+    const blob = await fileBlob(path, {
+      type: mimeType, maxBytes: FILE_MAX_BYTES, label: 'File', ...(roots ? { allowedRoots: roots } : {}),
+    }).catch(explainOutsideUploadDir);
     return this.uploadToFilesApi(blob, mimeType, displayName, blob.size);
   }
 
