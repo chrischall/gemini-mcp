@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.3.0](https://github.com/chrischall/gemini-mcp/compare/v2.2.0...v2.3.0) (2026-09-25)
+
+
+### Features
+
+* **files:** confine local-file uploads to GEMINI_UPLOAD_DIR when set ([#264](https://github.com/chrischall/gemini-mcp/issues/264)) ([cd8b809](https://github.com/chrischall/gemini-mcp/commit/cd8b809ee34e1dfd398cd4f5652f79f4a54ed6b4))
+
+
+### Bug Fixes
+
+* **deps:** Bump dotenv in the production-majors group ([#261](https://github.com/chrischall/gemini-mcp/issues/261)) ([fd9ba0e](https://github.com/chrischall/gemini-mcp/commit/fd9ba0e7e8ed830f9d1194ae901a8c053cc24217))
+* **images:** refuse unidentifiable local reference images instead of sending them as PNG ([#263](https://github.com/chrischall/gemini-mcp/issues/263)) ([62403f0](https://github.com/chrischall/gemini-mcp/commit/62403f079bcf9489767d75fdde51422f3128f485))
+
 ## [2.2.0](https://github.com/chrischall/gemini-mcp/compare/v2.1.4...v2.2.0) (2026-09-24)
 
 
