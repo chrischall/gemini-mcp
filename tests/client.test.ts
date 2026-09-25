@@ -998,6 +998,15 @@ describe('GEMINI_UPLOAD_DIR confinement', () => {
       expect(mock.calls).toHaveLength(0);
     });
 
+    it(`${method}'s refusal puts the remediation in the MESSAGE (hosts drop the hint)`, async () => {
+      process.env.GEMINI_API_KEY = 'test-key';
+      process.env.GEMINI_UPLOAD_DIR = allowed;
+      const c = new GeminiClient({ fetchImpl: okFlow().fn, sleep: async () => {} });
+      await expect(c[method](join(outside, 'secret.mp4'), 'video/mp4')).rejects.toThrow(
+        /Move the file into GEMINI_UPLOAD_DIR, or add its directory to GEMINI_UPLOAD_DIR/,
+      );
+    });
+
     it(`${method} refuses a ../ escape out of GEMINI_UPLOAD_DIR`, async () => {
       process.env.GEMINI_API_KEY = 'test-key';
       process.env.GEMINI_UPLOAD_DIR = allowed;

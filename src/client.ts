@@ -450,12 +450,16 @@ function uploadRoots(): string[] | undefined {
   return roots && roots.length > 0 ? roots : undefined;
 }
 
-/** Turn mcp-utils' bare "outside the allowed directories" refusal into an actionable tool error. */
+/**
+ * Turn mcp-utils' bare "outside the allowed directories" refusal into an
+ * actionable tool error. The remediation is in the MESSAGE — hosts show the
+ * message and drop the hint (see CLAUDE.md, Errors).
+ */
 function explainOutsideUploadDir(err: unknown): never {
   if (err instanceof Error && err.message.startsWith('Path is outside the allowed directories')) {
-    throw new McpToolError('Refusing to upload a file outside GEMINI_UPLOAD_DIR.', {
-      hint: 'GEMINI_UPLOAD_DIR restricts which local files can be uploaded to Google. Move the file into that directory, or add its directory to GEMINI_UPLOAD_DIR.',
-    });
+    throw new McpToolError(
+      'Refusing to upload a file outside GEMINI_UPLOAD_DIR, which restricts which local files can be uploaded to Google. Move the file into GEMINI_UPLOAD_DIR, or add its directory to GEMINI_UPLOAD_DIR.',
+    );
   }
   throw err;
 }
