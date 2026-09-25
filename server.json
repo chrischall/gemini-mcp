@@ -43,6 +43,13 @@
           "isRequired": false,
           "format": "string",
           "isSecret": false
+        },
+        {
+          "name": "GEMINI_UPLOAD_DIR",
+          "description": "Restrict local-file uploads to the Gemini Files API to these directories (path.delimiter-separated; unset = unrestricted)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
         }
       ]
     }

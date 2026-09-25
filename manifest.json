@@ -39,6 +39,7 @@
         "GEMINI_IMAGE_MODEL": "${user_config.gemini_image_model}",
         "GEMINI_OUTPUT_DIR": "${user_config.gemini_output_dir}",
         "GEMINI_INPUT_DIR": "${user_config.gemini_input_dir}",
+        "GEMINI_UPLOAD_DIR": "${user_config.gemini_upload_dir}",
         "GEMINI_TIMEOUT_MS": "${user_config.gemini_timeout_ms}"
       }
     }
@@ -69,6 +70,13 @@
       "type": "string",
       "title": "Input Directory",
       "description": "Directory to resolve bare input-image filenames against (e.g. an uploads folder)",
+      "required": false,
+      "sensitive": false
+    },
+    "gemini_upload_dir": {
+      "type": "string",
+      "title": "Upload Directory",
+      "description": "Only allow local files inside this directory (or several, separated by : or ; on Windows) to be uploaded to the Gemini Files API. Leave blank for no restriction.",
       "required": false,
       "sensitive": false
     },
