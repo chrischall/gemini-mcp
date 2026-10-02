@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { McpToolError, ApiError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { ChainedRequest404Error, type GeminiClient, type ImageInput } from '../client.js';
-import { slugify, baseName, resolveImagePath, writeSidecar, resolveOutputDir, readImageAsInline } from '../images.js';
+import { slugify, baseName, resolveImagePath, writeSidecar, lookupOutputDir, readImageAsInline } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
 import { emit, reportShape, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedImage } from './shared.js';
@@ -199,7 +199,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           // record — an `<image>.json` on disk, an object beside the media in
           // the store — so a restart no longer ends a chain on either.
           previousInteractionId = onDisk
-            ? await latestInteractionId(resolveOutputDir(args.output_dir))
+            ? await latestInteractionId(lookupOutputDir(args.output_dir))
             // 'image' explicitly: video and music write records too, and a
             // chained Lyria call is a documented 400. Resuming the wrong
             // medium's chain is worse than not resuming.
@@ -286,7 +286,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
             // `<image>.json` sidecars; hosted it is the record beside each
             // stored object. Same rule either way: no match, no guess.
             const { refs: reanchorOn, carried } = onDisk
-              ? await reanchorFromDisk(resolveOutputDir(args.output_dir), err.previousInteractionId)
+              ? await reanchorFromDisk(lookupOutputDir(args.output_dir), err.previousInteractionId)
               : await reanchorFromStore(client, err.previousInteractionId);
             if (!reanchorOn.length) throw err;
             try {
