@@ -1,7 +1,15 @@
-import { mkdir, readFile, writeFile, access, stat, open } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
-import { readEnvVar, McpToolError } from '@chrischall/mcp-utils';
+import {
+  readEnvVar,
+  McpToolError,
+  readFileHead,
+  resolveOutputDir as resolveSharedOutputDir,
+  sniffMimeBytes as sniffSharedMime,
+  writeFileSafe,
+  writeUniqueFile,
+} from '@chrischall/mcp-utils';
 
 /** URL/file-safe slug from a prompt; never empty. */
 export function slugify(text: string, max = 40): string {
@@ -12,18 +20,6 @@ export function slugify(text: string, max = 40): string {
     .slice(0, max)
     .replace(/-+$/g, '');
   return s || 'image';
-}
-
-async function exists(p: string): Promise<boolean> {
-  try { await access(p); return true; } catch { return false; }
-}
-
-/** `<base>.<ext>`, then `<base>-2.<ext>`, … until a free path is found. */
-export async function uniquePath(dir: string, base: string, ext: string): Promise<string> {
-  let candidate = join(dir, `${base}.${ext}`);
-  let n = 2;
-  while (await exists(candidate)) { candidate = join(dir, `${base}-${n}.${ext}`); n++; }
-  return candidate;
 }
 
 /** Sniff MIME type from the first bytes of an image buffer (PNG fallback).
@@ -51,25 +47,18 @@ function localImageMime(resolvedPath: string, head: Buffer): string {
   return mime;
 }
 
-/** PNG/JPEG/WebP from the leading bytes, or `undefined` when it is none of them. */
+/** The image types Gemini takes as reference images — the only sniff results honoured here. */
+const REFERENCE_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+/**
+ * PNG/JPEG/WebP from the leading bytes (mcp-utils' shared magic-byte sniffer),
+ * or `undefined` when it is none of them. The shared sniffer also names GIF,
+ * PDF, zip, MIDI and ISO-BMFF; those are deliberately NOT accepted here, so a
+ * reference image is still only ever one of the three types Gemini takes.
+ */
 function sniffImageMime(buf: Buffer): string | undefined {
-  // PNG: 89 50 4E 47
-  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
-    return 'image/png';
-  }
-  // JPEG: FF D8 FF
-  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
-    return 'image/jpeg';
-  }
-  // WebP: RIFF....WEBP (bytes 0-3 = RIFF, bytes 8-11 = WEBP)
-  if (
-    buf.length >= 12 &&
-    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
-  ) {
-    return 'image/webp';
-  }
-  return undefined;
+  const mime = sniffSharedMime(buf);
+  return mime !== undefined && REFERENCE_IMAGE_MIMES.has(mime) ? mime : undefined;
 }
 
 /** File extension for a media MIME (image/video/audio). Falls back to the MIME
@@ -89,11 +78,19 @@ export function mediaExt(mimeType: string): string {
 }
 
 /** Decode base64 media bytes (image/video/audio) and write to disk (creating
- * dir), picking the extension from the MIME. Returns the absolute path. */
+ * dir), picking the extension from the MIME. Returns the absolute path.
+ *
+ * Never overwrites: `<base>.<ext>`, then `<base>-2.<ext>`, … — each name is
+ * claimed with an exclusive, no-follow create (mcp-utils `writeUniqueFile`), so
+ * two writers can't race onto one name and a symlink planted at a name is
+ * skipped rather than written through. */
 export async function writeMedia(dir: string, base: string, base64: string, mimeType: string): Promise<string> {
-  await mkdir(dir, { recursive: true });
-  const path = await uniquePath(dir, base, mediaExt(mimeType));
-  await writeFile(path, Buffer.from(base64, 'base64'));
+  const path = await writeUniqueFile({
+    dir,
+    baseName: base,
+    extension: mediaExt(mimeType),
+    bytes: Buffer.from(base64, 'base64'),
+  });
   return resolve(path);
 }
 
@@ -110,7 +107,8 @@ export async function writeImage(dir: string, base: string, base64: string, mime
  * multi-turn chain is recoverable from disk.
  */
 export async function writeSidecar(imagePath: string, data: Record<string, unknown>): Promise<void> {
-  await writeFile(`${imagePath}.json`, JSON.stringify(data, null, 2));
+  // overwrite (a re-run may refresh it) but never through a planted symlink.
+  await writeFileSafe(`${imagePath}.json`, Buffer.from(JSON.stringify(data, null, 2)), { overwrite: true });
 }
 
 /**
@@ -192,14 +190,7 @@ export async function previewImageInput(path: string): Promise<LocalInputPreview
   // from stat() — a preview must not load a large reference image into memory
   // just to report it (matches previewVideoInput).
   const { size } = await stat(resolved);
-  const fh = await open(resolved, 'r');
-  try {
-    const head = Buffer.alloc(16);
-    const { bytesRead } = await fh.read(head, 0, 16, 0);
-    return { path: resolved, mimeType: localImageMime(resolved, head.subarray(0, bytesRead)), size };
-  } finally {
-    await fh.close();
-  }
+  return { path: resolved, mimeType: localImageMime(resolved, await readFileHead(resolved, 16)), size };
 }
 
 /**
@@ -234,17 +225,6 @@ const UPLOAD_MIME_BY_EXT: Record<string, string> = {
   ...VIDEO_MIME_BY_EXT,
 };
 
-async function readHead(path: string, n = 16): Promise<Buffer> {
-  const fh = await open(path, 'r');
-  try {
-    const head = Buffer.alloc(n);
-    const { bytesRead } = await fh.read(head, 0, n, 0);
-    return head.subarray(0, bytesRead);
-  } finally {
-    await fh.close();
-  }
-}
-
 /**
  * The MIME a local file should be uploaded to the Files API as, or `undefined`
  * when it cannot be identified. Bytes win for the image formats we can sniff
@@ -253,7 +233,7 @@ async function readHead(path: string, n = 16): Promise<Buffer> {
  * to label every unrecognised file image/png (chrischall/fleet-audit#117).
  */
 export async function detectUploadMime(resolvedPath: string): Promise<string | undefined> {
-  const sniffed = sniffImageMime(await readHead(resolvedPath));
+  const sniffed = sniffImageMime(await readFileHead(resolvedPath, 16));
   if (sniffed) return sniffed;
   const ext = resolvedPath.includes('.') ? resolvedPath.slice(resolvedPath.lastIndexOf('.') + 1).toLowerCase() : '';
   return UPLOAD_MIME_BY_EXT[ext];
@@ -304,7 +284,11 @@ export function baseName(name: string): string {
   return safe || 'image';
 }
 
-/** per-call → $GEMINI_OUTPUT_DIR → cwd. */
+/**
+ * per-call → $GEMINI_OUTPUT_DIR → cwd (mcp-utils `resolveOutputDir`: `~` and
+ * relative paths expanded, the directory created). A blank per-call value
+ * counts as unset, so it falls through to the env var rather than to cwd.
+ */
 export function resolveOutputDir(perCall: string | undefined): string {
-  return perCall?.trim() || readEnvVar('GEMINI_OUTPUT_DIR') || process.cwd();
+  return resolveSharedOutputDir(perCall?.trim() || undefined, 'GEMINI_OUTPUT_DIR');
 }

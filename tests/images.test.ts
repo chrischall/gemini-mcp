@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, rmSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve, relative, isAbsolute } from 'node:path';
-import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
+import { slugify, writeImage, writeSidecar, readImageAsInline, resolveOutputDir, decodeImageInput, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-img-')); });
@@ -30,6 +30,32 @@ describe('writeImage', () => {
     const b = await writeImage(dir, 'fox', PNG_B64, 'image/png');
     expect(a).toBe(join(dir, 'fox.png'));
     expect(b).toBe(join(dir, 'fox-2.png'));
+  });
+  it('never writes through a symlink planted at the destination name', async () => {
+    const outside = join(mkdtempSync(join(tmpdir(), 'gemini-out-')), 'target.png');
+    symlinkSync(outside, join(dir, 'fox.png')); // dangling: looks "free" to an exists() probe
+    const p = await writeImage(dir, 'fox', PNG_B64, 'image/png');
+    expect(p).toBe(join(dir, 'fox-2.png'));
+    expect(existsSync(outside)).toBe(false);
+  });
+  it('creates the output directory when it does not exist yet', async () => {
+    const p = await writeImage(join(dir, 'a', 'b'), 'fox', PNG_B64, 'image/png');
+    expect(p).toBe(join(dir, 'a', 'b', 'fox.png'));
+  });
+});
+
+describe('writeSidecar', () => {
+  it('writes <image>.json next to the image', async () => {
+    const img = join(dir, 'fox.png');
+    await writeSidecar(img, { interaction_id: 'i1' });
+    expect(JSON.parse(readFileSync(`${img}.json`, 'utf8'))).toEqual({ interaction_id: 'i1' });
+  });
+  it('refuses to write through a symlink planted at the sidecar name', async () => {
+    const img = join(dir, 'fox.png');
+    const outside = join(mkdtempSync(join(tmpdir(), 'gemini-out-')), 'target.json');
+    symlinkSync(outside, `${img}.json`);
+    await expect(writeSidecar(img, { interaction_id: 'i1' })).rejects.toMatchObject({ reason: 'symlink' });
+    expect(existsSync(outside)).toBe(false);
   });
 });
 
@@ -151,6 +177,23 @@ describe('resolveOutputDir', () => {
     delete process.env.GEMINI_OUTPUT_DIR;
     expect(resolveOutputDir('/tmp/x')).toBe('/tmp/x');
     expect(resolveOutputDir(undefined)).toBe(process.cwd());
+  });
+  it('falls back to $GEMINI_OUTPUT_DIR for a blank per-call value', () => {
+    process.env.GEMINI_OUTPUT_DIR = dir;
+    try {
+      expect(resolveOutputDir('  ')).toBe(dir);
+      expect(resolveOutputDir(undefined)).toBe(dir);
+    } finally {
+      delete process.env.GEMINI_OUTPUT_DIR;
+    }
+  });
+  it('expands ~ rather than writing into a literal "~" directory', () => {
+    expect(resolveOutputDir('~')).toBe(homedir());
+  });
+  it('creates the directory so the first write cannot ENOENT', () => {
+    const d = join(dir, 'new', 'out');
+    expect(resolveOutputDir(d)).toBe(d);
+    expect(existsSync(d)).toBe(true);
   });
 });
 

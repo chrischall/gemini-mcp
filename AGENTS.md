@@ -81,7 +81,7 @@ src/
                   #   filterImageModels() (keep *image* models, drop imagen-*)
   images.ts       # disk I/O + decoding primitives: readImageAsInline,
                   #   decodeImageInput (MIME sniff), writeMedia/writeImage,
-                  #   slugify, uniquePath, resolveOutputDir, resolveImagePath.
+                  #   slugify, resolveOutputDir, resolveImagePath (output kit + magic-byte sniff from mcp-utils).
                   #   NOT an input funnel — inputs.ts is (see below)
   pricing.ts      # RATE_CARD + estimateCost() — tokens to USD. Possible only
                   #   because image output is billed PER TOKEN, at 20-40x the
@@ -325,7 +325,7 @@ runs out, because the generation continues (and bills) upstream regardless.
 (default) or inline base64. `emit()` (in `tools/shared.ts`) decides: with
 `inline: true` it returns `{ type: 'image', data, mimeType }` content blocks;
 otherwise it `writeImage()`s each to `resolveOutputDir(output_dir)` (per-call
-`output_dir` → `$GEMINI_OUTPUT_DIR` → cwd), de-duplicating with `uniquePath`
+`output_dir` → `$GEMINI_OUTPUT_DIR` → cwd), de-duplicating with mcp-utils `writeUniqueFile`
 (`name.png`, `name-2.png`, …), and returns the absolute paths plus a metadata
 object (`model`, `seed`, a `hint` steering iterative refinement to
 `gemini_interact`, optional `text`, `grounding`, `interaction_id`,
