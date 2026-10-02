@@ -1,6 +1,6 @@
-import { readFile, stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, resolve, isAbsolute } from 'node:path';
+import { delimiter, join, resolve, isAbsolute } from 'node:path';
 import {
   readEnvVar,
   McpToolError,
@@ -10,6 +10,33 @@ import {
   writeFileSafe,
   writeUniqueFile,
 } from '@chrischall/mcp-utils';
+
+/**
+ * `GEMINI_UPLOAD_DIR` — the optional allow-list for local files streamed to
+ * the Files API (`gemini_upload_file` `path`, `video_path`). One or more
+ * directories separated by the platform path delimiter (`:` / `;`); `~` is
+ * expanded by mcp-utils. Unset → `undefined` → uploads stay unconfined.
+ * The paths are model-chosen, so a prompt-injected path could otherwise send
+ * any readable file to Google.
+ */
+export function uploadRoots(): string[] | undefined {
+  const roots = readEnvVar('GEMINI_UPLOAD_DIR')?.split(delimiter).map((r) => r.trim()).filter(Boolean);
+  return roots && roots.length > 0 ? roots : undefined;
+}
+
+/**
+ * Turn mcp-utils' bare "outside the allowed directories" refusal into an
+ * actionable tool error. The remediation is in the MESSAGE — hosts show the
+ * message and drop the hint (see CLAUDE.md, Errors).
+ */
+export function explainOutsideUploadDir(err: unknown): never {
+  if (err instanceof Error && err.message.startsWith('Path is outside the allowed directories')) {
+    throw new McpToolError(
+      'Refusing to upload a file outside GEMINI_UPLOAD_DIR, which restricts which local files can be uploaded to Google. Move the file into GEMINI_UPLOAD_DIR, or add its directory to GEMINI_UPLOAD_DIR.',
+    );
+  }
+  throw err;
+}
 
 /** URL/file-safe slug from a prompt; never empty. */
 export function slugify(text: string, max = 40): string {
@@ -179,6 +206,24 @@ export function videoMimeType(p: string): string {
 export interface LocalInputPreview { path: string; mimeType: string; size: number }
 
 /**
+ * The first 16 bytes of a local reference image. Deliberately not mcp-utils'
+ * `readFileHead`: reference images (`images` / `image_path`) have no
+ * configured root to confine them to — GEMINI_UPLOAD_DIR governs the Files
+ * API uploads only — and the fleet lint requires `allowedRoots` on every
+ * `readFileHead`. Confining reference images is a separate policy decision.
+ */
+async function readLocalHead(path: string): Promise<Buffer> {
+  const fh = await open(path, 'r');
+  try {
+    const head = Buffer.alloc(16);
+    const { bytesRead } = await fh.read(head, 0, 16, 0);
+    return head.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
  * Preview a local IMAGE input WITHOUT sending it anywhere: resolve the path to
  * an absolute one, sniff its mime from the leading bytes, and measure its size.
  * Reads the file locally (to sniff/measure) but makes NO network/API call — so a
@@ -190,7 +235,7 @@ export async function previewImageInput(path: string): Promise<LocalInputPreview
   // from stat() — a preview must not load a large reference image into memory
   // just to report it (matches previewVideoInput).
   const { size } = await stat(resolved);
-  return { path: resolved, mimeType: localImageMime(resolved, await readFileHead(resolved, 16)), size };
+  return { path: resolved, mimeType: localImageMime(resolved, await readLocalHead(resolved)), size };
 }
 
 /**
@@ -233,7 +278,17 @@ const UPLOAD_MIME_BY_EXT: Record<string, string> = {
  * to label every unrecognised file image/png (chrischall/fleet-audit#117).
  */
 export async function detectUploadMime(resolvedPath: string): Promise<string | undefined> {
-  const sniffed = sniffImageMime(await readFileHead(resolvedPath, 16));
+  // Confined to GEMINI_UPLOAD_DIR when set — the same roots the upload itself
+  // (fileBlob in client.ts) enforces, so an out-of-root path is refused here,
+  // before the confirmation preview, rather than after it.
+  const roots = uploadRoots();
+  let head: Buffer;
+  try {
+    head = await readFileHead(resolvedPath, 16, { ...(roots ? { allowedRoots: roots } : {}) });
+  } catch (err) {
+    explainOutsideUploadDir(err);
+  }
+  const sniffed = sniffImageMime(head);
   if (sniffed) return sniffed;
   const ext = resolvedPath.includes('.') ? resolvedPath.slice(resolvedPath.lastIndexOf('.') + 1).toLowerCase() : '';
   return UPLOAD_MIME_BY_EXT[ext];
@@ -286,9 +341,16 @@ export function baseName(name: string): string {
 
 /**
  * per-call → $GEMINI_OUTPUT_DIR → cwd (mcp-utils `resolveOutputDir`: `~` and
- * relative paths expanded, the directory created). A blank per-call value
+ * relative paths expanded, the directory created; a per-call dir confined to
+ * GEMINI_OUTPUT_DIR when that is set). A blank per-call value
  * counts as unset, so it falls through to the env var rather than to cwd.
  */
 export function resolveOutputDir(perCall: string | undefined): string {
-  return resolveSharedOutputDir(perCall?.trim() || undefined, 'GEMINI_OUTPUT_DIR');
+  // output_dir is model-chosen: once the operator sets GEMINI_OUTPUT_DIR, a
+  // per-call directory must stay inside it (checked through symlinks). Unset
+  // keeps the old, unconfined behaviour (the fleet pattern, as in splitwise-mcp).
+  const configured = readEnvVar('GEMINI_OUTPUT_DIR');
+  return resolveSharedOutputDir(perCall?.trim() || undefined, 'GEMINI_OUTPUT_DIR', {
+    ...(configured ? { allowedRoots: [configured] } : {}),
+  });
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve, relative, isAbsolute } from 'node:path';
-import { slugify, writeImage, writeSidecar, readImageAsInline, resolveOutputDir, decodeImageInput, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
+import { slugify, writeImage, writeSidecar, readImageAsInline, resolveOutputDir, detectUploadMime, decodeImageInput, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-img-')); });
@@ -187,6 +187,17 @@ describe('resolveOutputDir', () => {
       delete process.env.GEMINI_OUTPUT_DIR;
     }
   });
+  it('confines a per-call dir to $GEMINI_OUTPUT_DIR once the operator sets it', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'gemini-else-'));
+    process.env.GEMINI_OUTPUT_DIR = dir;
+    try {
+      expect(resolveOutputDir(join(dir, 'sub'))).toBe(join(dir, 'sub'));
+      expect(() => resolveOutputDir(elsewhere)).toThrow(/outside the allowed directories/);
+    } finally {
+      delete process.env.GEMINI_OUTPUT_DIR;
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
   it('expands ~ rather than writing into a literal "~" directory', () => {
     expect(resolveOutputDir('~')).toBe(homedir());
   });
@@ -291,5 +302,28 @@ describe('resolveVideoPath', () => {
   it('throws "Video not found" (not "Image not found") when missing', () => {
     delete process.env.GEMINI_INPUT_DIR;
     expect(() => resolveVideoPath('/nonexistent/clip.mp4')).toThrow(/Video not found/);
+  });
+});
+
+describe('detectUploadMime', () => {
+  it('sniffs the bytes of a file, unconfined when GEMINI_UPLOAD_DIR is unset', async () => {
+    const p = join(dir, 'pic.jpg');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    expect(await detectUploadMime(p)).toBe('image/png');
+  });
+  it('refuses a file outside GEMINI_UPLOAD_DIR before reading it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gemini-up-'));
+    const p = join(dir, 'pic.png');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    process.env.GEMINI_UPLOAD_DIR = root;
+    try {
+      await expect(detectUploadMime(p)).rejects.toThrow(/outside GEMINI_UPLOAD_DIR/);
+      const inside = join(root, 'ok.png');
+      writeFileSync(inside, Buffer.from(PNG_B64, 'base64'));
+      expect(await detectUploadMime(inside)).toBe('image/png');
+    } finally {
+      delete process.env.GEMINI_UPLOAD_DIR;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
