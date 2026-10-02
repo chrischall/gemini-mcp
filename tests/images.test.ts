@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, rmSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve, relative, isAbsolute } from 'node:path';
-import { slugify, writeImage, readImageAsInline, resolveOutputDir, decodeImageInput, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
+import { slugify, writeImage, writeSidecar, readImageAsInline, resolveOutputDir, detectUploadMime, decodeImageInput, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-img-')); });
@@ -30,6 +30,32 @@ describe('writeImage', () => {
     const b = await writeImage(dir, 'fox', PNG_B64, 'image/png');
     expect(a).toBe(join(dir, 'fox.png'));
     expect(b).toBe(join(dir, 'fox-2.png'));
+  });
+  it('never writes through a symlink planted at the destination name', async () => {
+    const outside = join(mkdtempSync(join(tmpdir(), 'gemini-out-')), 'target.png');
+    symlinkSync(outside, join(dir, 'fox.png')); // dangling: looks "free" to an exists() probe
+    const p = await writeImage(dir, 'fox', PNG_B64, 'image/png');
+    expect(p).toBe(join(dir, 'fox-2.png'));
+    expect(existsSync(outside)).toBe(false);
+  });
+  it('creates the output directory when it does not exist yet', async () => {
+    const p = await writeImage(join(dir, 'a', 'b'), 'fox', PNG_B64, 'image/png');
+    expect(p).toBe(join(dir, 'a', 'b', 'fox.png'));
+  });
+});
+
+describe('writeSidecar', () => {
+  it('writes <image>.json next to the image', async () => {
+    const img = join(dir, 'fox.png');
+    await writeSidecar(img, { interaction_id: 'i1' });
+    expect(JSON.parse(readFileSync(`${img}.json`, 'utf8'))).toEqual({ interaction_id: 'i1' });
+  });
+  it('refuses to write through a symlink planted at the sidecar name', async () => {
+    const img = join(dir, 'fox.png');
+    const outside = join(mkdtempSync(join(tmpdir(), 'gemini-out-')), 'target.json');
+    symlinkSync(outside, `${img}.json`);
+    await expect(writeSidecar(img, { interaction_id: 'i1' })).rejects.toMatchObject({ reason: 'symlink' });
+    expect(existsSync(outside)).toBe(false);
   });
 });
 
@@ -152,6 +178,34 @@ describe('resolveOutputDir', () => {
     expect(resolveOutputDir('/tmp/x')).toBe('/tmp/x');
     expect(resolveOutputDir(undefined)).toBe(process.cwd());
   });
+  it('falls back to $GEMINI_OUTPUT_DIR for a blank per-call value', () => {
+    process.env.GEMINI_OUTPUT_DIR = dir;
+    try {
+      expect(resolveOutputDir('  ')).toBe(dir);
+      expect(resolveOutputDir(undefined)).toBe(dir);
+    } finally {
+      delete process.env.GEMINI_OUTPUT_DIR;
+    }
+  });
+  it('confines a per-call dir to $GEMINI_OUTPUT_DIR once the operator sets it', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'gemini-else-'));
+    process.env.GEMINI_OUTPUT_DIR = dir;
+    try {
+      expect(resolveOutputDir(join(dir, 'sub'))).toBe(join(dir, 'sub'));
+      expect(() => resolveOutputDir(elsewhere)).toThrow(/outside the allowed directories/);
+    } finally {
+      delete process.env.GEMINI_OUTPUT_DIR;
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+  it('expands ~ rather than writing into a literal "~" directory', () => {
+    expect(resolveOutputDir('~')).toBe(homedir());
+  });
+  it('creates the directory so the first write cannot ENOENT', () => {
+    const d = join(dir, 'new', 'out');
+    expect(resolveOutputDir(d)).toBe(d);
+    expect(existsSync(d)).toBe(true);
+  });
 });
 
 describe('resolveImagePath', () => {
@@ -248,5 +302,28 @@ describe('resolveVideoPath', () => {
   it('throws "Video not found" (not "Image not found") when missing', () => {
     delete process.env.GEMINI_INPUT_DIR;
     expect(() => resolveVideoPath('/nonexistent/clip.mp4')).toThrow(/Video not found/);
+  });
+});
+
+describe('detectUploadMime', () => {
+  it('sniffs the bytes of a file, unconfined when GEMINI_UPLOAD_DIR is unset', async () => {
+    const p = join(dir, 'pic.jpg');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    expect(await detectUploadMime(p)).toBe('image/png');
+  });
+  it('refuses a file outside GEMINI_UPLOAD_DIR before reading it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gemini-up-'));
+    const p = join(dir, 'pic.png');
+    writeFileSync(p, Buffer.from(PNG_B64, 'base64'));
+    process.env.GEMINI_UPLOAD_DIR = root;
+    try {
+      await expect(detectUploadMime(p)).rejects.toThrow(/outside GEMINI_UPLOAD_DIR/);
+      const inside = join(root, 'ok.png');
+      writeFileSync(inside, Buffer.from(PNG_B64, 'base64'));
+      expect(await detectUploadMime(inside)).toBe('image/png');
+    } finally {
+      delete process.env.GEMINI_UPLOAD_DIR;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

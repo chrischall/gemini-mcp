@@ -163,7 +163,7 @@ export interface MediaSink {
 
 /**
  * The stdio sink: `resolveOutputDir(output_dir)` → `writeMedia` per item, in
- * order (so `uniquePath`'s `name`/`name-2`/`name-3` sequencing is preserved).
+ * order (so the `name`/`name-2`/`name-3` sequencing is preserved).
  *
  * `node:fs` is reached through a dynamic import so this module stays loadable
  * in a Worker, where the R2 sink is the only one ever constructed.
@@ -176,8 +176,9 @@ export function createDiskSink(): MediaSink {
       const { writeMedia, resolveOutputDir } = await import('../images.js');
       const dir = resolveOutputDir(opts.output_dir);
       const refs: PersistedMedia[] = [];
-      // Sequential on purpose: uniquePath checks the filesystem, so writing two
-      // colliding names concurrently would race onto the same path.
+      // Sequential on purpose: it keeps the `name`, `name-2`, `name-3` numbering
+      // in item order (writeMedia's exclusive create makes concurrency safe,
+      // but not ordered).
       for (const it of items) refs.push({ ref: await writeMedia(dir, it.base, it.base64, it.mimeType) });
       return refs;
     },
