@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { McpToolError, ApiError, readEnvVar } from '@chrischall/mcp-utils';
 import { resolveModel } from '../models.js';
 import { ChainedRequest404Error, type GeminiClient, type ImageInput } from '../client.js';
-import { slugify, baseName, resolveImagePath, writeSidecar, lookupOutputDir, readImageAsInline } from '../images.js';
+import { slugify, baseName, resolveImagePath, writeSidecar, lookupOutputDir, readOutputImageAsInline } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
 import { emit, reportShape, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedImage } from './shared.js';
@@ -51,7 +51,7 @@ async function reanchorFromDisk(
   interactionId: string,
 ): Promise<{ refs: string[]; carried: ImageInput[] }> {
   const refs = await findInteractionImages(outputDir, interactionId);
-  return { refs, carried: await Promise.all(refs.map((p) => readImageAsInline(p))) };
+  return { refs, carried: await Promise.all(refs.map((p) => readOutputImageAsInline(p))) };
 }
 
 /** The same, from the object store, for a deployment with no filesystem. */
@@ -118,7 +118,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         images: z
           .array(z.string().min(1))
           .optional()
-          .describe(`Paths to reference input images. ${NEW_REFERENCES_ONLY}`),
+          .describe(`Paths to reference input images. Local paths must be inside GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR) when set. ${NEW_REFERENCES_ONLY}`),
         images_url: imagesUrlSchema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
         images_file_uris: imagesFileUrisSchema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
         images_base64: imagesBase64Schema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),

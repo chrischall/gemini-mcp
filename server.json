@@ -50,6 +50,13 @@
           "isRequired": false,
           "format": "string",
           "isSecret": false
+        },
+        {
+          "name": "GEMINI_REFERENCE_DIR",
+          "description": "Restrict local reference images (images / image paths sent to Gemini) to these directories (path.delimiter-separated), plus GEMINI_OUTPUT_DIR. Unset: GEMINI_UPLOAD_DIR applies; if that is unset too, unrestricted locally, and $MCP_DATA_DIR/uploads when MCP_DATA_DIR is set (hosted)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
         }
       ]
     }

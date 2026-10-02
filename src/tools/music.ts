@@ -42,7 +42,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
       inputSchema: z.object({
         prompt: z.string().min(1).describe('Description of the music: mood, genre, instruments, tempo, structure, or lyrics'),
         model: z.enum(MUSIC_MODELS).optional().describe(`Lyria model (default: ${DEFAULT_MUSIC_MODEL} — 30s, $0.04). lyria-3.5 and lyria-3-pro-preview run minutes-long at $0.08.`),
-        images: z.array(z.string().min(1)).optional().describe('Optional reference image path(s) to condition the music'),
+        images: z.array(z.string().min(1)).optional().describe('Optional reference image path(s) to condition the music. Local paths must be inside GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR) when set.'),
         images_url: imagesUrlSchema('Reference images'),
         images_file_uris: imagesFileUrisSchema('Reference images'),
         images_base64: imagesBase64Schema(),

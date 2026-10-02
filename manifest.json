@@ -40,6 +40,7 @@
         "GEMINI_OUTPUT_DIR": "${user_config.gemini_output_dir}",
         "GEMINI_INPUT_DIR": "${user_config.gemini_input_dir}",
         "GEMINI_UPLOAD_DIR": "${user_config.gemini_upload_dir}",
+        "GEMINI_REFERENCE_DIR": "${user_config.gemini_reference_dir}",
         "GEMINI_TIMEOUT_MS": "${user_config.gemini_timeout_ms}"
       }
     }
@@ -76,7 +77,14 @@
     "gemini_upload_dir": {
       "type": "string",
       "title": "Upload Directory",
-      "description": "Only allow local files inside this directory (or several, separated by : or ; on Windows) to be uploaded to the Gemini Files API. Leave blank for no restriction.",
+      "description": "Only allow local files inside this directory (or several, separated by : or ; on Windows) to be uploaded to the Gemini Files API. Also confines reference images when Reference Image Directory is blank. Leave blank for no restriction.",
+      "required": false,
+      "sensitive": false
+    },
+    "gemini_reference_dir": {
+      "type": "string",
+      "title": "Reference Image Directory",
+      "description": "Only allow local reference images (the images / image paths sent to Gemini) from inside this directory (or several, separated by : or ; on Windows). Output Directory is always allowed too. Blank: falls back to Upload Directory; if that is blank too, no restriction.",
       "required": false,
       "sensitive": false
     },

@@ -26,7 +26,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         count: z.number().int().positive().max(8).optional().describe('Number of variations of master_prompt (when scenes omitted)'),
         reference_mode: z.enum(['master', 'chain']).optional().describe('master: every image references the master (default). chain: each references the previous.'),
         basename: z.string().optional().describe('Base filename prefix for output images (default: slugified master_prompt)'),
-        master_images: z.array(z.string().min(1)).optional().describe('Reference image paths passed to the master generation call'),
+        master_images: z.array(z.string().min(1)).optional().describe('Reference image paths passed to the master generation call. Local paths must be inside GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR) when set.'),
         master_images_url: imagesUrlSchema('Reference images passed to the master AND to every scene call (fetched once)'),
         master_images_file_uris: imagesFileUrisSchema('Reference images passed to the master AND to every scene call'),
         master_images_r2_keys: imagesR2KeysSchema('Reference images passed to the master AND to every scene call'),
