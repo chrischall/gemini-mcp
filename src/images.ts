@@ -2,6 +2,8 @@ import { open, readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { delimiter, join, resolve, isAbsolute } from 'node:path';
 import {
+  assertPathWithinRoots,
+  expandPath,
   readEnvVar,
   McpToolError,
   readFileHead,
@@ -337,6 +339,23 @@ export function baseName(name: string): string {
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
   return safe || 'image';
+}
+
+/**
+ * The output directory to LOOK IN (sidecar lookups: `continue_last`'s disk
+ * fallback, the chain-404 re-anchor) — the same resolution and the same
+ * GEMINI_OUTPUT_DIR confinement as {@link resolveOutputDir}, but read-only:
+ * it never creates the directory, so a lookup that writes nothing leaves no
+ * empty folder behind. A missing directory simply has no sidecars.
+ */
+export function lookupOutputDir(perCall: string | undefined): string {
+  const trimmed = perCall?.trim() || undefined;
+  const configured = readEnvVar('GEMINI_OUTPUT_DIR');
+  const raw = trimmed ?? configured;
+  if (!raw) return process.cwd();
+  const dir = expandPath(raw);
+  if (trimmed && configured) assertPathWithinRoots(dir, [configured]);
+  return dir;
 }
 
 /**

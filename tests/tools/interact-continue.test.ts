@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness } from '@chrischall/mcp-utils/test';
@@ -59,6 +59,17 @@ describe('gemini_interact continue_last', () => {
       output_dir: dir,
     });
     expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ previousInteractionId: 'explicit-id' }));
+    await h.close();
+  });
+
+  it('does not create the output_dir when the disk lookup finds nothing to continue', async () => {
+    const spy = vi.spyOn(client, 'interact');
+    const missing = join(dir, 'never-written');
+    const h = await createTestHarness((srv) => registerInteractTools(srv, client));
+    const res = await h.callTool('gemini_interact', { input: 'add a hat', continue_last: true, output_dir: missing });
+    expect(res.isError).toBe(true);
+    expect(existsSync(missing)).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
     await h.close();
   });
 });

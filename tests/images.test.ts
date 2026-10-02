@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve, relative, isAbsolute } from 'node:path';
-import { slugify, writeImage, writeSidecar, readImageAsInline, resolveOutputDir, detectUploadMime, decodeImageInput, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
+import { slugify, writeImage, writeSidecar, readImageAsInline, resolveOutputDir, lookupOutputDir, detectUploadMime, decodeImageInput, baseName, resolveImagePath, videoMimeType, resolveVideoPath } from '../src/images.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'gemini-img-')); });
@@ -324,6 +324,28 @@ describe('detectUploadMime', () => {
     } finally {
       delete process.env.GEMINI_UPLOAD_DIR;
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('lookupOutputDir (read-only)', () => {
+  it('resolves like resolveOutputDir but never creates the directory', () => {
+    const d = join(dir, 'not', 'yet');
+    expect(lookupOutputDir(d)).toBe(d);
+    expect(existsSync(d)).toBe(false);
+    expect(lookupOutputDir('~')).toBe(homedir());
+    expect(lookupOutputDir(undefined)).toBe(process.cwd());
+  });
+  it('falls back to $GEMINI_OUTPUT_DIR and confines a per-call dir to it once set', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'gemini-else-'));
+    process.env.GEMINI_OUTPUT_DIR = dir;
+    try {
+      expect(lookupOutputDir('  ')).toBe(dir);
+      expect(lookupOutputDir(join(dir, 'sub'))).toBe(join(dir, 'sub'));
+      expect(() => lookupOutputDir(elsewhere)).toThrow(/outside the allowed directories/);
+    } finally {
+      delete process.env.GEMINI_OUTPUT_DIR;
+      rmSync(elsewhere, { recursive: true, force: true });
     }
   });
 });
