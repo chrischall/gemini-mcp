@@ -13,11 +13,12 @@ export default defineConfig({
     // from half-finished branches. It still passes, so nothing flags it — you
     // just stop being able to trust the number.
     exclude: [...configDefaults.exclude, '**/.claude/**', 'tests/worker*.test.ts'],
-    // Hermetic against a developer's shell: a GEMINI_OUTPUT_DIR / _UPLOAD_DIR
+    // Hermetic against a developer's shell: a GEMINI_OUTPUT_DIR / _UPLOAD_DIR /
+    // _REFERENCE_DIR (or an MCP_DATA_DIR, which confines reference images)
     // exported for real use would confine every test's tmp output_dir / upload
     // path and fail ~100 unrelated tests. Blank reads as unset (readEnvVar);
     // tests that need one set it themselves.
-    env: { GEMINI_OUTPUT_DIR: '', GEMINI_UPLOAD_DIR: '' },
+    env: { GEMINI_OUTPUT_DIR: '', GEMINI_UPLOAD_DIR: '', GEMINI_REFERENCE_DIR: '', MCP_DATA_DIR: '' },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

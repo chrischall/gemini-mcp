@@ -42,6 +42,7 @@ GEMINI_OUTPUT_DIR=<dir>     # Optional. Where generated images are written (defa
 GEMINI_INPUT_DIR=<dir>      # Optional. Base dir searched for relative input image paths
 GEMINI_UPLOAD_DIR=<dirs>    # Optional. Confine local-file Files-API uploads (upload_file `path`, `video_path`)
                             #   to these dirs (path.delimiter-separated, `~` ok). Unset = unconfined.
+GEMINI_REFERENCE_DIR=<dirs> # Optional. Confine local reference images (`images` paths) — referenceRoots() in images.ts: this → GEMINI_UPLOAD_DIR → $MCP_DATA_DIR/uploads (hosted) → unconfined; GEMINI_OUTPUT_DIR always added when on
 GEMINI_TIMEOUT_MS=<ms>      # Optional. Upstream timeout (default 60000; 120000 for 4K; per-call timeout_ms wins)
 GEMINI_HEARTBEAT_MS=<ms>    # Optional. notifications/progress cadence during generation (default 10000; 0 disables)
 GEMINI_CHAIN_RETRY_MS=<ms>  # Optional. How long to wait out interactions-store lag on a chained 404 (default 120000; 0 disables retrying)

@@ -33,7 +33,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
         prompt: z.string().min(1).describe('Text prompt describing the image'),
         count: z.number().int().positive().max(8).optional().describe('Number of independent images (default 1)'),
         filename: z.string().optional().describe('Base filename for the output image (extension stripped; default: slugified prompt)'),
-        images: z.array(z.string().min(1)).optional().describe('Paths to reference input images (image-conditioned generation)'),
+        images: z.array(z.string().min(1)).optional().describe('Paths to reference input images (image-conditioned generation). Local paths must be inside GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR) when set.'),
         images_url: imagesUrlSchema(),
         images_file_uris: imagesFileUrisSchema(),
         images_r2_keys: imagesR2KeysSchema(),
@@ -173,7 +173,7 @@ export function registerGenerateTools(server: McpServer, client: GeminiClient): 
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: z.object({
         prompt: z.string().min(1).describe('Instruction describing the edit or composition'),
-        images: z.array(z.string().min(1)).optional().describe('Paths to input image file(s) (1 = edit, 2+ = compose)'),
+        images: z.array(z.string().min(1)).optional().describe('Paths to input image file(s) (1 = edit, 2+ = compose). Local paths must be inside GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR) when set.'),
         images_url: imagesUrlSchema('Input images'),
         images_file_uris: imagesFileUrisSchema('Input images'),
         images_r2_keys: imagesR2KeysSchema('Input images'),

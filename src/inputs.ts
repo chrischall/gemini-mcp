@@ -214,7 +214,7 @@ async function resolveLocalPath(
   onDisk: boolean,
   report: ImageInputReport,
 ): Promise<ImageInput> {
-  const { readImageAsInline, resolveImagePath } = await import('./images.js');
+  const { readImageAsInline, resolveImagePath, assertReferenceAllowed } = await import('./images.js');
   // A runtime with no filesystem never gets here — `assertLocalInputsAvailable`
   // rejects `images` before any of this — but if it somehow did, reading the
   // file is what would fail, so keep the pre-existing error path.
@@ -222,6 +222,8 @@ async function resolveLocalPath(
 
   const { stat } = await import('node:fs/promises');
   const resolved = resolveImagePath(path);
+  // Before the stat, the read, and any Files API promotion below.
+  assertReferenceAllowed(resolved);
   let key: string | undefined;
   try {
     const { mtimeMs, size } = await stat(resolved);

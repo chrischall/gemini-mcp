@@ -1,9 +1,10 @@
-import { open, readFile, stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { delimiter, join, resolve, isAbsolute } from 'node:path';
 import {
   assertPathWithinRoots,
   expandPath,
+  fileBlob,
   readEnvVar,
   McpToolError,
   readFileHead,
@@ -11,6 +12,7 @@ import {
   sniffMimeBytes as sniffSharedMime,
   writeFileSafe,
   writeUniqueFile,
+  type EnvSource,
 } from '@chrischall/mcp-utils';
 
 /**
@@ -38,6 +40,67 @@ export function explainOutsideUploadDir(err: unknown): never {
     );
   }
   throw err;
+}
+
+/** A path-delimiter list from `name`, trimmed, blanks dropped; `undefined` when empty. */
+function rootList(name: string, env: EnvSource): string[] | undefined {
+  const roots = readEnvVar(name, { env })?.split(delimiter).map((r) => r.trim()).filter(Boolean);
+  return roots && roots.length > 0 ? roots : undefined;
+}
+
+/**
+ * The folders a local REFERENCE image (`images` / `image_path` paths) may be
+ * read from. Those bytes go to Google — inline, or as a Files API upload once a
+ * path is reused (inputs.ts) — and the path is model-chosen, so a
+ * prompt-injected path could otherwise send any readable file. In order:
+ *
+ * 1. `GEMINI_REFERENCE_DIR` — one or more folders (`:` / `;` separated, `~` ok);
+ * 2. else `GEMINI_UPLOAD_DIR` — the existing allow-list for local files sent to
+ *    the Files API, so an operator who restricted uploads gets reference images
+ *    restricted too;
+ * 3. else, hosted (`MCP_DATA_DIR` set) — only `$MCP_DATA_DIR/uploads`: never the
+ *    runner's home, nor the data dir itself (it holds tokens and job state);
+ * 4. else `undefined` — a local install with nothing configured stays
+ *    unconfined (the user's own files, on their own machine).
+ *
+ * When confinement is on, `GEMINI_OUTPUT_DIR` (operator config) is added, so
+ * this server's own generated images can always be fed back in as references.
+ */
+export function referenceRoots(env: EnvSource = process.env): string[] | undefined {
+  let roots = rootList('GEMINI_REFERENCE_DIR', env) ?? rootList('GEMINI_UPLOAD_DIR', env);
+  if (!roots) {
+    const dataDir = readEnvVar('MCP_DATA_DIR', { env });
+    if (dataDir) roots = [join(dataDir, 'uploads')];
+  }
+  if (!roots) return undefined;
+  const output = readEnvVar('GEMINI_OUTPUT_DIR', { env })?.trim();
+  return output && !roots.includes(output) ? [...roots, output] : roots;
+}
+
+/** mcp-utils' bare out-of-roots refusal → an actionable reference-image error. */
+function explainOutsideReferenceDir(err: unknown, roots: readonly string[]): never {
+  if (err instanceof Error && err.message.startsWith('Path is outside the allowed directories')) {
+    throw new McpToolError(
+      `Refusing to send a reference image from outside the allowed folders (${roots.join(', ')}). ` +
+        'Reference images are confined by GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR; on a hosted server, $MCP_DATA_DIR/uploads). ' +
+        'Move the image into one of those folders, or add its folder to GEMINI_REFERENCE_DIR (outside GEMINI_REFERENCE_DIR is refused).',
+    );
+  }
+  throw err;
+}
+
+/**
+ * Refuse a resolved reference-image path outside {@link referenceRoots} (no-op
+ * when unconfined). Checked through symlinks, before the file is stat'ed or read.
+ */
+export function assertReferenceAllowed(resolvedPath: string): void {
+  const roots = referenceRoots();
+  if (!roots) return;
+  try {
+    assertPathWithinRoots(resolvedPath, roots);
+  } catch (err) {
+    explainOutsideReferenceDir(err, roots);
+  }
 }
 
 /** URL/file-safe slug from a prompt; never empty. */
@@ -208,20 +271,15 @@ export function videoMimeType(p: string): string {
 export interface LocalInputPreview { path: string; mimeType: string; size: number }
 
 /**
- * The first 16 bytes of a local reference image. Deliberately not mcp-utils'
- * `readFileHead`: reference images (`images` / `image_path`) have no
- * configured root to confine them to — GEMINI_UPLOAD_DIR governs the Files
- * API uploads only — and the fleet lint requires `allowedRoots` on every
- * `readFileHead`. Confining reference images is a separate policy decision.
+ * The first 16 bytes of a local reference image, confined to
+ * {@link referenceRoots} when those are set.
  */
 async function readLocalHead(path: string): Promise<Buffer> {
-  const fh = await open(path, 'r');
+  const roots = referenceRoots();
   try {
-    const head = Buffer.alloc(16);
-    const { bytesRead } = await fh.read(head, 0, 16, 0);
-    return head.subarray(0, bytesRead);
-  } finally {
-    await fh.close();
+    return await readFileHead(path, 16, { ...(roots ? { allowedRoots: roots } : {}) });
+  } catch (err) {
+    return roots ? explainOutsideReferenceDir(err, roots) : Promise.reject(err);
   }
 }
 
@@ -233,6 +291,7 @@ async function readLocalHead(path: string): Promise<Buffer> {
  */
 export async function previewImageInput(path: string): Promise<LocalInputPreview> {
   const resolved = resolveImagePath(path);
+  assertReferenceAllowed(resolved);
   // Read only the header bytes needed to sniff the MIME (≤12), and take the size
   // from stat() — a preview must not load a large reference image into memory
   // just to report it (matches previewVideoInput).
@@ -296,12 +355,34 @@ export async function detectUploadMime(resolvedPath: string): Promise<string | u
   return UPLOAD_MIME_BY_EXT[ext];
 }
 
-/** Read an image file into `{ base64, mimeType }` for an inline_data part. */
+/**
+ * Read a model-supplied reference image into `{ base64, mimeType }` for an
+ * inline_data part, confined to {@link referenceRoots} when those are set
+ * (mcp-utils `fileBlob` with `allowedRoots`, checked through symlinks).
+ */
 export async function readImageAsInline(path: string): Promise<{ base64: string; mimeType: string }> {
   const resolved = resolveImagePath(path);
-  const buf = await readFile(resolved);
+  const roots = referenceRoots();
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(await (await fileBlob(resolved, { label: 'Image', ...(roots ? { allowedRoots: roots } : {}) })).arrayBuffer());
+  } catch (err) {
+    if (roots) explainOutsideReferenceDir(err, roots);
+    throw err;
+  }
   const mimeType = localImageMime(resolved, buf);
   return { base64: buf.toString('base64'), mimeType };
+}
+
+/**
+ * Read an image THIS server wrote (an interaction's output, found by its
+ * sidecar under the GEMINI_OUTPUT_DIR-confined {@link lookupOutputDir}) for
+ * re-anchoring a chain. Not model-chosen, so not subject to the reference
+ * roots — a chain must recover its own output wherever output_dir put it.
+ */
+export async function readOutputImageAsInline(path: string): Promise<{ base64: string; mimeType: string }> {
+  const buf = await readFile(path);
+  return { base64: buf.toString('base64'), mimeType: localImageMime(path, buf) };
 }
 
 /**

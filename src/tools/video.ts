@@ -53,7 +53,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         orientation: orientationSchema,
         task: z.enum(VIDEO_TASKS).optional().describe('text_to_video (default), image_to_video / reference_to_video (need image input), or edit / extend (need previous_interaction_id)'),
         resolution: z.enum(VIDEO_RESOLUTIONS).optional().describe('Output resolution (default 720p). Video is billed per output token, so 360p costs roughly a third of 720p — use it for drafts'),
-        images: z.array(z.string().min(1)).optional().describe('Reference image path(s) for image_to_video / reference_to_video'),
+        images: z.array(z.string().min(1)).optional().describe('Reference image path(s) for image_to_video / reference_to_video. Local paths must be inside GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR) when set.'),
         images_url: imagesUrlSchema('Reference stills'),
         images_file_uris: imagesFileUrisSchema('Reference stills'),
         images_base64: imagesBase64Schema(),
