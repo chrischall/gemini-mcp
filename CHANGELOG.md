@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.3.1](https://github.com/chrischall/gemini-mcp/compare/v2.3.0...v2.3.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **deps:** adopt @chrischall/mcp-utils 2.12.0 output kit and MIME sniffer ([#272](https://github.com/chrischall/gemini-mcp/issues/272)) ([9487361](https://github.com/chrischall/gemini-mcp/commit/9487361e4823a25b9f106fa696f29bbf7ffbe520))
+* **deps:** bump @chrischall/mcp-utils to 2.13.0 ([#276](https://github.com/chrischall/gemini-mcp/issues/276)) ([ee74454](https://github.com/chrischall/gemini-mcp/commit/ee74454ee829271ff46b15892f6e45109540dbb0))
+* **deps:** Bump the production-dependencies group with 2 updates ([#267](https://github.com/chrischall/gemini-mcp/issues/267)) ([b75ed0b](https://github.com/chrischall/gemini-mcp/commit/b75ed0b56582003402fcc3a6cca6a336b4551691))
+* **images:** confine local reference images to GEMINI_REFERENCE_DIR ([#275](https://github.com/chrischall/gemini-mcp/issues/275)) ([3f5c0c0](https://github.com/chrischall/gemini-mcp/commit/3f5c0c02bbc05c9b7554881c81768256e21584fd))
+* **interact:** stop sidecar lookups from creating the output directory ([#274](https://github.com/chrischall/gemini-mcp/issues/274)) ([ea2fe61](https://github.com/chrischall/gemini-mcp/commit/ea2fe612d269fb6216307c05de12fbc53cf8291b))
+* keep credentials and report edge_blocked on CDN/WAF blocks (mcp-utils 2.10.0) ([#270](https://github.com/chrischall/gemini-mcp/issues/270)) ([2d146ee](https://github.com/chrischall/gemini-mcp/commit/2d146eec21ba861d9c74a6c84f1d47fd7331feba))
+* keep write approvals valid across a hosted restart (mcp-utils 2.11.0) ([#271](https://github.com/chrischall/gemini-mcp/issues/271)) ([6ee246b](https://github.com/chrischall/gemini-mcp/commit/6ee246bc13394a7f4612ff32e7048fce3e0c70c8))
+* report CDN/WAF blocks as edge_blocked, not a rejected credential (mcp-utils 2.9.0) ([#269](https://github.com/chrischall/gemini-mcp/issues/269)) ([3ce2fe1](https://github.com/chrischall/gemini-mcp/commit/3ce2fe1df142ca029d0b8a0bb13f9563b2a337ed))
+
 ## [2.3.0](https://github.com/chrischall/gemini-mcp/compare/v2.2.0...v2.3.0) (2026-09-25)
 
 
