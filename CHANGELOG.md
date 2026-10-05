@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.2](https://github.com/chrischall/gemini-mcp/compare/v2.3.1...v2.3.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* **deps:** Bump dotenv ([#279](https://github.com/chrischall/gemini-mcp/issues/279)) ([520d83a](https://github.com/chrischall/gemini-mcp/commit/520d83adb278135f2692dc4551336344ba7c235f))
+* **deps:** require @chrischall/mcp-utils 2.14.0 and MCP SDK 2.3.0 ([#281](https://github.com/chrischall/gemini-mcp/issues/281)) ([f468be5](https://github.com/chrischall/gemini-mcp/commit/f468be5ee4c0f2788d6ac8c8350deb6a37f911b7))
+
 ## [2.3.1](https://github.com/chrischall/gemini-mcp/compare/v2.3.0...v2.3.1) (2026-10-03)
 
 
