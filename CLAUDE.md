@@ -632,6 +632,8 @@ puts two round trips in front of a call nobody asked to wait for.
   The token binds the whole request (args minus the token, plus the resolved
   inputs), so a changed prompt or swapped file between the phases is
   `DRAFT_CHANGED`. `MCP_CONFIRM_MODE` (`ask-user` | `auto` | `refuse`),
+  `MCP_CONFIRM_ELICITATION` (`on` | `off` — `off` skips the prompt for clients
+  that declare elicitation but never show it, e.g. opencode 2.0.x),
   `MCP_CONFIRM_TTL_SECONDS`, `MCP_CONFIRM_SECRET` — see README. There is no
   `confirm: true` parameter any more; tests drive both phases with
   `tests/confirm-helpers.ts`.
