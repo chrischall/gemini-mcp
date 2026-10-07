@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.3](https://github.com/chrischall/gemini-mcp/compare/v2.3.2...v2.3.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* **deps:** allow skipping confirmation prompts on clients that never show them (mcp-utils 2.15.0) ([#282](https://github.com/chrischall/gemini-mcp/issues/282)) ([00f3ad4](https://github.com/chrischall/gemini-mcp/commit/00f3ad47ceec891495e25c5b6e5083e342b84097))
+
+
+### Documentation
+
+* document MCP_CONFIRM_ELICITATION ([#284](https://github.com/chrischall/gemini-mcp/issues/284)) ([37737ea](https://github.com/chrischall/gemini-mcp/commit/37737ea486ac684283c5f5e4132d8d009dfa63e1))
+
 ## [2.3.2](https://github.com/chrischall/gemini-mcp/compare/v2.3.1...v2.3.2) (2026-10-05)
 
 
