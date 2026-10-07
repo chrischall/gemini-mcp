@@ -26,7 +26,8 @@ Developed and maintained by AI (Claude Code).
 
 Sending a **local file** to Google (the `images` / `master_images` / `video_path` inputs, or
 `gemini_upload_file`'s `path`) and every **delete** ask for confirmation first. A client that can
-show a confirmation prompt (Claude Code) gets the real prompt. Elsewhere the first call does
+show a confirmation prompt (Claude Code) gets the real prompt, unless `MCP_CONFIRM_ELICITATION=off`.
+Elsewhere the first call does
 nothing and returns a preview (the resolved local paths with their MIME types and sizes, or the
 method/path being deleted) plus a `confirmToken`; only a repeat call with the same arguments and
 that token proceeds. The token is single-use, expires, and is bound to the exact arguments — a
@@ -35,7 +36,8 @@ changed prompt or a swapped file between the two calls is refused. Pure text pro
 
 | variable | default | |
 |---|---|---|
-| `MCP_CONFIRM_MODE` | `ask-user` | What a write does on a client that cannot show a confirmation prompt (claude.ai, Claude Desktop). `ask-user`: two steps — the first call does nothing and returns a preview plus a token, and the model must get your approval in chat before calling again with it. `auto`: the same two steps, but the model may use the token after reviewing the preview itself. `refuse`: writes are refused on such clients. A client that can show prompts (Claude Code) always gets the real prompt. An unrecognised value is treated as `refuse`. |
+| `MCP_CONFIRM_MODE` | `ask-user` | What a write does on a client that cannot show a confirmation prompt (claude.ai, Claude Desktop). `ask-user`: two steps — the first call does nothing and returns a preview plus a token, and the model must get your approval in chat before calling again with it. `auto`: the same two steps, but the model may use the token after reviewing the preview itself. `refuse`: writes are refused on such clients. A client that can show prompts (Claude Code) always gets the real prompt, unless `MCP_CONFIRM_ELICITATION=off`. An unrecognised value is treated as `refuse`. |
+| `MCP_CONFIRM_ELICITATION` | `on` | `off` never shows a confirmation prompt, so every client gets the `MCP_CONFIRM_MODE` path. Set it for a client that claims to support prompts but never shows one (the gated call hangs — opencode 2.0.x). Any other value stays `on`, with a warning on stderr. |
 | `MCP_CONFIRM_TTL_SECONDS` | `600` | How long a token stays valid. |
 | `MCP_CONFIRM_SECRET` | random per process | Signing key; set it only if tokens must survive a server restart. |
 
