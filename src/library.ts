@@ -93,6 +93,9 @@ export interface CharacterLibrary {
   deleteStyle(name: string): Promise<boolean>;
 }
 
+/** Pages one library listing will walk: 20 x 1000 keys, far past any real library. */
+const LIBRARY_MAX_LIST_PAGES = 20;
+
 /** The slice of R2 the library needs — structural so tests can fake it. */
 export interface LibraryBucket {
   put(
@@ -155,10 +158,13 @@ export function createR2Library(bucket: LibraryBucket, opts: LibraryOptions): Ch
     const prefix = `${LIBRARY_KEY_PREFIX}/${await tenantId()}/${kind}/`;
     const keys: string[] = [];
     let cursor: string | undefined;
-    for (;;) {
+    // Bounded, like the media walk in storage/media.ts: a store that reports
+    // `truncated` with no cursor would otherwise re-list page one forever
+    // (chrischall/fleet-audit#468), and a listing is unbounded work on a tool call.
+    for (let n = 0; n < LIBRARY_MAX_LIST_PAGES; n++) {
       const page = await bucket.list({ prefix, cursor, limit: 1000 });
       keys.push(...page.objects.map((o) => o.key).filter((k) => k.endsWith('.json')));
-      if (!page.truncated) break;
+      if (!page.truncated || !page.cursor) break;
       cursor = page.cursor;
     }
     const records = await Promise.all(keys.map((k) => readJson<T>(k)));
