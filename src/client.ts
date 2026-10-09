@@ -1544,7 +1544,13 @@ export function hostedStorage(blob: BlobStore | undefined = blobStoreFromEnv()):
   // pinned in the store on first use — derived from the current key so the
   // data already there stays reachable — and never re-derived after that.
   // Lazy because the key is read at request time (deferred-config-error).
-  const tenant = pinnedTenant(blob.bucket, () => tenantIdFor(readEnvVar('GEMINI_API_KEY') ?? 'local'));
+  // With no key configured yet the tenant is provisional: used for that call
+  // but never pinned, or the permanent pin would lock the namespace to
+  // sha('local') and orphan the key's data (chrischall/fleet-audit#1009).
+  const tenant = pinnedTenant(blob.bucket, async () => {
+    const key = readEnvVar('GEMINI_API_KEY');
+    return key ? tenantIdFor(key) : { tenant: await tenantIdFor('local'), pin: false as const };
+  });
   return {
     mediaSink: createR2Sink(blob.bucket, {
       // The SAME `links` object the minter gets below. Media GETs and upload
