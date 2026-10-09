@@ -133,4 +133,37 @@ describe('media transfers are bounded', () => {
       rmSync(d, { recursive: true, force: true });
     }
   });
+
+  it('a video that fails processing after the upload deadline keeps its processing error', async () => {
+    // The deadline bounds the two upload round trips only. The PROCESSING
+    // poll that follows is bounded by its own attempt cap, so a FAILED state
+    // reached after the deadline would elapse must surface as a processing
+    // failure, not be relabelled a stalled upload (chrischall/fleet-audit#467).
+    const d = mkdtempSync(join(tmpdir(), 'gemini-upload-poll-'));
+    try {
+      const p = join(d, 'clip.mp4');
+      writeFileSync(p, Buffer.from('tiny'));
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      process.env.GEMINI_API_KEY = 'test-key';
+      const json = (body: unknown, headers: Record<string, string> = {}) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json', ...headers } });
+      let polls = 0;
+      const fetchImpl: typeof fetch = async (url) => {
+        const u = String(url);
+        if (u.includes('/upload/') && !u.includes('upload_id')) {
+          return json({}, { 'x-goog-upload-url': 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=x' });
+        }
+        if (u.includes('upload_id')) return json({ file: { name: 'files/abc', state: 'PROCESSING' } });
+        polls++;
+        return json({ name: 'files/abc', state: 'FAILED', error: { message: 'unsupported codec' } });
+      };
+      // Each poll interval runs the clock well past the upload deadline.
+      const sleep = async () => { vi.advanceTimersByTime(60 * 60 * 1000); };
+      const c = new GeminiClient({ fetchImpl, sleep });
+      await expect(c.uploadFile(p, 'video/mp4')).rejects.toThrow(/file processing failed \(state FAILED\): unsupported codec/);
+      expect(polls).toBe(1);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
 });

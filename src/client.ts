@@ -758,9 +758,14 @@ export class GeminiClient {
     // A caller that uploads opportunistically brings its own (short) signal.
     // Everyone else gets a deadline sized to the file, so a stalled upload
     // fails instead of hanging the tool call (chrischall/fleet-audit#467).
+    // The deadline covers the two upload round trips ONLY and is cleared
+    // before the PROCESSING poll: the poll has its own attempt cap, and a
+    // processing failure (or a slow transcode) reached after the deadline must
+    // keep its own error rather than be relabelled a stalled upload.
     const deadline = signal ? undefined : transferDeadline(transferTimeoutMs(contentLength));
+    let uploaded: { name: string; file: GeminiFile };
     try {
-      return await this.uploadToFilesApiWithin(body, mimeType, displayName, contentLength, key, signal ?? deadline!.signal);
+      uploaded = await this.sendToFilesApi(body, mimeType, displayName, contentLength, key, signal ?? deadline!.signal);
     } catch (err) {
       if (deadline?.signal.aborted) {
         throw new McpToolError(`${SERVICE} Files API upload of ${displayName} timed out after ${transferTimeoutMs(contentLength)}ms`, {
@@ -771,17 +776,18 @@ export class GeminiClient {
     } finally {
       deadline?.clear();
     }
+    return this.awaitFileActive(uploaded.name, uploaded.file, mimeType);
   }
 
-  /** {@link uploadToFilesApi}'s three steps, under `signal`. */
-  private async uploadToFilesApiWithin(
+  /** {@link uploadToFilesApi}'s steps 1 and 2 (start + upload/finalize), under `signal`. */
+  private async sendToFilesApi(
     body: Blob,
     mimeType: string,
     displayName: string,
     contentLength: number,
     key: string,
     signal: AbortSignal,
-  ): Promise<UploadedFile> {
+  ): Promise<{ name: string; file: GeminiFile }> {
     // Local alias so the calls below carry NO receiver: `this.fetchImpl(...)`
     // would hand native fetch this GeminiClient as `this`, which workerd
     // rejects with an Illegal invocation (see the constructor note).
@@ -851,7 +857,11 @@ export class GeminiClient {
     if (!/^files\/[\w-]+$/.test(name)) {
       throw new McpToolError(`${SERVICE} upload returned an unexpected file name: ${name || '(none)'}`);
     }
+    return { name, file };
+  }
 
+  /** {@link uploadToFilesApi}'s step 3: wait out PROCESSING. Outside the upload deadline. */
+  private async awaitFileActive(name: string, file: GeminiFile, mimeType: string): Promise<UploadedFile> {
     // 3. poll PROCESSING → ACTIVE. Images are normally ACTIVE on arrival; it is
     // video that spends time here.
     for (let attempt = 0; file.state === 'PROCESSING'; attempt++) {
@@ -1620,6 +1630,11 @@ export function hostedStorage(blob: BlobStore | undefined = blobStoreFromEnv()):
   // With no key configured yet the tenant is provisional: used for that call
   // but never pinned, or the permanent pin would lock the namespace to
   // sha('local') and orphan the key's data (chrischall/fleet-audit#1009).
+  // Accepted boundary: the library and media sink memoise their tenant per
+  // process (`tenantResolver`), so a process that starts keyless and has its
+  // key set later WITHOUT a restart keeps using the provisional 'local'
+  // namespace until it restarts. Nothing is pinned, so the restart recovers;
+  // mcp-host sets env at spawn, so a key never arrives mid-process there.
   const tenant = pinnedTenant(blob.bucket, async () => {
     const key = readEnvVar('GEMINI_API_KEY');
     return key ? tenantIdFor(key) : { tenant: await tenantIdFor('local'), pin: false as const };
