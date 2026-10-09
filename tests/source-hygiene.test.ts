@@ -53,3 +53,20 @@ describe('src/ comments cite files that exist', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * Auto-review follow-up #286: after the Worker was retired, CLAUDE.md and
+ * AGENTS.md still justified per-session state with "one isolate serves many
+ * authenticated sessions" / "one process can serve several sessions" — the
+ * opposite of the one-user-per-process invariant src/session.ts documents.
+ * The agent docs must describe the deployment that exists.
+ */
+describe('agent docs describe the one-user-per-process deployment', () => {
+  const retired = [/isolate serves many/i, /process can serve several sessions/i, /session\s+in that isolate/i];
+  for (const doc of ['CLAUDE.md', 'AGENTS.md']) {
+    it(`${doc} does not describe a live multi-tenant isolate`, () => {
+      const text = readFileSync(doc, 'utf8').replace(/\s+/g, ' ');
+      expect(retired.filter((re) => re.test(text)).map(String)).toEqual([]);
+    });
+  }
+});
