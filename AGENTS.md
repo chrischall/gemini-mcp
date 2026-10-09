@@ -572,8 +572,9 @@ It is an optimisation, so it may never cost the generation it was meant to make
 cheaper. The whole body — decoding included, since `decodeImageInput` does not
 validate a `data:` payload and a URL-safe one throws in `atob` — sits inside
 one try that falls back to inline, and the upload carries an
-`AbortSignal.timeout` because `uploadToFilesApi` is otherwise untimed and this
-puts two round trips in front of a call nobody asked to wait for.
+short `AbortSignal.timeout` because `uploadToFilesApi`'s own default deadline is
+sized for multi-GB files, and this puts two round trips in front of a call
+nobody asked to wait for.
 
 ## Conventions
 

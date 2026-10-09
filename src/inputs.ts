@@ -92,7 +92,7 @@ export function hasImageInput(args: ImageInputArgs): boolean {
  * How long the opportunistic base64 upload gets before it is abandoned.
  *
  * The promotion adds two round trips in front of a generation nobody asked to
- * wait for, and `uploadToFilesApi` is otherwise untimed. Past this the call
+ * wait for, and `uploadToFilesApi`'s own deadline is sized for big files. Past this the call
  * proceeds inline: slower to repeat, but not stalled.
  */
 const BASE64_UPLOAD_TIMEOUT_MS = 30_000;

@@ -1366,12 +1366,17 @@ describe('Files API upload variants', () => {
     expect((cap.calls[1].init as RequestInit).signal).toBe(signal);
   });
 
-  it('sends no signal when the caller gives none, so a big upload is not cut short', async () => {
+  // Was "sends no signal": an unbounded upload hung forever on a stalled
+  // connection (chrischall/fleet-audit#467). The default is now a deadline
+  // sized to the file, so a big upload is still not cut short.
+  it('bounds both round trips with its own deadline when the caller gives none', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = uploadFetch();
     await new GeminiClient({ fetchImpl: cap.fn }).uploadBytes(new Uint8Array([1, 2, 3, 4]), 'image/png', 'pic.png');
-    expect(cap.calls[0].init).not.toHaveProperty('signal');
-    expect(cap.calls[1].init).not.toHaveProperty('signal');
+    const first = (cap.calls[0].init as RequestInit).signal;
+    expect(first).toBeInstanceOf(AbortSignal);
+    expect((cap.calls[1].init as RequestInit).signal).toBe(first);
+    expect(first!.aborted).toBe(false);
   });
 
   it('rejects a file over the Files API 2 GB cap before sending anything', async () => {
