@@ -369,7 +369,7 @@ export const sharedImageSchema = {
     .describe('Exact output aspect ratio. For a plain landscape/portrait/square request, `orientation` is the shorthand; this wins if both are given.'),
   orientation: orientationSchema,
   image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution (512 = 0.5K, Flash-only)'),
-  output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),
+  output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or ~/Downloads/gemini-mcp)'),
   inline: z.boolean().optional().describe('Return the image as an inline image block you can SEE, instead of a path (stdio) or link (hosted). The default costs nothing to carry and hands back a reference you can reuse; use this when you need to check the result yourself. On the hosted connector gemini_view_media does the same for an image you already have'),
   seed: z.number().int().optional().describe('Seed for reproducible generation; random if omitted'),
   thinking_level: z.enum(['minimal', 'high']).optional().describe('Reasoning depth (Gemini 3 models); higher can help complex/structural edits'),

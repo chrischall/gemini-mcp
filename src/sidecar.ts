@@ -20,8 +20,8 @@ const SIDECAR_SUFFIX = '.json';
 
 /**
  * `writeSidecar` always names the sidecar after its output: `<file>.<ext>.json`.
- * Any other `.json` in the directory — the output dir defaults to cwd, which
- * can be a cloned repo — is not ours and is never read (chrischall/fleet-audit#473).
+ * Any other `.json` in the directory — the output dir can be any
+ * operator- or model-chosen directory, such as a cloned repo — is not ours and is never read (chrischall/fleet-audit#473).
  */
 const SIDECAR_NAME = /^.+\.[A-Za-z0-9]+\.json$/;
 

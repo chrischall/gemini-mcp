@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { WriteOutcomeUnknownError } from '@chrischall/mcp-utils';
 import { GeminiClient, resolveTimeoutMs } from '../src/client.js';
 
 // These tests mutate GEMINI_API_KEY / GEMINI_TIMEOUT_MS; restore after each so
@@ -61,6 +62,23 @@ describe('per-call timeout wiring', () => {
     delete process.env.GEMINI_TIMEOUT_MS;
     const c = new GeminiClient({ fetchImpl: hangingFetch });
     await expect(c.generate({ prompt: 'a circle', timeoutMs: 25 })).rejects.toThrow(/timed out after 25ms/);
+  });
+
+  // mcp-utils 3.0: a timed-out POST may already have run (and been billed), so
+  // it surfaces as WriteOutcomeUnknownError rather than a retry-safe
+  // RequestTimeoutError.
+  it('a timed-out generate/interact POST is a WriteOutcomeUnknownError (not retry-safe)', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    delete process.env.GEMINI_TIMEOUT_MS;
+    const c = new GeminiClient({ fetchImpl: hangingFetch });
+    for (const call of [
+      () => c.generate({ prompt: 'a circle', timeoutMs: 25 }),
+      () => c.interact({ input: 'a circle', timeoutMs: 25 }),
+    ]) {
+      const err = await call().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(WriteOutcomeUnknownError);
+      expect(err).toMatchObject({ timedOut: true, retrySafe: false, method: 'POST' });
+    }
   });
 
   it('interact aborts at the per-call timeoutMs', async () => {

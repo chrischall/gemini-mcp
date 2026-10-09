@@ -63,7 +63,7 @@
     "gemini_output_dir": {
       "type": "string",
       "title": "Output Directory",
-      "description": "Default directory for generated images (default: current working directory). When set, a per-call output_dir must be inside it.",
+      "description": "Default directory for generated images (default: ~/Downloads/gemini-mcp). When set, a per-call output_dir must be inside it.",
       "required": false,
       "sensitive": false
     },

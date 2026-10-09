@@ -70,7 +70,7 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 |---|---|---|
 | `GEMINI_API_KEY` | Yes | Your Google Gemini API key |
 | `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-3.1-flash-image`) |
-| `GEMINI_OUTPUT_DIR` | No | Default directory for saved images (default: current working directory) |
+| `GEMINI_OUTPUT_DIR` | No | Default directory for saved images (default: ~/Downloads/gemini-mcp) |
 | `GEMINI_INPUT_DIR` | No | Directory to resolve bare input-image filenames against (e.g. point at Cowork's `uploads/` folder so `images: ["house.jpg"]` works) |
 
 ## Tools
@@ -318,7 +318,7 @@ Condensed from Google's official Nano Banana prompting guide. Core rule:
 - **`search_types`** (`gemini_interact` only): `["web_search", "image_search"]` picks the grounding search types (setting it implies `google_search`). **`image_search`** (gemini-3.1-flash-image only) pulls web images via Google Image Search as *visual* references — useful for real-world subjects (a specific butterfly species, a landmark, a product). ⚠️ Two catches: Google ToS require **displaying the returned `grounding.search_suggestions` HTML chips** to the user, and image_search won't depict real people from web images.
 - **`video_url`** (a public YouTube URL, on `gemini_image_generate` / `gemini_interact`) generates an image from a video reference — **requires a Flash model** (e.g. `model: "gemini-3.1-flash-image"`). For a **local video file**, use **`video_path`** instead: the file is uploaded to the Gemini Files API (streamed from disk, 2 GB max), waited to `ACTIVE`, and referenced by its `files/…` uri. The result metadata echoes `video_file` (`{uri, name, expires}`, ~48h retention) — reuse that uri as `video_url` in later calls to skip re-uploading.
 - **`gemini_interact`** is the multi-turn path: it returns an `interaction_id`; thread it back via `previous_interaction_id` for conversational refinement. Output is **JPEG only**. (The Interactions API is GA as of 2026-07; it uses a different request shape than the `generate`/`edit`/`set` tools.)
-- `output_dir` per-call overrides `$GEMINI_OUTPUT_DIR` overrides cwd. `inline: true` returns bytes (with a metadata text block) instead of writing.
+- `output_dir` per-call overrides `$GEMINI_OUTPUT_DIR` overrides `~/Downloads/gemini-mcp`. `inline: true` returns bytes (with a metadata text block) instead of writing.
 - `count` and `scenes` are mutually exclusive in `gemini_image_set`; `reference_mode: "chain"` references the previous image instead of the master.
 - Aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `2:3`, `3:2`, … · Image sizes: `512` (0.5K, Flash only), `1K`, `2K`, `4K`. `4K` is the max native output — true 18×24 in @ 300 DPI (5400×7200) needs an external upscale step.
 - All generated images carry a **SynthID** watermark (Google).

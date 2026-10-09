@@ -197,7 +197,8 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           body: { inputs },
           target: resolved,
           payload: { inputs, display_name: args.display_name },
-          confirmToken: args.confirmToken,
+          args,
+        confirmToken: args.confirmToken,
         });
         if (gate) return gate;
         localUpload = { path: resolved, mimeType };
@@ -458,6 +459,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
         path: `/v1beta/${args.file_uri}`,
         target: args.file_uri,
         payload: { file_uri: args.file_uri },
+        args,
         confirmToken: args.confirmToken,
       });
       if (gate) return gate;
