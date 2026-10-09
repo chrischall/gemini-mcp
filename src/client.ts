@@ -46,6 +46,18 @@ export function resolveTimeoutMs(perCallMs?: number, imageSize?: string): number
 // upload", verified 2026-06-12). The resumable upload endpoint lives under
 // `/upload/v1beta`, NOT the normal `/v1beta` base.
 const UPLOAD_BASE_URL = 'https://generativelanguage.googleapis.com/upload/v1beta';
+
+/** True when `raw` is an https URL on googleapis.com (or a subdomain) — the
+ * only place a resumable-upload session URL may send the user's file. */
+function isGoogleUploadUrl(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  return u.protocol === 'https:' && (u.hostname === 'googleapis.com' || u.hostname.endsWith('.googleapis.com'));
+}
 // Documented Files API per-file cap (2 GB); enforced locally so a too-big video
 // fails fast instead of uploading gigabytes just to be rejected.
 const FILE_MAX_BYTES = 2 * 1024 ** 3;
@@ -742,6 +754,14 @@ export class GeminiClient {
     const uploadUrl = startRes.headers.get('x-goog-upload-url');
     if (!uploadUrl) {
       throw new McpToolError(`${SERVICE} upload start did not return an x-goog-upload-url header`, {
+        hint: 'The Files API resumable-upload contract may have changed — see docs/GEMINI-API.md.',
+      });
+    }
+    // The session URL is the destination of the user's file bytes, and it
+    // comes from a response header — so it must be a Google upload host over
+    // https before anything is posted to it (chrischall/fleet-audit#1011).
+    if (!isGoogleUploadUrl(uploadUrl)) {
+      throw new McpToolError(`${SERVICE} upload start returned a session URL outside googleapis.com; refusing to send the file`, {
         hint: 'The Files API resumable-upload contract may have changed — see docs/GEMINI-API.md.',
       });
     }
