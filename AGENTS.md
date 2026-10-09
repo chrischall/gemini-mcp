@@ -403,11 +403,14 @@ now keyed on the key AND the fingerprint. Composite rather than a stored
 comparison, so reusing a key for a second request cannot evict the first: both
 pairings coexist and a retry of either still replays free.
 
-**The registry is per SESSION, not per process** — it lives at
-`client.session.jobs` (`src/session.ts`). Hosted, one
-isolate serves many authenticated sessions, so a module-level registry let user
-B replay user A's result via a colliding `idempotency_key` ("1", "test") and
-attach to A's in-flight billable job via `fingerprintRequest`. See Quirks.
+**The registry lives on the session, never at module scope** — it is
+`client.session.jobs` (`src/session.ts`). Today that is one registry per
+process, and that is sound only because one registration is one user (stdio,
+or an mcp-host child per registration). The retired Cloudflare Worker served
+many users from one isolate, and there a module-level registry let user B
+replay user A's result via a colliding `idempotency_key` ("1", "test") and
+attach to A's in-flight billable job via `fingerprintRequest`. A host that
+multiplexes users onto one process must build a client per user. See Quirks.
 
 **Recovery: durability buys the record, and now the OUTPUT — never the
 execution.** A generation started with `background: true` (video/music only,
@@ -753,13 +756,14 @@ nobody asked to wait for.
   `tests/tools/hosted-reference-forms.test.ts` — keep new `fetchImpl` call
   sites receiver-free, and note the workers-pool suite CANNOT catch this
   (vitest wraps workerd's global fetch in plain JS, which hides the check).
-- **No module-level mutable state in `src/` — it leaks across tenants.**
-  one process can serve several sessions, so
-  a module-level `Map`/`let` is shared by every authenticated claude.ai session
-  in that isolate. The per-session `GeminiClient` isolates the API key and
-  nothing else. When the job registry and `lastInteractionId` lived at module
-  scope, a colliding `idempotency_key` handed user B user A's recorded result
-  verbatim (A's media refs, A's interaction id), an identical prompt attached B
+- **No module-level mutable state in `src/` — it would leak across users the
+  moment a process serves more than one.** A module-level `Map`/`let` is shared
+  by everything in the process, and the `GeminiClient` isolates the API key and
+  nothing else. That bit for real on the retired Cloudflare Worker, which served
+  many claude.ai users from one isolate: when the job registry and
+  `lastInteractionId` lived at module scope, a colliding `idempotency_key`
+  handed user B user A's recorded result verbatim (A's media refs, A's
+  interaction id), an identical prompt attached B
   to A's in-flight *billable* job (`fingerprintRequest` excludes the seed, the
   output path AND the key), and `continue_last: true` resumed A's interaction
   under B's key. All such memory now lives in `SessionState` (`src/session.ts`)
