@@ -17,8 +17,8 @@
  *
  * Two properties are load-bearing:
  *
- *  - **No expiry.** The retention cron sweeps `gen/`, `media/` and `up/` but
- *    deliberately never `lib/` (media-cleanup.ts) — a saved character outlives
+ *  - **No expiry.** The host's retention prune reclaims `gen/` and `up/` but
+ *    never `lib/` (see blob-store.ts) — a saved character outlives
  *    every signed URL and every upload. That is why saving COPIES the image
  *    bytes into `lib/` rather than storing an `r2_key` pointer: a pointer into
  *    `gen/` or `up/` would dangle after the next sweep.

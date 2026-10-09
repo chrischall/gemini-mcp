@@ -27,11 +27,9 @@ const VIDEO_RESOLUTIONS = ['360p', '720p', '1080p', '4k'] as const;
 const VIDEO_DELIVERY = ['inline', 'uri'] as const;
 
 // The most-recent video interaction id (for continue_last) lives on
-// `client.session`, NOT at module scope — one Cloudflare isolate serves many
-// authenticated connector sessions, so a module-level id would let one user's
-// continue_last resume another user's interaction under their own key. Video is
-// not registered on the Worker today, but the hazard is identical, so it is
-// scoped the same way. It stays separate from the image interact memory: a
+// `client.session`, NOT at module scope — on any host serving several users
+// from one process, a module-level id would let one user's continue_last
+// resume another user's interaction (see the invariant in src/session.ts). It stays separate from the image interact memory: a
 // "last video" and a "last image" are distinct chains. See src/session.ts.
 
 export function registerVideoTools(server: McpServer, client: GeminiClient): void {

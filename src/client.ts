@@ -13,12 +13,12 @@ import { fetchRemoteImage, readCapped, MAX_REDIRECTS, type CapSubject, type Fetc
 import { bytesToBase64 } from './bytes.js';
 import { explainOutsideUploadDir, uploadRoots } from './images.js';
 
-// NOTE: this module must stay SIDE-EFFECT-FREE at module scope — no I/O, no
-// top-level await, no `import.meta.url`. `src/worker.ts` imports it, so every
-// line here runs during Cloudflare isolate startup, where global-scope I/O is
-// forbidden and wrangler's bundle leaves `import.meta.url` undefined. The
-// stdio `.env` bootstrap that used to live here now lives in `src/dotenv.ts`,
-// imported only by `src/index.ts`. Guarded by tests/connector-boot.test.ts.
+// NOTE: this module stays SIDE-EFFECT-FREE at module scope — no I/O, no
+// top-level await, no `import.meta.url` — so importing it (tests, registrars)
+// never boots anything. That rule dates from the retired Cloudflare Worker
+// entry point, where global-scope I/O was forbidden; it is kept because it is
+// what makes the module cheap to import. The stdio `.env` bootstrap lives in
+// `src/dotenv.ts`, imported only by `src/index.ts`.
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'; // v1 lacks gemini-3-pro-image; confirmed via Task 5
 const SERVICE = 'Gemini';
@@ -446,10 +446,10 @@ export interface GeminiClientOptions {
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   /**
-   * Explicit API key, for runtimes that have no ambient env — notably the
-   * hosted connector, which builds one client PER AUTHENTICATED USER from the
-   * key that user supplied at OAuth time. Omitted (the stdio path) it falls
-   * back to `$GEMINI_API_KEY` exactly as before.
+   * Explicit API key, for a runtime with no ambient env. Production never
+   * passes it (the retired Worker connector did, building a client per user):
+   * the one entry point reads `$GEMINI_API_KEY`, which mcp-host sets per
+   * registration. Tests use it to build independent clients.
    */
   apiKey?: string;
   /**
@@ -497,10 +497,9 @@ export class GeminiClient {
 
   /**
    * This client's session memory — job registry, last-interaction id, written
-   * outputs. One client is one session: the hosted connector builds a client
-   * per authenticated user, so hanging the state here is what keeps it from
-   * leaking between tenants sharing an isolate (see src/session.ts). The stdio
-   * server is single-user, so its one singleton client is one session.
+   * outputs. One client is one session. Production builds one client per
+   * process and one process is one user, so this is process-wide — see the
+   * invariant (and what a multi-user host would need) in src/session.ts.
    */
   readonly session = new SessionState();
 

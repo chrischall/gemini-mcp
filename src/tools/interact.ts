@@ -13,10 +13,10 @@ import { attachCost } from '../pricing.js';
 import { confirmLocalInputs, confirmNote, confirmTokenParam } from './_confirm.js';
 
 // The last-interaction id and the written-outputs set used to live here, at
-// module scope. On the hosted connector that leaks across tenants — one
-// Cloudflare isolate serves many authenticated sessions, so `continue_last`
-// from user B would resume user A's interaction under B's key. Both now live
-// on `client.session` (src/session.ts), one per authenticated session.
+// module scope, which leaked across users on the retired multi-user Worker:
+// `continue_last` from user B resumed user A's interaction. Both now live on
+// `client.session` (src/session.ts) — one per client, and one client per
+// single-user process today (see the invariant there).
 
 /** Shared warning for the reference-image params. */
 const NEW_REFERENCES_ONLY =

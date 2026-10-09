@@ -24,9 +24,8 @@ import { formatMb } from './bytes.js';
  *  - **A hard byte cap enforced while streaming**, not from `Content-Length` —
  *    a hostile or merely wrong server can under-report or omit it.
  *
- * Module scope stays side-effect-free: `src/worker.ts` reaches this file
- * through the tool registrars, so anything executed here would run during
- * Cloudflare isolate startup.
+ * Module scope stays side-effect-free (the same rule as client.ts): the tool
+ * registrars import this file, and importing must never do work.
  */
 
 /** Hard ceiling on a fetched image. Above this the URL is rejected outright. */

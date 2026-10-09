@@ -764,7 +764,12 @@ nobody asked to wait for.
   output path AND the key), and `continue_last: true` resumed A's interaction
   under B's key. All such memory now lives in `SessionState` (`src/session.ts`)
   reached as `client.session`. Anything to remember across calls goes there —
-  never a module global. Guarded by `tests/session-isolation.test.ts`.
+  never a module global. Guarded by `tests/session-isolation.test.ts` — which
+  shows separate clients stay apart, NOT that production builds them: today
+  there is ONE client per process, and that is sound only because one
+  registration is one user (stdio, or an mcp-host child per registration). A
+  host that multiplexes users onto one process must also build a client per
+  user (see the invariant in `src/session.ts`).
 - **The API key resolves at REQUEST time, not in the constructor.**
   `requireKey()` reads `$GEMINI_API_KEY` per request (an explicitly-injected key
   — a hosted per-session key — wins). That keeps the config error
