@@ -198,7 +198,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           target: resolved,
           payload: { inputs, display_name: args.display_name },
           args,
-        confirmToken: args.confirmToken,
+          confirmToken: args.confirmToken,
         });
         if (gate) return gate;
         localUpload = { path: resolved, mimeType };
