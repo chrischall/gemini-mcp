@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server';
-import { minifiedResult } from '@chrischall/mcp-utils';
+import { minifiedResult, toolAnnotations } from '@chrischall/mcp-utils';
 import type { GeminiClient } from '../client.js';
 
 export function registerModelTools(server: McpServer, client: GeminiClient): void {
@@ -8,7 +8,7 @@ export function registerModelTools(server: McpServer, client: GeminiClient): voi
     {
       description:
         'List the Gemini image-generation models available to your API key (Nano Banana / Nano Banana Pro family), and the current default model.',
-      annotations: { readOnlyHint: true },
+      annotations: toolAnnotations({ readOnly: true, openWorld: true }),
     },
     async () => {
       const models = await client.listModels();
