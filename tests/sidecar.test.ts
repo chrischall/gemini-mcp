@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, utimesSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readSidecars, findInteractionImages, latestInteractionId } from '../src/sidecar.js';
@@ -68,5 +68,54 @@ describe('latestInteractionId', () => {
 
   it('returns undefined when the directory has no sidecars', async () => {
     expect(await latestInteractionId(dir)).toBeUndefined();
+  });
+});
+
+// chrischall/fleet-audit#473: the output dir defaults to cwd, which can be a
+// cloned repo. A planted sidecar must not be able to name arbitrary local files
+// for the chain re-anchor to read and upload without the confirm gate.
+describe('planted sidecars', () => {
+  let outside: string;
+  beforeEach(() => { outside = mkdtempSync(join(tmpdir(), 'gemini-sidecar-outside-')); });
+  afterEach(() => { rmSync(outside, { recursive: true, force: true }); });
+
+  it('ignores a .json that is not named after an output file (<file>.<ext>.json)', async () => {
+    writeFileSync(join(dir, 'x.json'), JSON.stringify({ interaction_id: 'v1_bogus', images: [] }));
+    expect(await readSidecars(dir)).toEqual([]);
+    expect(await latestInteractionId(dir)).toBeUndefined();
+  });
+
+  it('never lists a file outside the output dir', async () => {
+    const secret = join(outside, 'id_rsa');
+    writeFileSync(secret, 'PRIVATE KEY');
+    seed('real', 'id-real', 1_000);
+    writeFileSync(join(dir, 'x.png.json'), JSON.stringify({ interaction_id: 'v1_bogus', images: [secret] }));
+    expect(await findInteractionImages(dir, 'v1_bogus')).toEqual([]);
+  });
+
+  it('never lists a file in the output dir that has no sidecar of its own', async () => {
+    const stray = join(dir, 'notes.txt');
+    writeFileSync(stray, 'not an output');
+    writeFileSync(join(dir, 'x.png.json'), JSON.stringify({ interaction_id: 'v1_bogus', images: [stray] }));
+    expect(await findInteractionImages(dir, 'v1_bogus')).toEqual([]);
+  });
+
+  it('never lists a symlink, even one with a sidecar', async () => {
+    const secret = join(outside, 'id_rsa');
+    writeFileSync(secret, 'PRIVATE KEY');
+    const link = join(dir, 'x.png');
+    symlinkSync(secret, link);
+    writeFileSync(`${link}.json`, JSON.stringify({ interaction_id: 'v1_bogus', images: [link] }));
+    expect(await findInteractionImages(dir, 'v1_bogus')).toEqual([]);
+  });
+
+  it('still lists every image of a multi-image turn (each has its own sidecar)', async () => {
+    const a = join(dir, 'set-01.png');
+    const b = join(dir, 'set-02.png');
+    for (const img of [a, b]) {
+      writeFileSync(img, 'png');
+      writeFileSync(`${img}.json`, JSON.stringify({ interaction_id: 'id-set', images: [a, b] }));
+    }
+    expect(await findInteractionImages(dir, 'id-set')).toEqual([a, b]);
   });
 });
