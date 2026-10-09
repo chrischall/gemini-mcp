@@ -28,7 +28,7 @@ export function registerJobTools(server: McpServer, client: GeminiClient): void 
         'A killed video/music job started with `background: true` is recovered from its upstream interaction when it finished there.',
       // NOT read-only any more: recovering a killed job writes the media it
       // pulls back, exactly as the generation tool would have.
-      annotations: { readOnlyHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: z.object({
         job_id: z.string().min(1).describe('The job_id returned by a generation tool called with async: true'),
         output_dir: z.string().optional().describe('Where to write media recovered from a killed job (default: $GEMINI_OUTPUT_DIR or ~/Downloads/gemini-mcp)'),

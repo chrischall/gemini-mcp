@@ -19,7 +19,7 @@ export function registerSetTools(server: McpServer, client: GeminiClient): void 
         'Generate a consistent SET of images: a master image from master_prompt, then one image per scene that references the master so the subject/style stays consistent. Provide `scenes` (explicit per-image prompts) OR `count` (variations of the master). ' +
         'Scene generations run in parallel (reference_mode "master", the default). On the hosted connector: saved `characters` and a saved `style` can seed the whole set by name, multi-image results include a `bundle_url` zip of every image (one curl instead of N), and `max_wait_ms` returns a pollable job handle if the batch runs long. ' +
         confirmNote('Local file inputs are confirmed first'),
-      annotations: { readOnlyHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: z.object({
         master_prompt: z.string().min(1).describe('Prompt for the master/reference image'),
         scenes: z.array(z.string().min(1)).min(1).max(8).optional().describe('Per-image prompts (1-8); each references the master'),

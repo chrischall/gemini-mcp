@@ -38,7 +38,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         'cannot be refined by a follow-up call, so put the whole brief in the prompt. Runs long — give it a `max_wait_ms` ' +
         'budget (or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account. ' +
         confirmNote('Local file inputs are confirmed first'),
-      annotations: { readOnlyHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: z.object({
         prompt: z.string().min(1).describe('Description of the music: mood, genre, instruments, tempo, structure, or lyrics'),
         model: z.enum(MUSIC_MODELS).optional().describe(`Lyria model (default: ${DEFAULT_MUSIC_MODEL} — 30s, $0.04). lyria-3.5 and lyria-3-pro-preview run minutes-long at $0.08.`),
