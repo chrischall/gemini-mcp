@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.3.4](https://github.com/chrischall/gemini-mcp/compare/v2.3.3...v2.3.4) (2026-10-09)
+
+
+### Bug Fixes
+
+* annotate tools truthfully and sync manifests with the served tools ([#293](https://github.com/chrischall/gemini-mcp/issues/293)) ([f4d8b4e](https://github.com/chrischall/gemini-mcp/commit/f4d8b4e29f3aaeed74955f6ea8d7c87f18c5d20b))
+* declare the plugin MCP config under the mcpServers key Claude Code reads ([#296](https://github.com/chrischall/gemini-mcp/issues/296)) ([a1e37cd](https://github.com/chrischall/gemini-mcp/commit/a1e37cdd14e0057555265694330bdf5c6398550e))
+* **deps:** Bump source-map-js ([#292](https://github.com/chrischall/gemini-mcp/issues/292)) ([09948ca](https://github.com/chrischall/gemini-mcp/commit/09948ca65df81d38182be6aacb2ad44bed5b9be1))
+* **deps:** update @chrischall/mcp-utils to 3.0.0 ([#290](https://github.com/chrischall/gemini-mcp/issues/290)) ([3066080](https://github.com/chrischall/gemini-mcp/commit/30660807d5a682c0651e4f46e00fccad241a75a6))
+* resolve low-severity audit findings ([#285](https://github.com/chrischall/gemini-mcp/issues/285)) ([84250eb](https://github.com/chrischall/gemini-mcp/commit/84250eb83fe466bc8aeb65de8004a5c880285105))
+* **tools:** mark gemini_list_models as an open-world call ([#289](https://github.com/chrischall/gemini-mcp/issues/289)) ([124747a](https://github.com/chrischall/gemini-mcp/commit/124747a9a8119d2727d987a16de824bec0e376b0))
+
+
+### Documentation
+
+* describe per-session state against the one-user-per-process deployment ([#288](https://github.com/chrischall/gemini-mcp/issues/288)) ([58abdea](https://github.com/chrischall/gemini-mcp/commit/58abdeae64b53a5bcada822741fcf72431a99731)), closes [#286](https://github.com/chrischall/gemini-mcp/issues/286)
+* fix the upload confirm indentation and the API key label ([#295](https://github.com/chrischall/gemini-mcp/issues/295)) ([d3b65fe](https://github.com/chrischall/gemini-mcp/commit/d3b65fe005326bae3cb3f76fbf65f5c303caa9f5))
+
 ## [2.3.3](https://github.com/chrischall/gemini-mcp/compare/v2.3.2...v2.3.3) (2026-10-07)
 
 
