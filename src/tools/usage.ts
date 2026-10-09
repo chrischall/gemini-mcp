@@ -39,7 +39,7 @@ export function registerUsageTools(server: McpServer, client: GeminiClient): voi
         'Token usage for this session so far — what every generation has cost in tokens, added up. ' +
         'Call it before and after a workflow and subtract to get that workflow\'s cost; call it after a ' +
         'single generation for that call\'s. Reports tokens AND an estimated USD cost, priced per call against each call\'s own model and stamped with the date its rates were read (override with GEMINI_RATE_CARD). Note there is no account-balance endpoint to query — Google Cloud is post-paid and its billing data lags by hours — so this is the accurate way to attribute spend to a call.',
-      annotations: toolAnnotations({ readOnly: true }),
+      annotations: toolAnnotations({ readOnly: true, openWorld: false }),
       inputSchema: z.object({
         reset: z
           .boolean()
