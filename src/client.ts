@@ -13,12 +13,12 @@ import { fetchRemoteImage, readCapped, MAX_REDIRECTS, type CapSubject, type Fetc
 import { bytesToBase64 } from './bytes.js';
 import { explainOutsideUploadDir, uploadRoots } from './images.js';
 
-// NOTE: this module must stay SIDE-EFFECT-FREE at module scope — no I/O, no
-// top-level await, no `import.meta.url`. `src/worker.ts` imports it, so every
-// line here runs during Cloudflare isolate startup, where global-scope I/O is
-// forbidden and wrangler's bundle leaves `import.meta.url` undefined. The
-// stdio `.env` bootstrap that used to live here now lives in `src/dotenv.ts`,
-// imported only by `src/index.ts`. Guarded by tests/connector-boot.test.ts.
+// NOTE: this module stays SIDE-EFFECT-FREE at module scope — no I/O, no
+// top-level await, no `import.meta.url` — so importing it (tests, registrars)
+// never boots anything. That rule dates from the retired Cloudflare Worker
+// entry point, where global-scope I/O was forbidden; it is kept because it is
+// what makes the module cheap to import. The stdio `.env` bootstrap lives in
+// `src/dotenv.ts`, imported only by `src/index.ts`.
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'; // v1 lacks gemini-3-pro-image; confirmed via Task 5
 const SERVICE = 'Gemini';
@@ -46,6 +46,45 @@ export function resolveTimeoutMs(perCallMs?: number, imageSize?: string): number
 // upload", verified 2026-06-12). The resumable upload endpoint lives under
 // `/upload/v1beta`, NOT the normal `/v1beta` base.
 const UPLOAD_BASE_URL = 'https://generativelanguage.googleapis.com/upload/v1beta';
+
+/** True when `raw` is an https URL on googleapis.com (or a subdomain) — the
+ * only place a resumable-upload session URL may send the user's file. */
+function isGoogleUploadUrl(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  return u.protocol === 'https:' && (u.hostname === 'googleapis.com' || u.hostname.endsWith('.googleapis.com'));
+}
+
+/**
+ * Slowest sustained throughput a media transfer is allowed before it is
+ * treated as stalled. A transfer's deadline is the normal request budget plus
+ * the time its size takes at this rate, so a large file on a slow link still
+ * finishes while a connection that stops sending cannot hang the tool call
+ * forever (chrischall/fleet-audit#467) — the progress heartbeat around these
+ * calls actively stops the host from timing them out for us.
+ */
+const MIN_TRANSFER_BYTES_PER_SEC = 256 * 1024;
+
+/** Deadline for moving `bytes` up or down; see {@link MIN_TRANSFER_BYTES_PER_SEC}. */
+function transferTimeoutMs(bytes: number): number {
+  return resolveTimeoutMs() + Math.ceil((bytes / MIN_TRANSFER_BYTES_PER_SEC) * 1000);
+}
+
+/**
+ * An abort signal that fires after `ms`. A plain timer rather than
+ * `AbortSignal.timeout` so it can be cleared once the transfer is done (no
+ * stray timer keeping a process alive) and driven by fake timers in tests.
+ */
+function transferDeadline(ms: number): { signal: AbortSignal; clear(): void } {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(new DOMException(`timed out after ${ms}ms`, 'TimeoutError')), ms);
+  (timer as { unref?: () => void }).unref?.();
+  return { signal: ctrl.signal, clear: () => clearTimeout(timer) };
+}
 // Documented Files API per-file cap (2 GB); enforced locally so a too-big video
 // fails fast instead of uploading gigabytes just to be rejected.
 const FILE_MAX_BYTES = 2 * 1024 ** 3;
@@ -407,10 +446,10 @@ export interface GeminiClientOptions {
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   /**
-   * Explicit API key, for runtimes that have no ambient env — notably the
-   * hosted connector, which builds one client PER AUTHENTICATED USER from the
-   * key that user supplied at OAuth time. Omitted (the stdio path) it falls
-   * back to `$GEMINI_API_KEY` exactly as before.
+   * Explicit API key, for a runtime with no ambient env. Production never
+   * passes it (the retired Worker connector did, building a client per user):
+   * the one entry point reads `$GEMINI_API_KEY`, which mcp-host sets per
+   * registration. Tests use it to build independent clients.
    */
   apiKey?: string;
   /**
@@ -458,10 +497,9 @@ export class GeminiClient {
 
   /**
    * This client's session memory — job registry, last-interaction id, written
-   * outputs. One client is one session: the hosted connector builds a client
-   * per authenticated user, so hanging the state here is what keeps it from
-   * leaking between tenants sharing an isolate (see src/session.ts). The stdio
-   * server is single-user, so its one singleton client is one session.
+   * outputs. One client is one session. Production builds one client per
+   * process and one process is one user, so this is process-wide — see the
+   * invariant (and what a multi-user host would need) in src/session.ts.
    */
   readonly session = new SessionState();
 
@@ -628,8 +666,9 @@ export class GeminiClient {
    * These two upload calls are raw `fetchImpl` (not `createApiClient`): step 1
    * needs the response *header* and step 2 posts a binary body — neither fits
    * `fetchJson`. The poll DOES go through the shared client (timeout + retry).
-   * Uploads deliberately have no abort timeout: a multi-hundred-MB video can
-   * legitimately take longer than any fixed budget.
+   * The deadline scales with the file (see `transferTimeoutMs`): a
+   * multi-hundred-MB video can legitimately take longer than any fixed budget,
+   * but a stalled upload must still fail rather than hang.
    *
    * Returned files live ~48h (`expirationTime`); per-file cap is 2 GB
    * (enforced locally before any bytes are sent).
@@ -699,9 +738,11 @@ export class GeminiClient {
    * These two upload calls are raw `fetchImpl` (not `createApiClient`): step 1
    * needs the response *header* and step 2 posts a binary body — neither fits
    * `fetchJson`. The poll DOES go through the shared client (timeout + retry).
-   * Uploads carry no abort timeout by default: a multi-hundred-MB file can
-   * legitimately take longer than any fixed budget. A caller that is uploading
-   * OPPORTUNISTICALLY passes its own `signal` (see `uploadBytes`).
+   * By default the two round trips get a deadline sized to the file (see
+   * `transferTimeoutMs`) — a multi-hundred-MB file can legitimately take longer
+   * than any fixed budget, but a stalled one must fail rather than hang. A
+   * caller that is uploading OPPORTUNISTICALLY passes its own, shorter
+   * `signal` instead (see `uploadBytes`).
    */
   private async uploadToFilesApi(
     body: Blob,
@@ -714,6 +755,39 @@ export class GeminiClient {
     signal?: AbortSignal,
   ): Promise<UploadedFile> {
     const key = this.requireKey();
+    // A caller that uploads opportunistically brings its own (short) signal.
+    // Everyone else gets a deadline sized to the file, so a stalled upload
+    // fails instead of hanging the tool call (chrischall/fleet-audit#467).
+    // The deadline covers the two upload round trips ONLY and is cleared
+    // before the PROCESSING poll: the poll has its own attempt cap, and a
+    // processing failure (or a slow transcode) reached after the deadline must
+    // keep its own error rather than be relabelled a stalled upload.
+    const deadline = signal ? undefined : transferDeadline(transferTimeoutMs(contentLength));
+    let uploaded: { name: string; file: GeminiFile };
+    try {
+      uploaded = await this.sendToFilesApi(body, mimeType, displayName, contentLength, key, signal ?? deadline!.signal);
+    } catch (err) {
+      if (deadline?.signal.aborted) {
+        throw new McpToolError(`${SERVICE} Files API upload of ${displayName} timed out after ${transferTimeoutMs(contentLength)}ms`, {
+          hint: 'The upload stalled. Retry, or check the network between this server and generativelanguage.googleapis.com.',
+        });
+      }
+      throw err;
+    } finally {
+      deadline?.clear();
+    }
+    return this.awaitFileActive(uploaded.name, uploaded.file, mimeType);
+  }
+
+  /** {@link uploadToFilesApi}'s steps 1 and 2 (start + upload/finalize), under `signal`. */
+  private async sendToFilesApi(
+    body: Blob,
+    mimeType: string,
+    displayName: string,
+    contentLength: number,
+    key: string,
+    signal: AbortSignal,
+  ): Promise<{ name: string; file: GeminiFile }> {
     // Local alias so the calls below carry NO receiver: `this.fetchImpl(...)`
     // would hand native fetch this GeminiClient as `this`, which workerd
     // rejects with an Illegal invocation (see the constructor note).
@@ -732,7 +806,7 @@ export class GeminiClient {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ file: { display_name: displayName } }),
-      ...(signal ? { signal } : {}),
+      signal,
     });
     if (!startRes.ok) {
       throw new McpToolError(
@@ -742,6 +816,14 @@ export class GeminiClient {
     const uploadUrl = startRes.headers.get('x-goog-upload-url');
     if (!uploadUrl) {
       throw new McpToolError(`${SERVICE} upload start did not return an x-goog-upload-url header`, {
+        hint: 'The Files API resumable-upload contract may have changed — see docs/GEMINI-API.md.',
+      });
+    }
+    // The session URL is the destination of the user's file bytes, and it
+    // comes from a response header — so it must be a Google upload host over
+    // https before anything is posted to it (chrischall/fleet-audit#1011).
+    if (!isGoogleUploadUrl(uploadUrl)) {
+      throw new McpToolError(`${SERVICE} upload start returned a session URL outside googleapis.com; refusing to send the file`, {
         hint: 'The Files API resumable-upload contract may have changed — see docs/GEMINI-API.md.',
       });
     }
@@ -760,7 +842,7 @@ export class GeminiClient {
         'X-Goog-Upload-Command': 'upload, finalize',
       },
       body: body as BodyInit,
-      ...(signal ? { signal } : {}),
+      signal,
     } as RequestInit);
     if (!upRes.ok) {
       throw new McpToolError(
@@ -775,7 +857,11 @@ export class GeminiClient {
     if (!/^files\/[\w-]+$/.test(name)) {
       throw new McpToolError(`${SERVICE} upload returned an unexpected file name: ${name || '(none)'}`);
     }
+    return { name, file };
+  }
 
+  /** {@link uploadToFilesApi}'s step 3: wait out PROCESSING. Outside the upload deadline. */
+  private async awaitFileActive(name: string, file: GeminiFile, mimeType: string): Promise<UploadedFile> {
     // 3. poll PROCESSING → ACTIVE. Images are normally ACTIVE on arrival; it is
     // video that spends time here.
     for (let attempt = 0; file.state === 'PROCESSING'; attempt++) {
@@ -1349,37 +1435,54 @@ export class GeminiClient {
       // fetch-image.ts enforces, and stricter: there is exactly one host
       // generated media is ever served from.
       const url = assertMediaHost(current, requested);
-      const res = await doFetch(url.toString(), {
-        redirect: 'manual',
-        headers: { 'x-goog-api-key': key },
-      });
+      // One deadline per hop, covering the body as well as the headers: a
+      // server that answers and then stops sending would otherwise hang the
+      // tool call forever (chrischall/fleet-audit#467).
+      const budgetMs = transferTimeoutMs(MEDIA_DOWNLOAD_MAX_BYTES);
+      const deadline = transferDeadline(budgetMs);
+      try {
+        const res = await doFetch(url.toString(), {
+          redirect: 'manual',
+          headers: { 'x-goog-api-key': key },
+          signal: deadline.signal,
+        });
 
-      if (res.status >= 300 && res.status < 400) {
-        const location = res.headers?.get('location');
-        if (!location) {
-          throw new McpToolError(`${SERVICE} media download returned HTTP ${res.status} with no Location header for ${current}`);
+        if (res.status >= 300 && res.status < 400) {
+          const location = res.headers?.get('location');
+          if (!location) {
+            throw new McpToolError(`${SERVICE} media download returned HTTP ${res.status} with no Location header for ${current}`);
+          }
+          if (hop >= MAX_REDIRECTS) {
+            throw new McpToolError(`${SERVICE} media download for ${requested} exceeded ${MAX_REDIRECTS} redirects (last hop: ${location}).`);
+          }
+          current = new URL(location, url).toString();
+          continue;
         }
-        if (hop >= MAX_REDIRECTS) {
-          throw new McpToolError(`${SERVICE} media download for ${requested} exceeded ${MAX_REDIRECTS} redirects (last hop: ${location}).`);
+
+        if (!res.ok) {
+          throw new McpToolError(
+            `${SERVICE} media download failed (HTTP ${res.status}) for ${current}`,
+            { hint: 'Generated files live in the Files API for ~48h and the download requires the api key that created them.' },
+          );
         }
-        current = new URL(location, url).toString();
-        continue;
-      }
 
-      if (!res.ok) {
-        throw new McpToolError(
-          `${SERVICE} media download failed (HTTP ${res.status}) for ${current}`,
-          { hint: 'Generated files live in the Files API for ~48h and the download requires the api key that created them.' },
-        );
+        // Capped while streaming rather than buffered whole: a generated clip is
+        // small, but `arrayBuffer()` on a surprise is an unbounded allocation.
+        const bytes = await readCapped(res, MEDIA_DOWNLOAD_MAX_BYTES, current, requested, MEDIA_CAP_SUBJECT);
+        return {
+          base64: bytesToBase64(bytes),
+          mimeType: media.mimeType || res.headers?.get('content-type') || 'application/octet-stream',
+        };
+      } catch (err) {
+        if (deadline.signal.aborted && !(err instanceof McpToolError)) {
+          throw new McpToolError(`${SERVICE} media download timed out after ${budgetMs}ms for ${current}`, {
+            hint: 'The download stalled. Recover the result with gemini_get_result, or retry.',
+          });
+        }
+        throw err;
+      } finally {
+        deadline.clear();
       }
-
-      // Capped while streaming rather than buffered whole: a generated clip is
-      // small, but `arrayBuffer()` on a surprise is an unbounded allocation.
-      const bytes = await readCapped(res, MEDIA_DOWNLOAD_MAX_BYTES, current, requested, MEDIA_CAP_SUBJECT);
-      return {
-        base64: bytesToBase64(bytes),
-        mimeType: media.mimeType || res.headers?.get('content-type') || 'application/octet-stream',
-      };
     }
   }
 
@@ -1524,7 +1627,18 @@ export function hostedStorage(blob: BlobStore | undefined = blobStoreFromEnv()):
   // pinned in the store on first use — derived from the current key so the
   // data already there stays reachable — and never re-derived after that.
   // Lazy because the key is read at request time (deferred-config-error).
-  const tenant = pinnedTenant(blob.bucket, () => tenantIdFor(readEnvVar('GEMINI_API_KEY') ?? 'local'));
+  // With no key configured yet the tenant is provisional: used for that call
+  // but never pinned, or the permanent pin would lock the namespace to
+  // sha('local') and orphan the key's data (chrischall/fleet-audit#1009).
+  // Accepted boundary: the library and media sink memoise their tenant per
+  // process (`tenantResolver`), so a process that starts keyless and has its
+  // key set later WITHOUT a restart keeps using the provisional 'local'
+  // namespace until it restarts. Nothing is pinned, so the restart recovers;
+  // mcp-host sets env at spawn, so a key never arrives mid-process there.
+  const tenant = pinnedTenant(blob.bucket, async () => {
+    const key = readEnvVar('GEMINI_API_KEY');
+    return key ? tenantIdFor(key) : { tenant: await tenantIdFor('local'), pin: false as const };
+  });
   return {
     mediaSink: createR2Sink(blob.bucket, {
       // The SAME `links` object the minter gets below. Media GETs and upload

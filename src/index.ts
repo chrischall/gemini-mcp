@@ -15,13 +15,15 @@ import { client } from './client.js';
 await loadStdioDotenv();
 
 // The registrars take their GeminiClient as an argument (they import only the
-// *type*), so a non-stdio entry point can build one client per authenticated
-// user. This stdio entry point threads the env-driven module-level singleton
-// through runMcp's `deps`, which passes it as each registrar's second argument.
+// *type*), so a future multi-user entry point COULD build one client per user.
+// None does: this is the only entry point (mcp-host runs it as a per-registration
+// child), and it threads the env-driven module-level singleton through runMcp's
+// `deps` to every connection — sound because one registration is one user (see
+// src/session.ts).
 // That singleton defers its config error to the first request — so the server
 // boots and answers the host's install-time tools/list probe even without
 // GEMINI_API_KEY. It also owns this process's session state (job registry,
-// last-interaction memory); stdio is single-user, so one client is one session.
+// last-interaction memory); one process is one user, so one client is one session.
 //
 // The roster itself lives in registrars.ts: this file cannot be imported
 // without booting a server, and a list nothing can import is a list nothing

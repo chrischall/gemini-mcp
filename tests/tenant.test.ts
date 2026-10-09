@@ -107,6 +107,41 @@ describe('hosted tenant survives an API-key rotation', () => {
   });
 });
 
+// chrischall/fleet-audit#1009: the pin is permanent, so it must only ever be
+// committed from a real key. A hosted call that needs no Google request (list
+// characters, recent media, a job read) can run before GEMINI_API_KEY is set.
+describe('hosted tenant pin is never written without a real API key', () => {
+  it('a keyless first call does not pin, and the first keyed process pins to that key', async () => {
+    const gateway = createFakeGateway();
+
+    vi.stubEnv('GEMINI_API_KEY', undefined);
+    const keyless = hostedStorage(blobFor(gateway));
+    expect(await keyless.library!.listCharacters()).toEqual([]);
+    expect(gateway.objects.has(TENANT_PIN_KEY)).toBe(false);
+
+    vi.stubEnv('GEMINI_API_KEY', 'real-key');
+    const keyed = hostedStorage(blobFor(gateway));
+    await keyed.library!.listCharacters();
+    const pin = gateway.objects.get(TENANT_PIN_KEY);
+    expect(pin).toBeDefined();
+    expect(JSON.parse(new TextDecoder().decode(pin!.bytes)).tenant).toBe(await tenantIdFor('real-key'));
+  });
+
+  it('pinnedTenant returns a provisional tenant without pinning or caching it', async () => {
+    const gateway = createFakeGateway();
+    const blob = blobFor(gateway);
+    const derive = vi
+      .fn<() => string | { tenant: string; pin: false }>()
+      .mockReturnValueOnce({ tenant: 'ffffffffffff', pin: false })
+      .mockReturnValue('aaaaaaaaaaaa');
+    const tenant = pinnedTenant(blob.bucket, derive);
+    expect(await tenant()).toBe('ffffffffffff');
+    expect(gateway.objects.has(TENANT_PIN_KEY)).toBe(false);
+    expect(await tenant()).toBe('aaaaaaaaaaaa');
+    expect(gateway.objects.has(TENANT_PIN_KEY)).toBe(true);
+  });
+});
+
 describe('stores do not cache a failed tenant resolution', () => {
   const failingOnce = () => {
     const fn = vi.fn<() => Promise<string>>();

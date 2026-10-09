@@ -6,14 +6,13 @@ import { loadDotenvSafely } from '@chrischall/mcp-utils';
  * The stdio server's `.env` bootstrap. **Imported only by `src/index.ts`.**
  *
  * This used to run at module scope in `src/client.ts`, which put it in the
- * hosted connector's import graph (`src/worker.ts` → `./client.js`) and so ran
- * it during Worker isolate startup. Two things go wrong there:
+ * import graph of the (since retired) Cloudflare Worker connector and so ran
+ * it during Worker isolate startup. Two things went wrong there:
  *
  * 1. wrangler's bundle leaves `import.meta.url` undefined, so
  *    `fileURLToPath(import.meta.url)` threw and the isolate never booted —
  *    `The Workers runtime failed to start`. Not a test failure: a deploy
- *    failure, invisible to the workers-pool suite (see
- *    `tests/connector-boot.test.ts` for why).
+ *    failure, invisible to the workers-pool suite.
  * 2. Even had it resolved, it is async I/O at global scope, which Workers
  *    forbids — and there is no `.env` on a Worker regardless. Config arrives
  *    through bindings.

@@ -24,9 +24,8 @@ import { formatMb } from './bytes.js';
  *  - **A hard byte cap enforced while streaming**, not from `Content-Length` —
  *    a hostile or merely wrong server can under-report or omit it.
  *
- * Module scope stays side-effect-free: `src/worker.ts` reaches this file
- * through the tool registrars, so anything executed here would run during
- * Cloudflare isolate startup.
+ * Module scope stays side-effect-free (the same rule as client.ts): the tool
+ * registrars import this file, and importing must never do work.
  */
 
 /** Hard ceiling on a fetched image. Above this the URL is rejected outright. */
@@ -189,7 +188,10 @@ function assertPublicHttpsUrl(raw: string, requested: string): URL {
   // that this is a literal and not a name.
   const rawHost = url.hostname.toLowerCase();
   const isIpv6Literal = rawHost.startsWith('[') && rawHost.endsWith(']');
-  const host = isIpv6Literal ? rawHost.slice(1, -1) : rawHost;
+  // A name may carry a trailing dot (the fully-qualified spelling): WHATWG URL
+  // keeps it, and `localhost.` still resolves to loopback, so the suffix
+  // checks below must see the name without it (chrischall/fleet-audit#472).
+  const host = isIpv6Literal ? rawHost.slice(1, -1) : rawHost.replace(/\.+$/, '');
   const v4 = isIpv6Literal ? undefined : ipv4Octets(host);
   const v6 = isIpv6Literal ? ipv6Groups(host) : undefined;
   const blocked = isIpv6Literal
@@ -199,6 +201,10 @@ function assertPublicHttpsUrl(raw: string, requested: string): URL {
     : host === 'localhost' ||
       host.endsWith('.localhost') ||
       host.endsWith('.local') ||
+      // Private-network names: Fly's 6PN (`<app>.internal`, where the hosted
+      // build runs) and GCP's metadata server (`metadata.google.internal`).
+      host === 'internal' ||
+      host.endsWith('.internal') ||
       (v4 ? isPrivateIpv4(v4) : false);
   if (blocked) {
     throw new McpToolError(

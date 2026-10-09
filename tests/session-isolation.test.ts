@@ -10,11 +10,9 @@ import { registerVideoTools } from '../src/tools/video.js';
 import { GeminiClient } from '../src/client.js';
 
 /**
- * MULTI-TENANCY. The hosted connector runs every authenticated claude.ai
- * session in ONE Cloudflare isolate — a single Worker isolate is shared across
- * many Durable Object instances. So any state that lives at *module* scope is
- * shared by every user on that isolate, and the per-session GeminiClient (which
- * isolates the API key) does not save you.
+ * MULTI-TENANCY. The retired Cloudflare Worker connector ran every
+ * authenticated claude.ai session in ONE isolate, so any state at *module*
+ * scope was shared by every user on it.
  *
  * The job registry and the interact session memory used to be module-level
  * Maps. That meant user B calling any generation tool with a colliding
@@ -23,7 +21,10 @@ import { GeminiClient } from '../src/client.js';
  * `continue_last: true` from B resumed A's interaction, billed to B's key.
  *
  * These tests pin the fix: the registry and the last-interaction memory hang
- * off the client, and each session gets its own client.
+ * off the client, so separate clients never share them. NOTE what they do not
+ * cover: production builds ONE client per process today and relies on one
+ * registration being one user (src/session.ts). A host that multiplexes users
+ * onto one process must also build a client per user for this to protect them.
  */
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';

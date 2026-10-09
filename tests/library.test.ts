@@ -170,3 +170,36 @@ describe('style CRUD', () => {
     expect(await lib.getStyle('same-name')).toBeDefined();
   });
 });
+
+// chrischall/fleet-audit#468: listRecords stopped only on !truncated, so a
+// store reporting truncated with no cursor re-listed page one forever.
+describe('library listing is bounded', () => {
+  function pagingBucket(page: (n: number) => { truncated: boolean; cursor?: string }) {
+    const base = fakeBucket();
+    let calls = 0;
+    const bucket: LibraryBucket = {
+      ...base,
+      async list(opts) {
+        calls++;
+        if (calls > 100) throw new Error('listing did not terminate');
+        const listed = await base.list(opts);
+        return { ...listed, ...page(calls) };
+      },
+    };
+    return { bucket, base, calls: () => calls };
+  }
+
+  it('stops when the store says truncated but gives no cursor', async () => {
+    const { bucket, calls } = pagingBucket(() => ({ truncated: true }));
+    await createR2Library(bucket, { tenant: 'aaaaaaaaaaaa', now: () => NOW }).saveCharacter({ name: 'finn', description: 'd', image: PNG });
+    const names = (await createR2Library(bucket, { tenant: 'aaaaaaaaaaaa', now: () => NOW }).listCharacters()).map((c) => c.name);
+    expect(names).toEqual(['finn']);
+    expect(calls()).toBe(1);
+  });
+
+  it('caps the number of pages it will walk', async () => {
+    const { bucket, calls } = pagingBucket((n) => ({ truncated: true, cursor: `c${n}` }));
+    await createR2Library(bucket, { tenant: 'aaaaaaaaaaaa', now: () => NOW }).listStyles();
+    expect(calls()).toBeLessThanOrEqual(20);
+  });
+});

@@ -6,20 +6,25 @@ import { estimateCost } from './pricing.js';
  * Everything the server remembers *between tool calls on behalf of one user*.
  *
  * All of this used to be module-level (`jobs`/`byKey`/`runningByFingerprint` in
- * jobs.ts, `lastInteractionId`/`writtenOutputs` in tools/interact.ts). That is
- * correct for stdio, where a process serves exactly one user — and a
- * cross-tenant leak on the hosted connector, where ONE child process serves
- * every session of this registration at once (mcp-host runs the stdio server as
- * a supervised child). Module state there is shared by
- * every authenticated claude.ai session on that child: the per-session
- * `GeminiClient` isolated the API key but not the memory around it, so a
- * colliding `idempotency_key` replayed another user's result, an identical
- * prompt attached to another user's in-flight (billable) job, and
- * `continue_last: true` resumed another user's interaction under your key.
+ * jobs.ts, `lastInteractionId`/`writtenOutputs` in tools/interact.ts). That was
+ * a cross-tenant leak on the retired Cloudflare Worker connector, which served
+ * many users from one isolate: a colliding `idempotency_key` replayed another
+ * user's result, an identical prompt attached to another user's in-flight
+ * (billable) job, and `continue_last: true` resumed another user's interaction.
  *
- * So session memory hangs off the `GeminiClient` — the one object the connector
- * already builds per authenticated session and
- * threads into every registrar. Handlers reach it as `client.session`.
+ * So session memory hangs off the `GeminiClient` and is threaded into every
+ * registrar; handlers reach it as `client.session`.
+ *
+ * **The invariant production relies on today: one registration is one user.**
+ * Both entry points — stdio, and mcp-host, which runs this same stdio server as
+ * a supervised child per registration — build exactly ONE `GeminiClient` (the
+ * module-level `client` in client.ts, handed to every connection by `runMcp`
+ * in index.ts), so there is one process-wide `SessionState`, shared by every
+ * connection to that process. That is safe only because every one of those
+ * connections is the same user. If a host ever multiplexes several users onto
+ * one process, this is NOT enough on its own: it must also build a client per
+ * user (tests/session-isolation.test.ts shows that separate clients do not
+ * share state; nothing in production builds more than one today).
  *
  * The rule this encodes: **`src/` must hold no module-level mutable state.**
  * If you need to remember something across calls, put it here.
@@ -100,8 +105,9 @@ export class SessionState {
    * Accumulated in the CLIENT rather than in the tools, so a call that was
    * billed and then failed (a safety filter returning no image, say) still
    * counts — it cost money regardless of whether a tool could use the result.
-   * Per session, never module scope: one hosted process serves many tenants,
-   * and a shared total would report other people's spend as yours.
+   * On the session, never module scope: a module-level total would report
+   * other users' spend as yours on any host that served several users from one
+   * process (see the invariant above).
    */
   usageTotal: TokenUsage | undefined;
 

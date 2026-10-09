@@ -52,16 +52,27 @@ async function readPin(bucket: TenantPinBucket): Promise<string | undefined> {
  * tenant (so a transient blob hiccup does not fail the tool call) but leaves
  * the pin to be written next time.
  */
+/**
+ * What a pin derivation yields: a tenant to pin, or a PROVISIONAL one
+ * (`pin: false`) to use for this call only — neither written nor cached. The
+ * pin is permanent, so it may only be committed from a real API key; a hosted
+ * call that needs no Google request can run before the key is configured
+ * (chrischall/fleet-audit#1009).
+ */
+export type DerivedTenant = string | { tenant: string; pin: false };
+
 export function pinnedTenant(
   bucket: TenantPinBucket,
-  derive: () => Promise<string> | string,
+  derive: () => Promise<DerivedTenant> | DerivedTenant,
 ): () => Promise<string> {
   let cached: Promise<string> | undefined;
 
   async function resolve(): Promise<{ tenant: string; pinned: boolean }> {
     const pinned = await readPin(bucket);
     if (pinned) return { tenant: pinned, pinned: true };
-    const tenant = await derive();
+    const derived = await derive();
+    if (typeof derived !== 'string') return { tenant: derived.tenant, pinned: false };
+    const tenant = derived;
     try {
       await bucket.put(TENANT_PIN_KEY, JSON.stringify({ tenant }), {
         httpMetadata: { contentType: 'application/json' },

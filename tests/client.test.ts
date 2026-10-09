@@ -1115,6 +1115,38 @@ describe('uploadVideo', () => {
     await expect(c.uploadVideo(videoPath, 'video/mp4')).rejects.toThrow(/upload/i);
   });
 
+  // chrischall/fleet-audit#1011: the session URL comes from a response header,
+  // and step 2 posts the user's file to it. A forged/MITM'd start response must
+  // not be able to point that POST at a non-Google host.
+  it.each([
+    ['a foreign host', 'https://attacker.example/session?upload_id=1'],
+    ['a googleapis look-alike', 'https://googleapis.com.attacker.example/upload?upload_id=1'],
+    ['plain http', 'http://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=1'],
+    ['an unparseable value', 'not a url'],
+  ])('refuses to upload the file to %s returned as the session URL', async (_label, sessionUrl) => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const mock = uploadFetch([
+      { headers: { 'x-goog-upload-url': sessionUrl } },
+      { body: { file: fileObj('ACTIVE') } },
+    ]);
+    const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+    await expect(c.uploadVideo(videoPath, 'video/mp4')).rejects.toThrow(/upload/i);
+    // Only the start call went out — the file bytes were never posted.
+    expect(mock.calls).toHaveLength(1);
+  });
+
+  it('accepts a session URL on another googleapis.com host', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const mock = uploadFetch([
+      { headers: { 'x-goog-upload-url': 'https://upload.googleapis.com/upload/v1beta/files?upload_id=UID' } },
+      { body: { file: fileObj('ACTIVE') } },
+    ]);
+    const c = new GeminiClient({ fetchImpl: mock.fn, sleep: async () => {} });
+    const up = await c.uploadVideo(videoPath, 'video/mp4');
+    expect(up.uri).toBe(FILE_URI);
+    expect(mock.calls).toHaveLength(2);
+  });
+
   it('throws a redacted error on a non-2xx start response', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const mock = uploadFetch([{ status: 403, body: { error: { message: 'denied' } } }]);
@@ -1295,7 +1327,7 @@ describe('Files API upload variants', () => {
       if (String(url).includes('/upload/v1beta/files') && !String(url).includes('upload_id')) {
         return {
           ok: true, status: 200,
-          headers: { get: (h: string) => (h.toLowerCase() === 'x-goog-upload-url' ? 'https://up.example/session?upload_id=1' : null) },
+          headers: { get: (h: string) => (h.toLowerCase() === 'x-goog-upload-url' ? 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=1' : null) },
           json: async () => ({}), text: async () => '',
         };
       }
@@ -1334,12 +1366,17 @@ describe('Files API upload variants', () => {
     expect((cap.calls[1].init as RequestInit).signal).toBe(signal);
   });
 
-  it('sends no signal when the caller gives none, so a big upload is not cut short', async () => {
+  // Was "sends no signal": an unbounded upload hung forever on a stalled
+  // connection (chrischall/fleet-audit#467). The default is now a deadline
+  // sized to the file, so a big upload is still not cut short.
+  it('bounds both round trips with its own deadline when the caller gives none', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     const cap = uploadFetch();
     await new GeminiClient({ fetchImpl: cap.fn }).uploadBytes(new Uint8Array([1, 2, 3, 4]), 'image/png', 'pic.png');
-    expect(cap.calls[0].init).not.toHaveProperty('signal');
-    expect(cap.calls[1].init).not.toHaveProperty('signal');
+    const first = (cap.calls[0].init as RequestInit).signal;
+    expect(first).toBeInstanceOf(AbortSignal);
+    expect((cap.calls[1].init as RequestInit).signal).toBe(first);
+    expect(first!.aborted).toBe(false);
   });
 
   it('rejects a file over the Files API 2 GB cap before sending anything', async () => {
@@ -1370,7 +1407,7 @@ describe('uploadBytes memory behaviour', () => {
       if (!String(url).includes('upload_id')) {
         return {
           ok: true, status: 200,
-          headers: { get: (h: string) => (h.toLowerCase() === 'x-goog-upload-url' ? 'https://up.example/s?upload_id=1' : null) },
+          headers: { get: (h: string) => (h.toLowerCase() === 'x-goog-upload-url' ? 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=1' : null) },
           json: async () => ({}), text: async () => '',
         };
       }

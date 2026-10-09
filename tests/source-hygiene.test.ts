@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -26,6 +26,30 @@ function walk(dir: string): string[] {
 describe('source hygiene', () => {
   it('no src/ or tests/ file contains a literal NUL byte', () => {
     const offenders = [...walk('src'), ...walk('tests')].filter((path) => readFileSync(path).includes(0));
+    expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * chrischall/fleet-audit#471: src/ comments justified the session design by
+ * pointing at `src/worker.ts`, `tests/connector-boot.test.ts` and
+ * `media-cleanup.ts` long after all three were deleted with the Cloudflare
+ * Worker. A comment that cites a file is a claim that the file exists; a
+ * reader following it should find it.
+ */
+describe('src/ comments cite files that exist', () => {
+  it('every src/… or tests/… path named in src/ exists', () => {
+    const dangling: string[] = [];
+    for (const file of walk('src')) {
+      for (const [ref] of readFileSync(file, 'utf8').matchAll(/\b(?:src|tests)\/[\w./-]+\.ts\b/g)) {
+        if (!existsSync(ref)) dangling.push(`${file}: ${ref}`);
+      }
+    }
+    expect(dangling).toEqual([]);
+  });
+
+  it('no src/ comment cites the retired media-cleanup module', () => {
+    const offenders = walk('src').filter((f) => readFileSync(f, 'utf8').includes('media-cleanup'));
     expect(offenders).toEqual([]);
   });
 });

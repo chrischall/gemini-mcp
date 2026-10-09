@@ -33,10 +33,10 @@ import { annotateReusedUsage } from './usage.js';
  * key), silently billing B's generation to A.
  *
  * So a registry is now an INSTANCE, owned by one `SessionState`, owned by one
- * `GeminiClient` — and the connector builds one client per authenticated
- * session. Never reintroduce module-level mutable state here. The stdio server
- * is single-user, so its one singleton client is correctly its one session.
- * Covered by tests/session-isolation.test.ts.
+ * `GeminiClient`. Production builds exactly one client per process, and one
+ * process is one user (stdio, or an mcp-host child per registration) — see the
+ * invariant in src/session.ts. Never reintroduce module-level mutable state
+ * here. tests/session-isolation.test.ts pins that separate clients stay apart.
  */
 
 type JobStatus = 'running' | 'done' | 'failed';

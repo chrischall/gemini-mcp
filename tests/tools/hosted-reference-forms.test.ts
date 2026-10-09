@@ -29,7 +29,7 @@ const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPh
 const PNG_BYTES = Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0));
 const NOW = new Date('2026-08-01T12:00:00Z');
 const TENANT = 'aaaaaaaaaaaa';
-const SESSION_URL = 'https://upload.example/session?upload_id=1';
+const SESSION_URL = 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=1';
 const FILE_URI = 'https://generativelanguage.googleapis.com/v1beta/files/promoted1';
 
 function fakeBucket() {
@@ -86,13 +86,14 @@ function strictReceiverFetch() {
         candidates: [{ content: { parts: [{ inline_data: { mime_type: 'image/png', data: PNG_B64 } }] } }],
       });
     }
-    if (url.includes('/upload/v1beta/files')) {
-      return new Response(null, { status: 200, headers: { 'x-goog-upload-url': SESSION_URL } });
-    }
+    // Session URL first: it lives under the same /upload/v1beta/files path.
     if (url.startsWith(SESSION_URL)) {
       return Response.json({
         file: { name: 'files/promoted1', uri: FILE_URI, mimeType: 'image/png', state: 'ACTIVE' },
       });
+    }
+    if (url.includes('/upload/v1beta/files')) {
+      return new Response(null, { status: 200, headers: { 'x-goog-upload-url': SESSION_URL } });
     }
     if (url === 'https://images.example/ref.png') {
       return new Response(PNG_BYTES, { status: 200, headers: { 'content-type': 'image/png' } });

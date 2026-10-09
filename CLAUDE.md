@@ -571,9 +571,10 @@ reports too: the repeat paste is the one caller who needs that uri.
 It is an optimisation, so it may never cost the generation it was meant to make
 cheaper. The whole body — decoding included, since `decodeImageInput` does not
 validate a `data:` payload and a URL-safe one throws in `atob` — sits inside
-one try that falls back to inline, and the upload carries an
-`AbortSignal.timeout` because `uploadToFilesApi` is otherwise untimed and this
-puts two round trips in front of a call nobody asked to wait for.
+one try that falls back to inline, and the upload carries a
+short `AbortSignal.timeout` because `uploadToFilesApi`'s own default deadline is
+sized for multi-GB files, and this puts two round trips in front of a call
+nobody asked to wait for.
 
 ## Conventions
 
@@ -763,7 +764,12 @@ puts two round trips in front of a call nobody asked to wait for.
   output path AND the key), and `continue_last: true` resumed A's interaction
   under B's key. All such memory now lives in `SessionState` (`src/session.ts`)
   reached as `client.session`. Anything to remember across calls goes there —
-  never a module global. Guarded by `tests/session-isolation.test.ts`.
+  never a module global. Guarded by `tests/session-isolation.test.ts` — which
+  shows separate clients stay apart, NOT that production builds them: today
+  there is ONE client per process, and that is sound only because one
+  registration is one user (stdio, or an mcp-host child per registration). A
+  host that multiplexes users onto one process must also build a client per
+  user (see the invariant in `src/session.ts`).
 - **The API key resolves at REQUEST time, not in the constructor.**
   `requireKey()` reads `$GEMINI_API_KEY` per request (an explicitly-injected key
   — a hosted per-session key — wins). That keeps the config error

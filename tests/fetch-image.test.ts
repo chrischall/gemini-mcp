@@ -161,6 +161,15 @@ describe('fetchRemoteImage — SSRF guards', () => {
     'https://[fc00::1]/a.png',
     'https://[fd12:3456::1]/a.png',
     'https://printer.local/a.png',
+    // chrischall/fleet-audit#472: a trailing dot is kept by WHATWG URL and
+    // still resolves; '*.internal' is the Fly 6PN / GCP metadata namespace.
+    'https://localhost./a.png',
+    'https://foo.localhost./a.png',
+    'https://printer.local./a.png',
+    'https://my-app.internal/a.png',
+    'https://my-app.internal./a.png',
+    'https://metadata.google.internal/computeMetadata/v1/',
+    'https://internal/a.png',
   ])('refuses the private/loopback/link-local host in %s', async (url) => {
     await expect(fetchRemoteImage(url, { fetchImpl: never })).rejects.toThrow(/private, loopback or link-local/);
   });
