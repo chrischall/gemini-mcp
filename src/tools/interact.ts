@@ -104,7 +104,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         recoveryDescription +
         'Output is JPEG. ' +
         confirmNote('Local file inputs are confirmed first'),
-      annotations: { readOnlyHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: z.object({
         input: z.string().min(1).describe('Text prompt or editing instruction'),
         previous_interaction_id: z

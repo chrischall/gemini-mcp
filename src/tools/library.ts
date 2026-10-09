@@ -83,7 +83,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
         'description. Saved characters have NO expiry — unlike uploads (~retention window) and Files API references (~48h) ' +
         '— so a name saved once keeps working in every later session. Re-saving a name replaces it. ' +
         USE_CHARACTERS_HINT,
-      annotations: { readOnlyHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: z.object({
         name: NAME_FIELD,
         description: z
@@ -178,7 +178,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
         'Save a named style preset to this account\'s persistent reference library: a reusable prompt fragment (and ' +
         'optionally a reference image) that a single word then applies to any generation. No expiry; re-saving a name replaces it. ' +
         USE_STYLE_HINT,
-      annotations: { readOnlyHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: z.object({
         name: NAME_FIELD,
         prompt_fragment: z

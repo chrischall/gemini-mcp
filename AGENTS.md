@@ -56,10 +56,12 @@ GEMINI_RATE_CARD=<json>     # Optional. Override/extend the shipped USD-per-1M-t
 Loaded via `loadDotenvSafely` from `.env` next to `dist/` (failure swallowed —
 mcpb bundles omit `dotenv`; the host provides env). `readEnvVar` (from
 `@chrischall/mcp-utils`) treats blank, `"undefined"`, `"null"`, and unsubstituted
-`${FOO}` placeholders as unset. All but `GEMINI_HEARTBEAT_MS`, `GEMINI_DEBUG` and
-`GEMINI_CHAIN_RETRY_MS` map to `manifest.json`'s `user_config` (`gemini_api_key`,
-`gemini_image_model`, `gemini_input_dir`, `gemini_upload_dir`, `gemini_output_dir`,
-`gemini_timeout_ms`).
+`${FOO}` placeholders as unset. Every one maps to an optional `manifest.json`
+`user_config` entry (`gemini_<lowercased suffix>`, e.g. `gemini_api_key`,
+`gemini_heartbeat_ms`) and an optional `server.json` environment variable —
+`tests/env-manifest.test.ts` holds both install paths to the vars `src/` reads.
+Optional includes `GEMINI_API_KEY`: the server boots without it and resolves it
+per request, so `gemini_healthcheck` can say it is missing.
 
 ## Architecture
 

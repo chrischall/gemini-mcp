@@ -19,7 +19,7 @@
         {
           "name": "GEMINI_API_KEY",
           "description": "Your Google Gemini API key (aistudio.google.com/apikey)",
-          "isRequired": true,
+          "isRequired": false,
           "format": "string",
           "isSecret": true
         },
@@ -54,6 +54,41 @@
         {
           "name": "GEMINI_REFERENCE_DIR",
           "description": "Restrict local reference images (images / image paths sent to Gemini) to these directories (path.delimiter-separated), plus GEMINI_OUTPUT_DIR. Unset: GEMINI_UPLOAD_DIR applies; if that is unset too, unrestricted locally, and $MCP_DATA_DIR/uploads when MCP_DATA_DIR is set (hosted)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "GEMINI_TIMEOUT_MS",
+          "description": "Upstream request timeout in ms (default: 60000, or 120000 for image_size: \"4K\"); each generation tool also takes a per-call timeout_ms",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "GEMINI_HEARTBEAT_MS",
+          "description": "Progress-notification cadence in ms while a generation runs (default: 10000; 0 disables) — keeps MCP hosts that reset their timeout on progress from timing out long generations",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "GEMINI_CHAIN_RETRY_MS",
+          "description": "How long to wait out interactions-store lag when a chained call 404s (default: 120000; 0 disables retrying)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "GEMINI_DEBUG",
+          "description": "When set, emit heartbeat diagnostics to stderr. Off by default.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "GEMINI_RATE_CARD",
+          "description": "Override/extend the shipped USD-per-1M-token rates used by gemini_token_usage's cost estimate, e.g. {\"gemini-3-pro-image\":{\"input\":2,\"text_output\":12,\"image_output\":120}}. Malformed JSON is ignored (a bad card must not fail generations).",
           "isRequired": false,
           "format": "string",
           "isSecret": false

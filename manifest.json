@@ -41,7 +41,11 @@
         "GEMINI_INPUT_DIR": "${user_config.gemini_input_dir}",
         "GEMINI_UPLOAD_DIR": "${user_config.gemini_upload_dir}",
         "GEMINI_REFERENCE_DIR": "${user_config.gemini_reference_dir}",
-        "GEMINI_TIMEOUT_MS": "${user_config.gemini_timeout_ms}"
+        "GEMINI_TIMEOUT_MS": "${user_config.gemini_timeout_ms}",
+        "GEMINI_HEARTBEAT_MS": "${user_config.gemini_heartbeat_ms}",
+        "GEMINI_CHAIN_RETRY_MS": "${user_config.gemini_chain_retry_ms}",
+        "GEMINI_DEBUG": "${user_config.gemini_debug}",
+        "GEMINI_RATE_CARD": "${user_config.gemini_rate_card}"
       }
     }
   },
@@ -50,7 +54,7 @@
       "type": "string",
       "title": "Gemini API Key",
       "description": "Your Google Gemini API key (aistudio.google.com/apikey)",
-      "required": true,
+      "required": false,
       "sensitive": true
     },
     "gemini_image_model": {
@@ -92,6 +96,34 @@
       "type": "string",
       "title": "Request Timeout (ms)",
       "description": "Upstream request timeout in ms (default: 60000, or 120000 for 4K output)",
+      "required": false,
+      "sensitive": false
+    },
+    "gemini_heartbeat_ms": {
+      "type": "string",
+      "title": "Heartbeat Interval (ms)",
+      "description": "Progress-notification cadence in ms while a generation runs (default: 10000; 0 disables) — keeps MCP hosts that reset their timeout on progress from timing out long generations",
+      "required": false,
+      "sensitive": false
+    },
+    "gemini_chain_retry_ms": {
+      "type": "string",
+      "title": "Chain Retry Window (ms)",
+      "description": "How long to wait out interactions-store lag when a chained call 404s (default: 120000; 0 disables retrying)",
+      "required": false,
+      "sensitive": false
+    },
+    "gemini_debug": {
+      "type": "string",
+      "title": "Debug Diagnostics",
+      "description": "When set, emit heartbeat diagnostics to stderr. Off by default.",
+      "required": false,
+      "sensitive": false
+    },
+    "gemini_rate_card": {
+      "type": "string",
+      "title": "Rate Card Override (JSON)",
+      "description": "Override/extend the shipped USD-per-1M-token rates used by gemini_token_usage's cost estimate, e.g. {\"gemini-3-pro-image\":{\"input\":2,\"text_output\":12,\"image_output\":120}}. Malformed JSON is ignored (a bad card must not fail generations).",
       "required": false,
       "sensitive": false
     }

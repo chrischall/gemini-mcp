@@ -102,7 +102,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           ? ' ' + confirmNote('A local `path` is confirmed first')
           : ' To upload a local file without base64: mint a signed PUT URL with gemini_get_upload_url, PUT the bytes to it, ' +
             'then pass the returned r2_key here.'),
-      annotations: { readOnlyHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
       inputSchema: z.object({
         url: z
           .string()
