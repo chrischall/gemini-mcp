@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { delimiter, join, resolve, isAbsolute } from 'node:path';
 import {
   assertPathWithinRoots,
@@ -422,6 +423,14 @@ export function baseName(name: string): string {
   return safe || 'image';
 }
 
+/** The `~/Downloads/<name>` segment mcp-utils' `resolveOutputDir` defaults to. */
+const OUTPUT_DIR_NAME = 'gemini-mcp';
+
+/** Where output goes when neither a per-call dir nor GEMINI_OUTPUT_DIR is set. */
+function defaultOutputDir(): string {
+  return join(homedir(), 'Downloads', OUTPUT_DIR_NAME);
+}
+
 /**
  * The output directory to LOOK IN (sidecar lookups: `continue_last`'s disk
  * fallback, the chain-404 re-anchor) — the same resolution and the same
@@ -433,17 +442,19 @@ export function lookupOutputDir(perCall: string | undefined): string {
   const trimmed = perCall?.trim() || undefined;
   const configured = readEnvVar('GEMINI_OUTPUT_DIR');
   const raw = trimmed ?? configured;
-  if (!raw) return process.cwd();
+  if (!raw) return defaultOutputDir();
   const dir = expandPath(raw);
   if (trimmed && configured) assertPathWithinRoots(dir, [configured]);
   return dir;
 }
 
 /**
- * per-call → $GEMINI_OUTPUT_DIR → cwd (mcp-utils `resolveOutputDir`: `~` and
- * relative paths expanded, the directory created; a per-call dir confined to
- * GEMINI_OUTPUT_DIR when that is set). A blank per-call value
- * counts as unset, so it falls through to the env var rather than to cwd.
+ * per-call → $GEMINI_OUTPUT_DIR → ~/Downloads/gemini-mcp (mcp-utils
+ * `resolveOutputDir`: `~` and relative paths expanded, the directory created;
+ * a per-call dir confined to GEMINI_OUTPUT_DIR when that is set). Never the
+ * cwd — that is `/` under Claude Desktop and the user's repo under Claude
+ * Code. A blank per-call value counts as unset, so it falls through to the
+ * env var rather than to the default.
  */
 export function resolveOutputDir(perCall: string | undefined): string {
   // output_dir is model-chosen: once the operator sets GEMINI_OUTPUT_DIR, a
@@ -451,6 +462,7 @@ export function resolveOutputDir(perCall: string | undefined): string {
   // keeps the old, unconfined behaviour (the fleet pattern, as in splitwise-mcp).
   const configured = readEnvVar('GEMINI_OUTPUT_DIR');
   return resolveSharedOutputDir(perCall?.trim() || undefined, 'GEMINI_OUTPUT_DIR', {
+    name: OUTPUT_DIR_NAME,
     ...(configured ? { allowedRoots: [configured] } : {}),
   });
 }

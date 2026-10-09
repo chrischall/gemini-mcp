@@ -146,7 +146,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         output_dir: z
           .string()
           .optional()
-          .describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or cwd)'),
+          .describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or ~/Downloads/gemini-mcp)'),
         inline: z
           .boolean()
           .optional()

@@ -38,7 +38,7 @@ wrapper over the fleet-shared `createApiClient` (configured with a non-Bearer
 ```
 GEMINI_API_KEY=<key>        # Required. Create at https://aistudio.google.com/apikey
 GEMINI_IMAGE_MODEL=<id>     # Optional. Default model override (bare id, e.g. gemini-3.1-flash-image)
-GEMINI_OUTPUT_DIR=<dir>     # Optional. Where generated images are written (default: cwd); when set, confines per-call output_dir
+GEMINI_OUTPUT_DIR=<dir>     # Optional. Where generated images are written (default: ~/Downloads/gemini-mcp); when set, confines per-call output_dir
 GEMINI_INPUT_DIR=<dir>      # Optional. Base dir searched for relative input image paths
 GEMINI_UPLOAD_DIR=<dirs>    # Optional. Confine local-file Files-API uploads (upload_file `path`, `video_path`)
                             #   to these dirs (path.delimiter-separated, `~` ok). Unset = unconfined.
@@ -326,7 +326,7 @@ runs out, because the generation continues (and bills) upstream regardless.
 (default) or inline base64. `emit()` (in `tools/shared.ts`) decides: with
 `inline: true` it returns `{ type: 'image', data, mimeType }` content blocks;
 otherwise it `writeImage()`s each to `resolveOutputDir(output_dir)` (per-call
-`output_dir` → `$GEMINI_OUTPUT_DIR` → cwd), de-duplicating with mcp-utils `writeUniqueFile`
+`output_dir` → `$GEMINI_OUTPUT_DIR` → `~/Downloads/gemini-mcp`), de-duplicating with mcp-utils `writeUniqueFile`
 (`name.png`, `name-2.png`, …), and returns the absolute paths plus a metadata
 object (`model`, `seed`, a `hint` steering iterative refinement to
 `gemini_interact`, optional `text`, `grounding`, `interaction_id`,

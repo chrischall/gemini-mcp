@@ -173,10 +173,19 @@ describe('baseName', () => {
 });
 
 describe('resolveOutputDir', () => {
-  it('prefers per-call, falls back to cwd when env unset', () => {
+  it('prefers per-call, falls back to ~/Downloads/gemini-mcp (never cwd) when env unset', () => {
     delete process.env.GEMINI_OUTPUT_DIR;
     expect(resolveOutputDir('/tmp/x')).toBe('/tmp/x');
-    expect(resolveOutputDir(undefined)).toBe(process.cwd());
+    const home = process.env.HOME;
+    process.env.HOME = dir;
+    try {
+      const d = join(dir, 'Downloads', 'gemini-mcp');
+      expect(resolveOutputDir(undefined)).toBe(d);
+      expect(existsSync(d)).toBe(true);
+      expect(resolveOutputDir(undefined)).not.toBe(process.cwd());
+    } finally {
+      process.env.HOME = home;
+    }
   });
   it('falls back to $GEMINI_OUTPUT_DIR for a blank per-call value', () => {
     process.env.GEMINI_OUTPUT_DIR = dir;
@@ -334,7 +343,15 @@ describe('lookupOutputDir (read-only)', () => {
     expect(lookupOutputDir(d)).toBe(d);
     expect(existsSync(d)).toBe(false);
     expect(lookupOutputDir('~')).toBe(homedir());
-    expect(lookupOutputDir(undefined)).toBe(process.cwd());
+    const home = process.env.HOME;
+    process.env.HOME = dir;
+    try {
+      const fallback = join(dir, 'Downloads', 'gemini-mcp');
+      expect(lookupOutputDir(undefined)).toBe(fallback);
+      expect(existsSync(fallback)).toBe(false);
+    } finally {
+      process.env.HOME = home;
+    }
   });
   it('falls back to $GEMINI_OUTPUT_DIR and confines a per-call dir to it once set', () => {
     const elsewhere = mkdtempSync(join(tmpdir(), 'gemini-else-'));

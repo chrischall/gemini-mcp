@@ -57,7 +57,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         images_base64: imagesBase64Schema(),
         from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS clipboard as a reference'),
         filename: z.string().optional().describe('Base filename for the output video (extension stripped; default: slugified prompt)'),
-        output_dir: z.string().optional().describe('Directory to write the video to (default: $GEMINI_OUTPUT_DIR or cwd)'),
+        output_dir: z.string().optional().describe('Directory to write the video to (default: $GEMINI_OUTPUT_DIR or ~/Downloads/gemini-mcp)'),
         model: z
           .string()
           .regex(/^[\w.-]+$/, 'must be a bare model id (letters, digits, ".", "_", "-")')

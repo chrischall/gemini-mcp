@@ -31,7 +31,7 @@ export function registerJobTools(server: McpServer, client: GeminiClient): void 
       annotations: { readOnlyHint: false, openWorldHint: true },
       inputSchema: z.object({
         job_id: z.string().min(1).describe('The job_id returned by a generation tool called with async: true'),
-        output_dir: z.string().optional().describe('Where to write media recovered from a killed job (default: $GEMINI_OUTPUT_DIR or cwd)'),
+        output_dir: z.string().optional().describe('Where to write media recovered from a killed job (default: $GEMINI_OUTPUT_DIR or ~/Downloads/gemini-mcp)'),
       }),
     },
     async (args) => {

@@ -159,6 +159,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
         path: `characters/${args.name}`,
         target: args.name,
         payload: { name: args.name },
+        args,
         confirmToken: args.confirmToken,
       });
       if (gate) return gate;
@@ -245,6 +246,7 @@ export function registerLibraryTools(server: McpServer, client: GeminiClient): v
         path: `styles/${args.name}`,
         target: args.name,
         payload: { name: args.name },
+        args,
         confirmToken: args.confirmToken,
       });
       if (gate) return gate;

@@ -33,6 +33,12 @@ export interface ConfirmWriteOptions {
   target: string;
   /** EXACTLY what the write will send; hashed into the token. */
   payload: unknown;
+  /**
+   * The tool's validated arguments (minus confirmToken; `{}` for none). Bound
+   * into both the elicitation acceptance and the token, so neither can
+   * authorise a call with different arguments.
+   */
+  args: Record<string, unknown>;
   confirmToken: string | undefined;
 }
 
@@ -54,9 +60,18 @@ export async function confirmWrite(ctx: ServerContext, o: ConfirmWriteOptions): 
     message: o.message,
     details: preview,
     tool: o.tool,
+    // One API key per process (a hosted deployment runs one child per
+    // account), so there is no in-process principal to bind.
+    account: undefined,
+    args: withoutConfirmToken(o.args),
     confirmToken: o.confirmToken,
     subject: () => ({ target: o.target, payload: o.payload, preview }),
   }));
+}
+
+function withoutConfirmToken(args: Record<string, unknown>): Record<string, unknown> {
+  const { confirmToken: _omit, ...rest } = args;
+  return rest;
 }
 
 export interface ConfirmLocalInputsOptions {
@@ -100,6 +115,7 @@ export async function confirmLocalInputs(ctx: ServerContext, o: ConfirmLocalInpu
     body: { inputs },
     target: '',
     payload: { request: o.request, inputs },
+    args: o.request,
     confirmToken: o.confirmToken,
   });
 }
