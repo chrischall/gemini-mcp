@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.5](https://github.com/chrischall/gemini-mcp/compare/v2.3.4...v2.3.5) (2026-10-10)
+
+
+### Documentation
+
+* make AGENTS.md a symlink to CLAUDE.md ([#297](https://github.com/chrischall/gemini-mcp/issues/297)) ([f8234e6](https://github.com/chrischall/gemini-mcp/commit/f8234e69aaee4e7f2472fb6a87e5838ea2409d12))
+
 ## [2.3.4](https://github.com/chrischall/gemini-mcp/compare/v2.3.3...v2.3.4) (2026-10-09)
 
 
