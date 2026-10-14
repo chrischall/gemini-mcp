@@ -134,7 +134,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         image_size: z
           .enum(IMAGE_SIZES)
           .optional()
-          .describe('Output resolution (512 = 0.5K, Flash-only)'),
+          .describe('Output resolution (512 = 0.5K, gemini-3.1-flash-image only)'),
         thinking_level: z
           .enum(['minimal', 'high'])
           .optional()

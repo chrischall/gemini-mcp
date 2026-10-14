@@ -69,7 +69,7 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 | Variable | Required | Description |
 |---|---|---|
 | `GEMINI_API_KEY` | Yes | Your Google Gemini API key |
-| `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-3.1-flash-image`) |
+| `GEMINI_IMAGE_MODEL` | No | Override the default image model (default: `gemini-nano-banana-2.1`) |
 | `GEMINI_OUTPUT_DIR` | No | Default directory for saved images (default: ~/Downloads/gemini-mcp) |
 | `GEMINI_INPUT_DIR` | No | Directory to resolve bare input-image filenames against (e.g. point at Cowork's `uploads/` folder so `images: ["house.jpg"]` works) |
 
@@ -84,7 +84,8 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 
 | Model | When to use | Reference-image caps (of 14 max) |
 |-------|-------------|----------------------------------|
-| `gemini-3.1-flash-image` (Nano Banana 2) | The versatile generalist workhorse for all tasks — balances speed with state-of-the-art 4K generation, world knowledge, and reliable text rendering; excels at multi-reference-image processing and consistency. Only model with video input + image_search grounding | 10 objects + 4 characters + 3 style refs |
+| `gemini-nano-banana-2.1` (Nano Banana 2.1, **default**) | The versatile generalist workhorse for all tasks — an update to Nano Banana 2 with better visual quality, prompt adherence, character consistency and text rendering; 1K/2K/4K, $0.0336 per 1K image | up to 10 objects + 4 characters |
+| `gemini-3.1-flash-image` (Nano Banana 2, **deprecated** 2026-10-06, no shutdown date yet) | The previous generalist workhorse — balances speed with state-of-the-art 4K generation, world knowledge, and reliable text rendering; excels at multi-reference-image processing and consistency. Only model with video input + image_search grounding | 10 objects + 4 characters + 3 style refs |
 | `gemini-3-pro-image` (Nano Banana Pro) | The premium choice for the most complex visual tasks — highest world knowledge, advanced localization, accurate brand consistency, precision creative control | 6 objects + 5 characters |
 | `gemini-3.1-flash-lite-image` (Nano Banana 2 Lite) | The fastest/cheapest for simple tasks — 1K output only, no Google Search grounding | 14 objects (no character consistency) |
 

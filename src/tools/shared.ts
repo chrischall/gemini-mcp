@@ -18,7 +18,10 @@ const DEFAULT_SINK = createDiskSink();
 
 /** Supported output aspect ratios (Gemini image API). */
 export const ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9', '1:4', '4:1', '1:8', '8:1'] as const;
-/** Supported output resolutions. `512` is Flash-only (0.5K); `1K`/`2K`/`4K` work on all image models. */
+/**
+ * Supported output resolutions. `512` (0.5K) is gemini-3.1-flash-image only — Nano Banana 2.1, the
+ * default, documents 1K/2K/4K — while `1K`/`2K`/`4K` work on all image models.
+ */
 export const IMAGE_SIZES = ['512', '1K', '2K', '4K'] as const;
 
 /**
@@ -94,7 +97,7 @@ export const orientationSchema = z
  * so the guidance can't drift between them.
  */
 export const MODEL_CHOICE_GUIDE =
-  'gemini-3.1-flash-image (Nano Banana 2, the default) is the generalist: fast, 4K, reliable text, strong ' +
+  'gemini-nano-banana-2.1 (Nano Banana 2.1, the default) is the generalist: fast, 4K, reliable text, strong ' +
   'multi-reference consistency. gemini-3-pro-image (Pro) is for the hardest work — best world knowledge, brand ' +
   'precision. gemini-3.1-flash-lite-image (Lite) is cheapest: 1K only, no search grounding.';
 
@@ -368,7 +371,7 @@ export const sharedImageSchema = {
     .optional()
     .describe('Exact output aspect ratio. For a plain landscape/portrait/square request, `orientation` is the shorthand; this wins if both are given.'),
   orientation: orientationSchema,
-  image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution (512 = 0.5K, Flash-only)'),
+  image_size: z.enum(IMAGE_SIZES).optional().describe('Output resolution (512 = 0.5K, gemini-3.1-flash-image only)'),
   output_dir: z.string().optional().describe('Directory to write images to (default: $GEMINI_OUTPUT_DIR or ~/Downloads/gemini-mcp)'),
   inline: z.boolean().optional().describe('Return the image as an inline image block you can SEE, instead of a path (stdio) or link (hosted). The default costs nothing to carry and hands back a reference you can reuse; use this when you need to check the result yourself. On the hosted connector gemini_view_media does the same for an image you already have'),
   seed: z.number().int().optional().describe('Seed for reproducible generation; random if omitted'),

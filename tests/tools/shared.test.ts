@@ -33,7 +33,7 @@ describe('sharedImageSchema model', () => {
     // repeated on five tools and is a standing token cost, so it gets reworded
     // as it is tightened. What it must never lose is the ability to choose.
     const desc = sharedImageSchema.model.description ?? '';
-    expect(desc).toContain('gemini-3.1-flash-image');
+    expect(desc).toContain('gemini-nano-banana-2.1');
     expect(desc).toContain('gemini-3-pro-image');
     expect(desc).toContain('gemini-3.1-flash-lite-image');
     expect(desc).toMatch(/default/i);   // which one you get if you say nothing

@@ -1,10 +1,13 @@
 /**
- * The generalist workhorse (Nano Banana 2) — overridable per-call and via
- * GEMINI_IMAGE_MODEL. The premium gemini-3-pro-image is a deliberate opt-in:
- * it costs more and needs a funded account, so callers reach for it via the
- * `model` param when the task warrants it (see MODEL_CHOICE_GUIDE).
+ * The generalist workhorse (Nano Banana 2.1) — overridable per-call and via
+ * GEMINI_IMAGE_MODEL. Replaced gemini-3.1-flash-image (Nano Banana 2), which
+ * Google deprecated 2026-10-06 with no shutdown date yet; 2.1 is also half the
+ * per-image price ($0.0336 vs $0.067 at 1K). The premium gemini-3-pro-image
+ * is a deliberate opt-in: it costs more and needs a funded account, so callers
+ * reach for it via the `model` param when the task warrants it (see
+ * MODEL_CHOICE_GUIDE).
  */
-export const DEFAULT_IMAGE_MODEL = 'gemini-3.1-flash-image';
+export const DEFAULT_IMAGE_MODEL = 'gemini-nano-banana-2.1';
 
 /**
  * Default video model (omni, Interactions API) — overridable per-call.
@@ -46,10 +49,12 @@ export function resolveModel(perCall: string | undefined, envOverride: string | 
  * Keep only Gemini image-generation models (the Nano Banana family) and strip
  * the `models/` prefix. Excludes `imagen-*` — those contain the substring
  * "image" but use a different `:predict` API this server doesn't implement.
+ * `nano-banana` is matched too: `gemini-nano-banana-2.1`, the default, has no
+ * "image" in its id and would otherwise be invisible to gemini_list_models.
  */
 export function filterImageModels(raw: RawModel[]): GeminiModel[] {
   return raw
-    .filter((m) => /image/i.test(m.name ?? '') && !/imagen/i.test(m.name ?? ''))
+    .filter((m) => /image|nano-banana/i.test(m.name ?? '') && !/imagen/i.test(m.name ?? ''))
     .map((m) => ({
       id: (m.name ?? '').replace(/^models\//, ''),
       displayName: m.displayName ?? '',

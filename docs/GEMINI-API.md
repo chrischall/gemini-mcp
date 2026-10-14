@@ -18,9 +18,15 @@ in this file or the fixtures (a models list and a redacted 1×1 image).
 |---|---|
 | `gemini-3-pro-image` | Nano Banana Pro. Paid tier only. Returns JPEG. Deliberate opt-in — NOT the default (see `src/models.ts`). |
 | `gemini-3-pro-image-preview` | preview alias of the above |
-| `gemini-3.1-flash-image` | fast. **The server's default** (`DEFAULT_IMAGE_MODEL`). |
-| `gemini-2.5-flash-image` | fast/cheap. ⚠️ Shutdown 2026-10-02 per the deprecations page (replacement: `gemini-3.1-flash-image-preview`). |
+| `gemini-nano-banana-2.1` | Nano Banana 2.1 (GA 2026-10-06). **The server's default** (`DEFAULT_IMAGE_MODEL`). No `image` in the id — `filterImageModels` matches `nano-banana` too. Docs list 1K/2K/4K only (no `512`). ⚠️ Not yet verified live through this server. |
+| `gemini-3.1-flash-image` | Nano Banana 2. ⚠️ Deprecated 2026-10-06, no shutdown date; replacement `gemini-nano-banana-2.1`. Was the default until then. |
+| `gemini-2.5-flash-image` | fast/cheap. ⚠️ Shutdown 2027-03-15 per the deprecations page (read 2026-10-14; replacement: `gemini-3.1-flash-lite-image`). |
 | `nano-banana-pro-preview` | alias of gemini-3-pro-image |
+
+**Model currency check (2026-10-14, docs only — changelog/deprecations/pricing pages, NO live call).**
+`gemini-3.1-flash-image` was deprecated 2026-10-06 (no shutdown date) in favour of
+`gemini-nano-banana-2.1`, now the default. Omni and Lyria defaults unchanged;
+`lyria-3-pro-preview` lists `lyria-3.5` as its replacement (no shutdown date).
 
 **Model currency check (2026-09-09, `GET /v1beta/models` against a funded key,
 cross-read with the changelog/deprecations pages).** ⚠️ **`gemini-omni-flash-preview`

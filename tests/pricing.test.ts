@@ -28,6 +28,11 @@ describe('estimateCost reconciles with the published per-image prices', () => {
     expect(estimateCost('gemini-3.1-flash-image', oneImage(1120))?.usd).toBeCloseTo(0.0672, 6);
   });
 
+  it('gemini-nano-banana-2.1 1K → $0.0336, and 2K → $0.0504', () => {
+    expect(estimateCost('gemini-nano-banana-2.1', oneImage(1120))?.usd).toBeCloseTo(0.0336, 6);
+    expect(estimateCost('gemini-nano-banana-2.1', oneImage(1680))?.usd).toBeCloseTo(0.0504, 6);
+  });
+
   it('gemini-3-pro-image 1K → $0.134, and 4K → $0.24', () => {
     expect(estimateCost('gemini-3-pro-image', oneImage(1120))?.usd).toBeCloseTo(0.1344, 6);
     expect(estimateCost('gemini-3-pro-image', oneImage(2000))?.usd).toBeCloseTo(0.24, 6);

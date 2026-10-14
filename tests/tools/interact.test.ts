@@ -53,7 +53,7 @@ describe('gemini_interact description', () => {
       properties?: Record<string, { description?: string }>;
     };
     const desc = schema.properties?.model?.description ?? '';
-    expect(desc).toContain('gemini-3.1-flash-image');
+    expect(desc).toContain('gemini-nano-banana-2.1');
     expect(desc).toContain('gemini-3-pro-image');
     await h.close();
   });
