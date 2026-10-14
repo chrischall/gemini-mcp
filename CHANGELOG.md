@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.4.0](https://github.com/chrischall/gemini-mcp/compare/v2.3.4...v2.4.0) (2026-10-14)
+
+
+### Features
+
+* **models:** default image model to gemini-nano-banana-2.1 ([#301](https://github.com/chrischall/gemini-mcp/issues/301)) ([c30f214](https://github.com/chrischall/gemini-mcp/commit/c30f214eeef7132ce463d98fc2bb609c27651445))
+
+
+### Bug Fixes
+
+* **deps:** Bump the production-dependencies group with 2 updates ([#300](https://github.com/chrischall/gemini-mcp/issues/300)) ([dce8c3a](https://github.com/chrischall/gemini-mcp/commit/dce8c3a7263f221565523371064f02e69856ecbd))
+
+
+### Documentation
+
+* make AGENTS.md a symlink to CLAUDE.md ([#297](https://github.com/chrischall/gemini-mcp/issues/297)) ([f8234e6](https://github.com/chrischall/gemini-mcp/commit/f8234e69aaee4e7f2472fb6a87e5838ea2409d12))
+
 ## [2.3.4](https://github.com/chrischall/gemini-mcp/compare/v2.3.3...v2.3.4) (2026-10-09)
 
 
