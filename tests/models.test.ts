@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_IMAGE_MODEL, resolveModel, filterImageModels } from '../src/models.js';
 
 describe('DEFAULT_IMAGE_MODEL', () => {
-  it('defaults to the generalist workhorse (Nano Banana 2), not the premium Pro model', () => {
-    expect(DEFAULT_IMAGE_MODEL).toBe('gemini-3.1-flash-image');
+  it('defaults to the generalist workhorse (Nano Banana 2.1), not the premium Pro model', () => {
+    // gemini-3.1-flash-image (Nano Banana 2) was deprecated 2026-10-06 in
+    // favour of gemini-nano-banana-2.1.
+    expect(DEFAULT_IMAGE_MODEL).toBe('gemini-nano-banana-2.1');
   });
 });
 
@@ -28,6 +30,16 @@ describe('filterImageModels', () => {
     const out = filterImageModels(raw);
     expect(out.map((m) => m.id)).toEqual(['gemini-3-pro-image', 'gemini-3.1-flash-image']);
     expect(out[0]).toEqual({ id: 'gemini-3-pro-image', displayName: 'Pro Image', description: 'pro' });
+  });
+
+  it('keeps nano-banana ids, which carry no "image" substring', () => {
+    // gemini-nano-banana-2.1 is the DEFAULT model: a filter that keys on
+    // "image" alone would hide it from gemini_list_models.
+    const raw = [
+      { name: 'models/gemini-nano-banana-2.1', displayName: 'Nano Banana 2.1', description: 'nb' },
+      { name: 'models/gemini-3.8-flash', displayName: 'Flash', description: 'text' },
+    ];
+    expect(filterImageModels(raw).map((m) => m.id)).toEqual(['gemini-nano-banana-2.1']);
   });
 
   it('excludes imagen-* models (substring "image" but a different :predict API)', () => {

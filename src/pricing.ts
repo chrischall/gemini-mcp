@@ -80,6 +80,10 @@ export interface ModelRates {
 export const RATE_CARD: Readonly<Record<string, ModelRates>> = Object.freeze({
   'gemini-3-pro-image': { input: 2.0, text_output: 12.0, image_output: 120.0 },
   'gemini-3.1-flash-image': { input: 0.5, text_output: 3.0, image_output: 60.0 },
+  // Nano Banana 2.1 (GA 2026-10-06; rates read 2026-10-14, after PRICED_AT):
+  // a pricier input and text rate than 2 but half the image rate, so a 1K
+  // image is $0.0336 rather than $0.067.
+  'gemini-nano-banana-2.1': { input: 1.5, text_output: 7.5, image_output: 30.0 },
   'gemini-3.1-flash-lite-image': { input: 0.25, text_output: 1.5, image_output: 30.0 },
   // Google publishes 2.5-flash-image's output as $0.039 PER IMAGE at 1290
   // tokens, not as a per-1M rate. 0.039 / 1290 * 1e6 = 30.23 — a back-derived

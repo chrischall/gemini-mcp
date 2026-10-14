@@ -60,7 +60,7 @@
     "gemini_image_model": {
       "type": "string",
       "title": "Gemini Image Model",
-      "description": "Override the default image model (default: gemini-3.1-flash-image)",
+      "description": "Override the default image model (default: gemini-nano-banana-2.1)",
       "required": false,
       "sensitive": false
     },

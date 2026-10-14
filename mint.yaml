@@ -13,7 +13,7 @@ env:
   - name: GEMINI_IMAGE_MODEL
     required: false
     help: >-
-      Override the default image model (default: gemini-3.1-flash-image)
+      Override the default image model (default: gemini-nano-banana-2.1)
   - name: GEMINI_OUTPUT_DIR
     required: false
     help: >-

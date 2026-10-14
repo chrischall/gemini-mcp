@@ -38,7 +38,7 @@ wrapper over the fleet-shared `createApiClient` (configured with a non-Bearer
 ```
 GEMINI_API_KEY=<key>        # Optional to boot; every Gemini API call needs it unless the hosted connector
                             #   supplies a per-session key. Create at https://aistudio.google.com/apikey
-GEMINI_IMAGE_MODEL=<id>     # Optional. Default model override (bare id, e.g. gemini-3.1-flash-image)
+GEMINI_IMAGE_MODEL=<id>     # Optional. Default model override (bare id, e.g. gemini-nano-banana-2.1)
 GEMINI_OUTPUT_DIR=<dir>     # Optional. Where generated images are written (default: ~/Downloads/gemini-mcp); when set, confines per-call output_dir
 GEMINI_INPUT_DIR=<dir>      # Optional. Base dir searched for relative input image paths
 GEMINI_UPLOAD_DIR=<dirs>    # Optional. Confine local-file Files-API uploads (upload_file `path`, `video_path`)
