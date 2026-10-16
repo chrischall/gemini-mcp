@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.1](https://github.com/chrischall/gemini-mcp/compare/v2.4.0...v2.4.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **images:** pin images_url fetches to public addresses; correct hosted docs and mint.yaml ([#302](https://github.com/chrischall/gemini-mcp/issues/302)) ([8a52891](https://github.com/chrischall/gemini-mcp/commit/8a528910abb933275edc52f9f49f0059bb679b88))
+
 ## [2.4.0](https://github.com/chrischall/gemini-mcp/compare/v2.3.4...v2.4.0) (2026-10-14)
 
 
