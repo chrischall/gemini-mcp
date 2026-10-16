@@ -1,13 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  resolveSigningKey,
-  loadSigningKey,
   signMediaKey,
   verifyMediaSignature,
   buildMediaUrl,
-  SIGNING_SECRET_KV_KEY,
   MEDIA_URL_TTL_MS,
 } from '../src/media-url.js';
+import { hmacKey } from './fixtures/hmac-key.js';
 
 /**
  * The `/media` route is the only part of the connector that is NOT behind
@@ -16,15 +14,6 @@ import {
  * to solve. So the signature has to carry the whole weight, and these tests are
  * about that: a link works for the one object it names, and nothing else does.
  */
-
-function memoryStore(initial: Record<string, string> = {}) {
-  const data = new Map(Object.entries(initial));
-  return {
-    data,
-    get: vi.fn(async (k: string) => data.get(k) ?? null),
-    put: vi.fn(async (k: string, v: string) => { data.set(k, v); }),
-  };
-}
 
 function memoryBucket(objects: Record<string, { body: string; contentType?: string; etag?: string }> = {}) {
   return {
@@ -44,78 +33,8 @@ function memoryBucket(objects: Record<string, { body: string; contentType?: stri
 
 const KEY = 'gen/2026-07-29/abc123-a-cat.png';
 
-describe('signing key resolution', () => {
-  it('uses MEDIA_URL_SECRET when the operator sets one, touching no storage', async () => {
-    const store = memoryStore();
-    await resolveSigningKey('a-configured-secret', store);
-    expect(store.get).not.toHaveBeenCalled();
-    expect(store.put).not.toHaveBeenCalled();
-  });
-
-  it('generates and persists a secret when unset — the zero-config path', async () => {
-    const store = memoryStore();
-    await resolveSigningKey(undefined, store);
-
-    expect(store.put).toHaveBeenCalledTimes(1);
-    expect(store.data.get(SIGNING_SECRET_KV_KEY)).toMatch(/^[\w-]{40,}$/);
-  });
-
-  it('reuses the persisted secret on later calls, so old links keep working', async () => {
-    const store = memoryStore();
-    const first = await resolveSigningKey(undefined, store);
-    const sig = await signMediaKey(first, KEY, 1);
-
-    const second = await resolveSigningKey(undefined, store);
-    expect(store.put).toHaveBeenCalledTimes(1); // not regenerated
-    await expect(verifyMediaSignature(second, KEY, '1', sig, 0)).resolves.toEqual({ ok: true });
-  });
-
-  it('treats a blank secret as unset rather than signing with empty string', async () => {
-    const store = memoryStore();
-    await resolveSigningKey('   ', store);
-    expect(store.put).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('only the SIGNING side may create a secret', () => {
-  /**
-   * KV is eventually consistent: a `put` on one isolate is not immediately
-   * visible to another, and a read can miss for a while. If verification also
-   * created-on-miss, that miss would mint a NEW secret and overwrite the one
-   * every outstanding link was signed with — turning a transient read miss
-   * into permanent 403s for media that was signed correctly. A self-inflicted
-   * denial of service, and irreversible.
-   */
-  it('loadSigningKey never writes, and returns undefined when nothing is stored', async () => {
-    const store = memoryStore();
-    await expect(loadSigningKey(undefined, store)).resolves.toBeUndefined();
-    expect(store.put).not.toHaveBeenCalled();
-  });
-
-  it('a verify against a stale/empty KV read does NOT clobber the signing secret', async () => {
-    const store = memoryStore();
-    const signing = await resolveSigningKey(undefined, store);
-    const secret = store.data.get(SIGNING_SECRET_KV_KEY);
-    const exp = Date.now() + 60_000;
-    const sig = await signMediaKey(signing, KEY, exp);
-
-    // Simulate the eventually-consistent miss the verify path can hit. Its own
-    // `put` spy, so the assertion below is about the VERIFY call and not about
-    // the signing call above that legitimately wrote the secret.
-    const stalePut = vi.fn(async (k: string, v: string) => { store.data.set(k, v); });
-    await loadSigningKey(undefined, { get: vi.fn(async () => null), put: stalePut });
-
-    expect(stalePut).not.toHaveBeenCalled();
-    expect(store.data.get(SIGNING_SECRET_KV_KEY)).toBe(secret);
-    // The link signed before the miss still verifies afterwards.
-    const after = await loadSigningKey(undefined, store);
-    await expect(verifyMediaSignature(after!, KEY, String(exp), sig, Date.now())).resolves.toEqual({ ok: true });
-  });
-
-});
-
 describe('signature verification', () => {
-  const key = () => resolveSigningKey('test-secret', memoryStore());
+  const key = () => hmacKey('test-secret');
   const future = Date.now() + 60_000;
 
   it('accepts a signature it just minted', async () => {
@@ -160,8 +79,8 @@ describe('signature verification', () => {
   });
 
   it('rejects a signature from a different secret', async () => {
-    const mine = await resolveSigningKey('secret-a', memoryStore());
-    const theirs = await resolveSigningKey('secret-b', memoryStore());
+    const mine = await hmacKey('secret-a');
+    const theirs = await hmacKey('secret-b');
     const sig = await signMediaKey(theirs, KEY, future);
     expect(await verifyMediaSignature(mine, KEY, String(future), sig, Date.now())).toEqual({ ok: false, reason: 'invalid' });
   });

@@ -1,5 +1,5 @@
 import type { CallToolResult, InputRequiredResult, ServerContext } from '@modelcontextprotocol/server';
-import { confirmationFromEnv, confirmTokenParam, requireConfirmationWithFallback } from '@chrischall/mcp-utils';
+import { confirmTokenParam, confirmWrite } from '@chrischall/mcp-utils';
 import { previewImageInput, previewVideoInput, type LocalInputPreview } from '../images.js';
 
 export { confirmTokenParam };
@@ -16,63 +16,16 @@ export function confirmNote(lead = 'Asks the user to confirm first'): string {
     'and a confirmToken, and only a repeat call with that token proceeds (see MCP_CONFIRM_MODE).';
 }
 
-export interface ConfirmWriteOptions {
-  /** The tool name the token is bound to. */
-  tool: string;
-  /** `<service>.<verb>` identifier for the operation. */
-  action: string;
-  /** Prompt shown above the preview. */
-  message: string;
-  /** Human-readable description of what the call does. */
-  description: string;
-  method: string;
-  path: string;
-  /** What will be sent, shown to the user as `willSend`. */
-  body?: unknown;
-  /** The primary id acted on, or '' if none. */
-  target: string;
-  /** EXACTLY what the write will send; hashed into the token. */
-  payload: unknown;
-  /**
-   * The tool's validated arguments (minus confirmToken; `{}` for none). Bound
-   * into both the elicitation acceptance and the token, so neither can
-   * authorise a call with different arguments.
-   */
-  args: Record<string, unknown>;
-  confirmToken: string | undefined;
-}
-
 /**
- * Confirm a mutating call before it runs: an elicitation prompt where the
- * client supports one, otherwise the preview-plus-token fallback governed by
- * MCP_CONFIRM_MODE. The preview is the same method/path/willSend shape the old
- * dry-run returned.
+ * The gate itself is the fleet's shared `confirmWrite` from
+ * `@chrischall/mcp-utils` (fleet-audit#1376 — this file used to carry its own
+ * adapter over `requireConfirmationWithFallback` + `confirmationFromEnv`). It
+ * binds the request, the payload, the displayed preview and the validated
+ * args into both the token and the elicitation acceptance. One API key per
+ * process (a hosted deployment runs one child per account), so every call
+ * passes `account: undefined`.
  */
-export async function confirmWrite(ctx: ServerContext, o: ConfirmWriteOptions): Promise<ConfirmGate> {
-  const preview: Record<string, unknown> = {
-    action: o.description,
-    method: o.method,
-    path: o.path,
-    ...(o.body !== undefined ? { willSend: o.body } : {}),
-  };
-  return requireConfirmationWithFallback(ctx, confirmationFromEnv({
-    action: o.action,
-    message: o.message,
-    details: preview,
-    tool: o.tool,
-    // One API key per process (a hosted deployment runs one child per
-    // account), so there is no in-process principal to bind.
-    account: undefined,
-    args: withoutConfirmToken(o.args),
-    confirmToken: o.confirmToken,
-    subject: () => ({ target: o.target, payload: o.payload, preview }),
-  }));
-}
-
-function withoutConfirmToken(args: Record<string, unknown>): Record<string, unknown> {
-  const { confirmToken: _omit, ...rest } = args;
-  return rest;
-}
+export { confirmWrite };
 
 export interface ConfirmLocalInputsOptions {
   tool: string;
@@ -109,12 +62,12 @@ export async function confirmLocalInputs(ctx: ServerContext, o: ConfirmLocalInpu
     tool: o.tool,
     action: o.action,
     message: 'Review and confirm sending these local files to Google:',
-    description: o.description,
-    method: 'POST',
-    path: o.endpoint,
-    body: { inputs },
+    summary: o.description,
+    account: undefined,
     target: '',
+    request: { method: 'POST', path: o.endpoint },
     payload: { request: o.request, inputs },
+    willSend: { inputs },
     args: o.request,
     confirmToken: o.confirmToken,
   });

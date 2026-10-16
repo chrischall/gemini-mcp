@@ -96,7 +96,7 @@ Note: Image generation requires a billing-enabled Google Cloud project.
 | `gemini_image_edit(prompt, images_url?, images_file_uris?, images?, images_base64?, google_search?, seed?, filename?, model?, aspect_ratio?, image_size?, thinking_level?, output_dir?, inline?)` | Edit or compose input image(s) with a text instruction. Requires ≥1 input from any of the four reference forms |
 | `gemini_image_set(master_prompt, scenes? \| count?, reference_mode?, master_images_url?, master_images_file_uris?, master_images?, master_images_base64?, google_search?, seed?, basename?, model?, thinking_level?, ...)` | Master image (optionally seeded from a reference photo) plus N consistent images referencing it. `master_images_url` / `master_images_file_uris` are resolved **once** and passed to the master *and* every scene |
 
-### Reference images — four ways in, one that costs context
+### Reference images — several ways in, one that costs context
 
 These apply to **every** tool that takes a reference image: the four image tools, plus
 `gemini_video_generate` (reference stills) and `gemini_music_generate`.
@@ -105,7 +105,9 @@ These apply to **every** tool that takes a reference image: the four image tools
 |---|---|---|
 | `images_url` (`master_images_url`) | the **server** downloads the https URL | none |
 | `images_file_uris` (`master_images_file_uris`) | a `files/<id>` reference from `gemini_upload_file` | none |
+| `images_r2_keys` (`master_images_r2_keys`) | the server reads its **own store** — an `r2_key` from `gemini_get_upload_url` or a generation result (hosted deployments only) | none |
 | `images` | read off local disk (stdio builds only) | none |
+| `characters` / `style` | saved library entries, attached by name (hosted deployments only) | none |
 | `images_base64` | **through the tool-call JSON** | **~14k tokens per JPEG** |
 
 **Reach for `images_base64` last.** It costs ~14k tokens per modest photo, and a truncated file
@@ -130,16 +132,31 @@ not an error.
 | `gemini_list_files(page_size?)` | List current uploads with MIME types and expiry |
 | `gemini_delete_file(file_uri, confirmToken?)` | Delete an upload before its ~48h expiry (confirmed first — see Notes) |
 
-On the **hosted hosted deployment** there is also `POST /upload`, behind the same OAuth token as
-`/mcp` — the zero-base64 path for an agent with a shell:
+### Hosted deployment only
+
+A hosted deployment has no filesystem, so these tools stand in for it. There is no `POST /upload`
+endpoint (it went with the retired Worker connector): an agent with a shell uploads through a
+signed URL instead.
+
+| Tool | Description |
+|------|-------------|
+| `gemini_get_upload_url(filename, content_type)` | Mint a ~10-minute signed **PUT** URL. `curl -X PUT -H "Content-Type: <type>" --data-binary @file "<upload_url>"` needs no auth header. The result's `r2_key` goes to `images_r2_keys`, `gemini_save_character`, or `gemini_upload_file({ r2_key })` |
+| `gemini_sign_media(r2_key)` | Mint a fresh signed link for stored media (links live at most 24h) — an expired link is not a reason to re-generate |
+| `gemini_view_media(r2_key)` | Return a stored image inline so you can look at what was made before refining it |
+| `gemini_list_recent_media(limit?, since_day?)` | Recent stored media with prompt, model and interaction id — how a lost result or turn is found again |
+| `gemini_save_character` / `gemini_list_characters` / `gemini_delete_character` | Per-account character library (reference image + description, no expiry); attach with `characters: ["name"]` |
+| `gemini_save_style` / `gemini_list_styles` / `gemini_delete_style` | Per-account style presets (prompt fragment, optional reference image, no expiry); attach with `style: "name"` |
 
 ```bash
-curl -X POST https://<hosted deployment>/upload \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: image/jpeg" \
-  --data-binary @photo.jpg
-# → {"file_uri":"files/abc123", ...}   then: images_file_uris: ["files/abc123"]
+# 1. tool: gemini_get_upload_url { filename: "photo.jpg", content_type: "image/jpeg" }
+#    → { upload_url, r2_key, expires_at, curl_hint }
+# 2. shell:
+curl -sS -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_URL"
+# 3. tool: gemini_image_edit { prompt: "make it winter", images_r2_keys: ["<r2_key from step 1>"] }
 ```
+
+Uploads are raster images only, capped at 15MB, and follow the host's retention schedule; save
+anything you want to keep with `gemini_save_character`.
 
 ### Multi-turn (Interactions API)
 | Tool | Description |
@@ -183,15 +200,16 @@ gemini_image_edit(prompt: "make the background blue", images_url: ["https://exam
 → the server fetches the URL itself; returns path to edited PNG
 ```
 
-**Reuse one photo across many generations (hosted hosted deployment, agent with a shell):**
+**Reuse one photo across many generations (hosted deployment, agent with a shell):**
 ```
-$ curl -X POST https://<hosted deployment>/upload -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: image/jpeg" --data-binary @photo.jpg
-  → {"file_uri": "files/abc123"}
+gemini_get_upload_url(filename: "photo.jpg", content_type: "image/jpeg")
+  → { upload_url, r2_key: "up/…/photo.jpg" }
+$ curl -sS -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_URL"
 
-gemini_image_edit(prompt: "make it winter",  images_file_uris: ["files/abc123"])
-gemini_image_edit(prompt: "make it sunrise", images_file_uris: ["files/abc123"])
-→ two edits, one upload, zero image bytes in context. Valid ~48h.
+gemini_image_edit(prompt: "make it winter",  images_r2_keys: ["up/…/photo.jpg"])
+gemini_image_edit(prompt: "make it sunrise", images_r2_keys: ["up/…/photo.jpg"])
+→ two edits, one upload, zero image bytes in context. To keep the photo past the
+  upload retention window, gemini_save_character it and pass characters: ["name"].
 ```
 
 **Generate a consistent set (master + scenes):**

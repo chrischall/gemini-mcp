@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { registerUploadUrlTools } from '../../src/tools/uploads.js';
 import { createUploadUrlMinter, signUploadKey, UPLOAD_URL_TTL_MS } from '../../src/upload-url.js';
-import { resolveSigningKey, type SecretStore } from '../../src/media-url.js';
+import { hmacKey } from '../fixtures/hmac-key.js';
 import { SessionState } from '../../src/session.js';
 import type { GeminiClient } from '../../src/client.js';
 
@@ -13,15 +13,10 @@ import type { GeminiClient } from '../../src/client.js';
 
 const NOW = 1_790_000_000_000;
 
-function fakeStore(): SecretStore {
-  const map = new Map<string, string>();
-  return { get: async (k) => map.get(k) ?? null, put: async (k, v) => { map.set(k, v); } };
-}
-
 function stub(withMinter = true): GeminiClient {
   const minter = createUploadUrlMinter({
     baseUrl: 'https://connector.example/put',
-    sign: async (key, ct, exp) => signUploadKey(await resolveSigningKey('s3cret', fakeStore()), key, ct, exp),
+    sign: async (key, ct, exp) => signUploadKey(await hmacKey('s3cret'), key, ct, exp),
     tenant: 'aaaaaaaaaaaa',
     now: () => new Date(NOW),
     randomId: () => 'deadbeef',

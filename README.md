@@ -119,7 +119,8 @@ immediately), `max_wait_ms` (wait up to a budget, then hand back the `job_id` �
 in-band, slow batches never trip the host timeout), and `idempotency_key` (a retry returns the
 recorded result instead of re-billing). On a hosted deployment, a `gemini_image_set` result with
 more than one image also carries a **`bundle_url`** — one signed URL for a zip of every image in
-the set — and set links are signed for ~7 days instead of the default ~48h. (A set too large to
+the set. Like every hosted link it lives at most 24h (the host's blob-store ceiling);
+`gemini_sign_media` re-mints an expired one. (A set too large to
 zip safely in memory skips the bundle and says so via `bundle_skipped`; the per-image
 links are unaffected.)
 
@@ -138,8 +139,9 @@ something you can *open*. It does: **every result includes a URL**, with no conf
 ```
 
 Those links need no auth header — the signature is in the URL — so they work in a browser, in
-`curl`, and in a chat message. They expire (48h by default) and the objects behind them are
-swept on a retention schedule. The `r2_key` is the durable handle for that window:
+`curl`, and in a chat message. They expire after at most 24h — the host's blob store refuses a
+longer signature — and the objects behind them are swept on the host's retention schedule. The
+`r2_key` is the durable handle for that window:
 
 - **`gemini_sign_media`** (hosted deployments only) mints a fresh signed URL from an `r2_key`,
   so an expired link never forces you to re-generate — and re-pay for — the image.
@@ -173,8 +175,9 @@ both work.
 **Auth is a signed, expiring URL rather than an unlisted key.** Random keys would
 be simpler, but they never expire and never revoke: anything that ever logged or forwarded the
 link keeps working forever. A signature scopes access to one object with a deadline, and
-rotating `MEDIA_URL_SECRET` invalidates every outstanding link at once. The tradeoff is that
-links are long and cannot be shortened by hand.
+rotating the host's signing key (`MCP_BLOB_SIGNING_KEY`, which mcp-host injects together with
+`MCP_BLOB_BASE_URL`; this server never chooses either) invalidates every outstanding link at
+once. The tradeoff is that links are long and cannot be shortened by hand.
 
 ### For assistants relaying a result
 
@@ -185,18 +188,18 @@ safe form, and a markdown link is a reasonable enhancement where you know it ren
 
 ### Retention
 
-| Variable | Default | Effect |
-|---|---|---|
-| `MEDIA_TTL_DAYS` | `7` | Objects older than this are deleted by a daily cron — generated media (`gen/`, legacy `media/`) and signed uploads (`up/`). The character/style library (`lib/`) is exempt: saved entries never expire |
-| `MEDIA_URL_SECRET` | generated | HMAC key for `/media` links; rotate to revoke all outstanding URLs |
-
-Signed-URL lifetime is clamped to `MEDIA_TTL_DAYS`, so a link never outlives the object it
-points at.
+Retention is the host's, not a setting of this server. On mcp-host, the blob store prunes
+generated media (`gen/`) and signed uploads (`up/`) on its own schedule (see mcp-host
+`docs/BLOB-STORE.md`; default 30 days), while the character/style library (`lib/`) is written as
+retention-exempt, so saved entries never expire. Every signed link is clamped to the store's
+24h ceiling, so it never outlives what the store will honour; `gemini_sign_media` re-mints one
+for as long as the object exists. The variables this server reads for it are injected by the
+host: `MCP_BLOB_BASE_URL` and `MCP_BLOB_SIGNING_KEY`.
 
 **Prompts are stored too.** Each generated object on a hosted deployment gets a small JSON
 record beside it holding the prompt (first 500 characters), model and interaction id — that is
 what `gemini_list_recent_media` shows and what lets a lost turn be recovered. The record lives
-and is swept with its object, so it is kept for the same `MEDIA_TTL_DAYS` window, not longer.
+and is swept with its object, so it is kept for the same retention window, not longer.
 Locally, `gemini_interact` writes an `<image>.json` sidecar (model, interaction id, options and
 any text the model replied with — not the prompt itself) next to each image in the output dir;
 those files are yours to keep or delete and never expire on their own. If your
@@ -279,12 +282,12 @@ SVG is a scriptable document and `/media` serves from the server's own origin. T
 `r2_key` is then usable three ways: directly as `images_r2_keys` on any generation tool (the
 server reads its own bucket — no bytes in the conversation), permanently via
 `gemini_save_character`, or as a ~48h Files API reference via `gemini_upload_file({ r2_key })`.
-Uploads themselves follow the media retention schedule (`up/` prefix, default 7 days).
+Uploads themselves follow the host's blob-store retention schedule (`up/` prefix).
 
 ### Character & style library (hosted)
 
-Recurring subjects and styles can be saved once, per account, with **no expiry** (the retention
-cron deliberately skips the library's `lib/` prefix):
+Recurring subjects and styles can be saved once, per account, with **no expiry** (the library's
+`lib/` objects are written retention-exempt, so the host's prune skips them):
 
 ```jsonc
 // once:

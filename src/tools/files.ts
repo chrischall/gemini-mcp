@@ -191,12 +191,12 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           tool: 'gemini_upload_file',
           action: 'file.upload',
           message: 'Review and confirm uploading this local file to Google:',
-          description: 'Upload a local file to the Gemini Files API',
-          method: 'POST',
-          path: '/upload/v1beta/files',
-          body: { inputs },
+          summary: 'Upload a local file to the Gemini Files API',
+          account: undefined,
           target: resolved,
+          request: { method: 'POST', path: '/upload/v1beta/files' },
           payload: { inputs, display_name: args.display_name },
+          willSend: { inputs },
           args,
           confirmToken: args.confirmToken,
         });
@@ -312,7 +312,7 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
           // Remediation goes in the MESSAGE: MCP serialization drops hints.
           throw new McpToolError(
             `No stored media for r2_key "${args.r2_key}" — it has probably passed its retention window. Re-run the generation to get a new one.`,
-            { hint: 'Objects are swept on a retention schedule (MEDIA_TTL_DAYS, default 7 days).' },
+            { hint: "Objects are swept on the host's blob-store retention schedule; signed links last at most 24h." },
           );
         }
         return minifiedResult({
@@ -454,10 +454,10 @@ export function registerFileTools(server: McpServer, client: GeminiClient): void
         tool: 'gemini_delete_file',
         action: 'file.delete',
         message: 'Review and confirm this deletion:',
-        description: 'Delete an uploaded Gemini file',
-        method: 'DELETE',
-        path: `/v1beta/${args.file_uri}`,
+        summary: 'Delete an uploaded Gemini file',
+        account: undefined,
         target: args.file_uri,
+        request: { method: 'DELETE', path: `/v1beta/${args.file_uri}` },
         payload: { file_uri: args.file_uri },
         args,
         confirmToken: args.confirmToken,

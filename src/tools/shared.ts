@@ -664,7 +664,7 @@ export async function emitMedia(
     ? {
         media_url_unavailable:
           'The media was stored but no public URL could be generated for it, so the values above are bare object keys, not links. ' +
-          'This is a connector misconfiguration: set MEDIA_PUBLIC_BASE_URL, or use inline: true to receive the bytes directly.',
+          'This is a hosting misconfiguration — the host did not provide a blob store (mcp-host injects MCP_BLOB_BASE_URL and MCP_BLOB_SIGNING_KEY) — so ask the server operator, or use inline: true to receive the bytes directly.',
       }
     : {};
   const detailed = persisted.filter((p) => p.key !== undefined);

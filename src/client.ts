@@ -486,6 +486,8 @@ export class GeminiClient {
   private readonly explicitApiKey: string | undefined;
   private readonly apis = new Map<number, { api: ApiClient; interactionsApi: ApiClient }>();
   private readonly fetchImpl: typeof fetch;
+  /** The fetch the caller injected (tests), if any — see fetchRemoteImage. */
+  private readonly injectedFetch: typeof fetch | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
   /**
    * The media destination for every tool this client is handed to. Public and
@@ -536,6 +538,7 @@ export class GeminiClient {
     // also why call sites must alias it to a local before calling (see
     // uploadToFilesApi). Guarded by tests/tools/hosted-reference-forms.test.ts.
     this.fetchImpl = opts.fetchImpl ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+    this.injectedFetch = opts.fetchImpl;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
@@ -611,14 +614,20 @@ export class GeminiClient {
 
   /**
    * Fetch one `images_url` reference server-side. Routed through the client so
-   * it uses the SAME injected `fetchImpl` as every upstream call — which is
-   * what makes it mockable in tests and correct on the Worker.
+   * tests that inject a `fetchImpl` mock this call too. Without an injected
+   * fetch it is NOT the client's default fetch: fetch-image.ts pins the
+   * connection to public addresses itself (mcp-utils netguard,
+   * fleet-audit#1252), which the plain global fetch cannot do.
    */
   async fetchRemoteImage(url: string, opts: { maxBytes?: number; accept?: string[]; timeoutMs?: number } = {}): Promise<FetchedImage> {
     // Same timeout resolution as every other upstream call (per-call
     // `timeout_ms` → $GEMINI_TIMEOUT_MS → 60s), so a URL fetch cannot be the
     // one unbounded network operation in the server.
-    return fetchRemoteImage(url, { ...opts, fetchImpl: this.fetchImpl, timeoutMs: resolveTimeoutMs(opts.timeoutMs) });
+    return fetchRemoteImage(url, {
+      ...opts,
+      ...(this.injectedFetch ? { fetchImpl: this.injectedFetch } : {}),
+      timeoutMs: resolveTimeoutMs(opts.timeoutMs),
+    });
   }
 
   /**

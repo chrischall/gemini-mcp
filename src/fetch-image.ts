@@ -1,4 +1,6 @@
-import { McpToolError } from '@chrischall/mcp-utils';
+import { McpToolError, readEnvVar } from '@chrischall/mcp-utils';
+import { createPublicOnlyDispatcher, isPublicAddress, type Resolver } from '@chrischall/mcp-utils/netguard';
+import { fetch as undiciFetch } from 'undici';
 import { formatMb } from './bytes.js';
 
 /**
@@ -17,7 +19,16 @@ import { formatMb } from './bytes.js';
  *
  *  - **https only.** `http:`, `file:`, `data:`, `gopher:` and friends are out.
  *  - **No private/loopback/link-local destinations** — including the cloud
- *    metadata address, the classic escalation target.
+ *    metadata address, the classic escalation target. Literals and private
+ *    names are refused up front (mcp-utils netguard `isPublicAddress`, the
+ *    fleet's one address table), and on a local install every connection goes
+ *    through netguard's public-only dispatcher, which resolves the name itself
+ *    and pins the socket to the addresses it vetted — so a public name that
+ *    resolves or REBINDS to a private address is refused at connect
+ *    (fleet-audit#1252). Behind an egress proxy (`HTTPS_PROXY`, which mcp-host
+ *    sets for its children) the global fetch is used instead: the child cannot
+ *    resolve names there at all, and the proxy resolves and applies the same
+ *    public-only table itself.
  *  - **Redirects are followed MANUALLY**, revalidating every hop. `redirect:
  *    'follow'` would let a public URL bounce to `http://169.254.169.254/` with
  *    no further check, which makes the origin check theatre.
@@ -57,118 +68,12 @@ export interface FetchedImage {
   requestedUrl: string;
 }
 
-/** Parse an IPv4 literal into its four octets, or `undefined` if it isn't one. */
-function ipv4Octets(host: string): number[] | undefined {
-  const parts = host.split('.');
-  if (parts.length !== 4) return undefined;
-  const octets = parts.map((p) => (/^\d{1,3}$/.test(p) ? Number(p) : NaN));
-  return octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255) ? octets : undefined;
-}
-
-/** True for addresses that are not on the public internet. */
-function isPrivateIpv4([a, b]: number[]): boolean {
-  if (a === 0 || a === 127) return true; // this-host / loopback
-  if (a === 10) return true; // RFC1918
-  if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
-  if (a === 192 && b === 168) return true; // RFC1918
-  if (a === 169 && b === 254) return true; // link-local — includes 169.254.169.254
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  if (a === 192 && b === 0) return true; // IETF protocol assignments
-  if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking
-  if (a >= 224) return true; // multicast + reserved
-  return false;
-}
-
 /**
- * Expand an IPv6 literal into its eight 16-bit groups, or `undefined` if it
- * isn't one. Handles `::` compression and a trailing dotted-quad
- * (`::ffff:127.0.0.1`) — the latter never comes out of `new URL`, which
- * re-serializes it as hex, but a redirect `Location` is parsed before
- * normalization and a human writes it that way.
- */
-function ipv6Groups(host: string): number[] | undefined {
-  if (!host.includes(':')) return undefined;
-  let text = host;
-  const tail: number[] = [];
-  // A trailing dotted-quad occupies the last two groups.
-  const dotted = /:((?:\d{1,3}\.){3}\d{1,3})$/.exec(text);
-  if (dotted) {
-    const octets = ipv4Octets(dotted[1]);
-    if (!octets) return undefined;
-    tail.push((octets[0] << 8) | octets[1], (octets[2] << 8) | octets[3]);
-    text = text.slice(0, dotted.index);
-  }
-  const halves = text.split('::');
-  if (halves.length > 2) return undefined;
-  const parse = (part: string): number[] | undefined => {
-    if (part === '') return [];
-    const out: number[] = [];
-    for (const piece of part.split(':')) {
-      if (!/^[0-9a-f]{1,4}$/.test(piece)) return undefined;
-      out.push(parseInt(piece, 16));
-    }
-    return out;
-  };
-  const head = parse(halves[0]);
-  const rest = halves.length === 2 ? parse(halves[1]) : [];
-  if (!head || !rest) return undefined;
-  const explicit = [...head, ...rest, ...tail];
-  if (halves.length === 2) {
-    if (explicit.length > 7) return undefined;
-    return [...head, ...Array(8 - explicit.length).fill(0), ...rest, ...tail];
-  }
-  return explicit.length === 8 ? explicit : undefined;
-}
-
-/**
- * The /96 prefixes that carry an IPv4 address in their final 32 bits, as the
- * first six groups. A literal matching any of them is judged on the v4 address
- * it embeds, not on the prefix.
- *
- * `::ffff:0:0/96` is the one that matters operationally — stacks really do
- * resolve `[::ffff:7f00:1]` to loopback, and `new URL` normalizes
- * `[::ffff:127.0.0.1]` into exactly that hex spelling, which is how a guard
- * that pattern-matched the dotted form came to never fire.
- *
- * The rest are defense in depth: `::/96` is deprecated IPv4-compatible,
- * `::ffff:0:0:0/96` is deprecated SIIT (RFC 2765), and `64:ff9b::/96` is the
- * NAT64 well-known prefix (RFC 6052), which needs a translator on the network
- * to route at all — and whose §3.1 already forbids embedding non-global v4.
- * They are listed anyway because a function that understands one v4-carrying
- * prefix and not its siblings is precisely the shape the original bypass had.
- */
-const V4_BEARING_PREFIXES: readonly (readonly number[])[] = [
-  [0, 0, 0, 0, 0, 0xffff], // ::ffff:0:0/96   — IPv4-mapped
-  [0, 0, 0, 0, 0, 0], //      ::/96           — IPv4-compatible (deprecated)
-  [0, 0, 0, 0, 0xffff, 0], // ::ffff:0:0:0/96 — IPv4-translated (deprecated SIIT)
-  [0x64, 0xff9b, 0, 0, 0, 0], // 64:ff9b::/96 — NAT64 well-known (RFC 6052)
-];
-
-/**
- * True for IPv6 addresses that are not on the public internet.
- *
- * Anything carrying an IPv4 address (see {@link V4_BEARING_PREFIXES}) is
- * decided by running that address through the same {@link isPrivateIpv4} table
- * as a bare v4 literal — so the two guards can never disagree about whether
- * 10.0.0.5 is private.
- */
-function isPrivateIpv6(groups: number[]): boolean {
-  if (groups.every((g) => g === 0)) return true; // ::
-  if (groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1) return true; // ::1
-  if ((groups[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
-  if ((groups[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
-  if (V4_BEARING_PREFIXES.some((prefix) => prefix.every((g, i) => groups[i] === g))) {
-    return isPrivateIpv4([groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff]);
-  }
-  return false;
-}
-
-/**
- * Reject a URL that isn't a plain public https endpoint. Hostname-based, so it
- * cannot catch a public name that RESOLVES to a private address (DNS rebinding)
- * — closing that needs resolve-then-pin, which neither Node's nor workerd's
- * fetch exposes. It does close the direct-literal and redirect-to-metadata
- * cases, which is what a prompt-injected URL actually reaches for.
+ * Reject a URL that isn't a plain public https endpoint: a private name
+ * (`localhost`, `*.local`, `*.internal`) or a non-public IP literal, judged by
+ * mcp-utils netguard `isPublicAddress` (which fails closed on a literal it
+ * cannot parse). A public NAME that resolves inward is caught later, at
+ * connect, by the pinned dispatcher (see the module header).
  */
 function assertPublicHttpsUrl(raw: string, requested: string): URL {
   let url: URL;
@@ -192,20 +97,18 @@ function assertPublicHttpsUrl(raw: string, requested: string): URL {
   // keeps it, and `localhost.` still resolves to loopback, so the suffix
   // checks below must see the name without it (chrischall/fleet-audit#472).
   const host = isIpv6Literal ? rawHost.slice(1, -1) : rawHost.replace(/\.+$/, '');
-  const v4 = isIpv6Literal ? undefined : ipv4Octets(host);
-  const v6 = isIpv6Literal ? ipv6Groups(host) : undefined;
-  const blocked = isIpv6Literal
-    // Fail CLOSED on an IPv6 literal we cannot parse: a guard that allows what
-    // it does not understand is the wrong default for this control.
-    ? (v6 === undefined || isPrivateIpv6(v6))
+  const ipv4Literal = /^[0-9.]+$/.test(host);
+  const blocked = isIpv6Literal || ipv4Literal
+    // isPublicAddress fails CLOSED on a literal it cannot parse: a guard that
+    // allows what it does not understand is the wrong default for this control.
+    ? !isPublicAddress(host)
     : host === 'localhost' ||
       host.endsWith('.localhost') ||
       host.endsWith('.local') ||
       // Private-network names: Fly's 6PN (`<app>.internal`, where the hosted
       // build runs) and GCP's metadata server (`metadata.google.internal`).
       host === 'internal' ||
-      host.endsWith('.internal') ||
-      (v4 ? isPrivateIpv4(v4) : false);
+      host.endsWith('.internal');
   if (blocked) {
     throw new McpToolError(
       `Refusing to fetch ${describeUrl(raw, requested)}: "${url.hostname}" is a private, loopback or link-local address, not a public host.`,
@@ -287,6 +190,18 @@ export async function readCapped(
 
 /** A transport-level failure, told apart from a plain unreachable host. */
 function fetchFailure(err: unknown, current: string, requested: string, timeoutMs: number): McpToolError {
+  if (refusedAtConnect(err)) {
+    let host = current;
+    try {
+      host = new URL(current).hostname;
+    } catch {
+      /* keep the raw URL */
+    }
+    return new McpToolError(
+      `Refusing to fetch ${describeUrl(current, requested)}: "${host}" resolves to a private, loopback or link-local address, not a public host.`,
+      { hint: 'images_url is fetched by the server, so it must point at a publicly reachable https:// image.' },
+    );
+  }
   const name = (err as { name?: string })?.name;
   if (name === 'TimeoutError' || name === 'AbortError') {
     return new McpToolError(`Fetching ${describeUrl(current, requested)} timed out after ${timeoutMs}ms.`, {
@@ -297,6 +212,25 @@ function fetchFailure(err: unknown, current: string, requested: string, timeoutM
     `Could not fetch ${describeUrl(current, requested)}: ${err instanceof Error ? err.message : String(err)}`,
     { hint: 'Check the URL is reachable from the server and serves the image without authentication.' },
   );
+}
+
+/** True when netguard's pinned dispatcher refused the connection (anywhere in the cause chain). */
+function refusedAtConnect(err: unknown): boolean {
+  let e: unknown = err;
+  for (let i = 0; i < 8 && e; i += 1) {
+    if ((e as { name?: unknown }).name === 'UrlNotAllowedError') return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * Is this process behind an egress proxy? mcp-host hands its children
+ * `HTTPS_PROXY` (+ `NODE_USE_ENV_PROXY=1`); the child cannot resolve names
+ * there, and the proxy applies the public-only table itself.
+ */
+function egressProxied(): boolean {
+  return Boolean(readEnvVar('HTTPS_PROXY') ?? readEnvVar('https_proxy'));
 }
 
 /**
@@ -329,7 +263,10 @@ const IMAGE_CAP_SUBJECT: CapSubject = {
 };
 
 export interface FetchImageOpts {
-  /** Injected in tests and by the Worker; defaults to the global `fetch`. */
+  /**
+   * Injected in tests: used as-is, with no connect-time pin. Omitted, the
+   * fetch is pinned to public addresses (see the module header).
+   */
   fetchImpl?: typeof fetch;
   maxBytes?: number;
   /**
@@ -348,6 +285,11 @@ export interface FetchImageOpts {
    * the Files API stores video too.
    */
   accept?: string[];
+  /**
+   * How the pinned dispatcher resolves names (tests). Defaults to the OS
+   * resolver. Ignored when `fetchImpl` is injected or behind an egress proxy.
+   */
+  resolve?: Resolver;
 }
 
 /**
@@ -357,11 +299,34 @@ export interface FetchImageOpts {
  * is useless when a call carried four of them.
  */
 export async function fetchRemoteImage(requestedUrl: string, opts: FetchImageOpts = {}): Promise<FetchedImage> {
-  const doFetch = opts.fetchImpl ?? fetch;
   const maxBytes = opts.maxBytes ?? IMAGE_URL_MAX_BYTES;
   const accept = opts.accept ?? ['image/'];
   const timeoutMs = opts.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+  // An injected fetch (tests) is used as-is. Otherwise: pinned to public
+  // addresses on a local install; the global fetch behind an egress proxy.
+  const dispatcher =
+    opts.fetchImpl === undefined && !egressProxied()
+      ? createPublicOnlyDispatcher(opts.resolve ? { resolve: opts.resolve } : {})
+      : undefined;
+  const doFetch: typeof fetch =
+    opts.fetchImpl ??
+    (dispatcher
+      ? (((input: string, init?: RequestInit) =>
+          undiciFetch(input, { ...(init as object), dispatcher })) as unknown as typeof fetch)
+      : (...args: Parameters<typeof fetch>) => fetch(...args));
+  try {
+    return await fetchHops(requestedUrl, doFetch, { maxBytes, accept, timeoutMs });
+  } finally {
+    await dispatcher?.destroy().catch(() => {});
+  }
+}
 
+/** The redirect loop of {@link fetchRemoteImage}, over the chosen fetch. */
+async function fetchHops(
+  requestedUrl: string,
+  doFetch: typeof fetch,
+  { maxBytes, accept, timeoutMs }: { maxBytes: number; accept: string[]; timeoutMs: number },
+): Promise<FetchedImage> {
   let current = requestedUrl;
   for (let hop = 0; ; hop++) {
     const url = assertPublicHttpsUrl(current, requestedUrl);

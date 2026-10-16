@@ -539,7 +539,11 @@ describe('every hosted generation returns an openable URL', () => {
     await h.close();
 
     expect(String(body.media_url_unavailable)).toMatch(/no public URL.*not links/is);
-    expect(String(body.media_url_unavailable)).toMatch(/MEDIA_PUBLIC_BASE_URL/);
+    // fleet-audit#1251: name the remedy that exists on mcp-host (the host's blob
+    // store, or inline: true) — not the retired Worker's MEDIA_PUBLIC_BASE_URL.
+    expect(String(body.media_url_unavailable)).toMatch(/inline: true/);
+    expect(String(body.media_url_unavailable)).toMatch(/MCP_BLOB_BASE_URL/);
+    expect(String(body.media_url_unavailable)).not.toMatch(/MEDIA_PUBLIC_BASE_URL|Worker/);
   });
 
   it('tells the caller the links are openable without an auth header', async () => {
