@@ -97,7 +97,7 @@ export function registerUploadUrlTools(server: McpServer, client: GeminiClient):
           '(the signature in the URL is the auth, and it covers the content type). On a 2xx, reference the `r2_key` from ' +
           'THIS result — not the PUT response: images_r2_keys on generation tools (master_images_r2_keys on ' +
           'gemini_image_set), gemini_save_character to keep it with no expiry, or gemini_upload_file({ r2_key }) for a ' +
-          '~48h files/… reference. Uploads themselves follow the media retention schedule (default 7 days).',
+          '~48h files/… reference. Uploads themselves follow the host\'s blob-store retention schedule.',
       });
     },
   );

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve, isAbsolute } from 'node:path';
 import {
+  extensionForMime,
   assertPathWithinRoots,
   expandPath,
   fileBlob,
@@ -154,20 +155,23 @@ function sniffImageMime(buf: Buffer): string | undefined {
   return mime !== undefined && REFERENCE_IMAGE_MIMES.has(mime) ? mime : undefined;
 }
 
-/** File extension for a media MIME (image/video/audio). Falls back to the MIME
- * subtype, so an unforeseen preview type still writes with a sane extension. */
+/**
+ * Gemini MIME types the shared table does not know. Music can come back as
+ * `audio/ogg_opus`, whose subtype is not a plain word, so it would otherwise
+ * be named `.bin`.
+ */
+const GEMINI_MIME_EXT: Readonly<Record<string, string>> = { 'audio/ogg_opus': 'ogg' };
+
+/**
+ * File extension for a media MIME (image/video/audio): mcp-utils
+ * `extensionForMime` (the fleet's one MIME table, fleet-audit#1301), plus
+ * {@link GEMINI_MIME_EXT}. The result always passes `isSafeExtension`, so a
+ * strange upstream Content-Type can never reach `writeUniqueFile` as an
+ * extension it refuses (an unknown type becomes `bin`).
+ */
 export function mediaExt(mimeType: string): string {
-  const m = mimeType.toLowerCase();
-  if (m.includes('jpeg')) return 'jpg';
-  if (m.includes('webp')) return 'webp';
-  if (m.includes('png')) return 'png';
-  if (m.includes('mp4')) return 'mp4';
-  if (m.includes('quicktime')) return 'mov';
-  if (m.includes('webm')) return 'webm';
-  if (m.includes('wav')) return 'wav';
-  if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
-  if (m.includes('ogg')) return 'ogg';
-  return m.split('/')[1]?.split(';')[0]?.replace(/^x-/, '') || 'bin';
+  const base = mimeType.split(';', 1)[0]!.trim().toLowerCase();
+  return GEMINI_MIME_EXT[base] ?? extensionForMime(mimeType);
 }
 
 /** Decode base64 media bytes (image/video/audio) and write to disk (creating

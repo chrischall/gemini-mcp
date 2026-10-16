@@ -114,8 +114,13 @@ src/
                   #   stdio "referenced twice → upload once" cache, and the base64
                   #   FIRST-sighting upload (see Token cost below)
   fetch-image.ts  # fetchRemoteImage() — server-side URL fetch for images_url.
-                  #   https-only, private/loopback/link-local refused, EVERY redirect
-                  #   hop revalidated, streamed byte cap. Pure; no module-scope I/O
+                  #   https-only, private/loopback/link-local refused (mcp-utils
+                  #   netguard isPublicAddress), EVERY redirect hop revalidated,
+                  #   streamed byte cap. Each connection is pinned by netguard's
+                  #   public-only dispatcher (no DNS rebinding) unless HTTPS_PROXY
+                  #   is set (mcp-host's egress proxy does that check itself).
+                  #   Bundles undici (the bundle's createRequire banner). Pure;
+                  #   no module-scope I/O
   clipboard.ts    # readClipboardImage() — macOS-only osascript+sips clipboard grab
   storage/media.ts# MediaSink — where generated media goes. createDiskSink()
                   #   (stdio: resolveOutputDir + writeMedia, unchanged) and
@@ -126,8 +131,9 @@ src/
                   #   base. buildMediaUrl/buildUploadUrl both delegate here; the
                   #   blob store hands the same `links` object to the sink and
                   #   the minter, so a re-host can't move one and not the other
-  media-url.ts    # HMAC signing/verification for /media links + the zero-config
-                  #   secret (MEDIA_URL_SECRET else generated once into OAUTH_KV)
+  media-url.ts    # HMAC sign/verify helpers + base64url for media links. The
+                  #   KV-backed signing secret went with the Worker; on mcp-host
+                  #   the key is MCP_BLOB_SIGNING_KEY (blob-store.ts)
   upload-url.ts   # signed PUT upload URLs: sign/verify (same secret as /media,
                   #   DIFFERENT payload shape so signatures can't cross
                   #   protocols) + createUploadUrlMinter (10-min TTL, keys

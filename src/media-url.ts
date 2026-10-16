@@ -21,15 +21,6 @@ import { signedLinks } from './signed-url.js';
 /** How long a freshly minted media URL stays valid. Matches Files API retention. */
 export const MEDIA_URL_TTL_MS = 48 * 60 * 60 * 1000;
 
-/** KV key holding the lazily-generated signing secret (zero-config path). */
-export const SIGNING_SECRET_KV_KEY = 'media:url-signing-secret';
-
-/** The slice of KV this module needs — structural, so tests can fake it. */
-export interface SecretStore {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string): Promise<unknown>;
-}
-
 export function base64UrlEncode(bytes: ArrayBuffer | Uint8Array): string {
   const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   let binary = '';
@@ -45,65 +36,10 @@ export function base64UrlDecode(text: string): Uint8Array {
   return out;
 }
 
-/** Import raw secret material as an HMAC key. */
-async function importKey(material: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey('raw', new TextEncoder().encode(material), { name: 'HMAC', hash: 'SHA-256' }, false, [
-    'sign',
-    'verify',
-  ]);
-}
-
-/**
- * The HMAC key for **signing**, creating one if this deployment has never
- * signed anything.
- *
- * `MEDIA_URL_SECRET` wins when an operator sets one. Otherwise a random 32-byte
- * secret is generated once and persisted in KV — which is what makes the whole
- * feature work with **zero configuration**, the entire point of this change.
- *
- * Creating is confined to this function, and this function is called only when
- * minting a URL. {@link loadSigningKey} is what the verify path uses. That
- * split is load-bearing, not stylistic — see the warning there.
- *
- * Deliberately NOT cached in a module-level variable: `src/` holds no
- * module-scope mutable state (see session.ts), and a KV read per sign is cheap
- * next to an image generation. There is a narrow first-use race — two isolates
- * generating simultaneously — so the value is re-read after writing and the
- * stored one wins, collapsing the window to URLs minted in that same instant.
- */
-export async function resolveSigningKey(secret: string | undefined, store: SecretStore): Promise<CryptoKey> {
-  let material = secret?.trim();
-  if (!material) {
-    material = (await store.get(SIGNING_SECRET_KV_KEY)) ?? undefined;
-    if (!material) {
-      const generated = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
-      await store.put(SIGNING_SECRET_KV_KEY, generated);
-      // Re-read so a concurrent generator's value wins consistently for both.
-      material = (await store.get(SIGNING_SECRET_KV_KEY)) ?? generated;
-    }
-  }
-  return importKey(material);
-}
-
-/**
- * The HMAC key for **verifying**. Read-only: returns `undefined` when no secret
- * is stored, and never creates one.
- *
- * This is not a stylistic split. KV is eventually consistent — a `put` on one
- * isolate is not immediately visible to another — so the verify path can and
- * will see a miss for a secret that exists. If verification created-on-miss
- * (as it did originally), that transient miss would mint a NEW secret and
- * overwrite the one every outstanding link was signed with, permanently 403ing
- * media that had been signed perfectly correctly. A self-inflicted denial of
- * service, triggered by ordinary traffic, and irreversible once the old secret
- * is gone.
- *
- * No secret stored ⇒ nothing was ever legitimately signed ⇒ refuse.
- */
-export async function loadSigningKey(secret: string | undefined, store: SecretStore): Promise<CryptoKey | undefined> {
-  const material = secret?.trim() || (await store.get(SIGNING_SECRET_KV_KEY));
-  return material ? importKey(material) : undefined;
-}
+// The KV-backed signing-secret helpers (`resolveSigningKey` /
+// `loadSigningKey` / `SecretStore`) went with the Cloudflare Worker: on
+// mcp-host the signing key is `MCP_BLOB_SIGNING_KEY`, injected by the host and
+// used by `blob-store.ts` (fleet-audit#1251).
 
 /** The bytes covered by a signature: the object key and the expiry, nothing else. */
 function payload(key: string, expiresAtMs: number): Uint8Array {

@@ -13,6 +13,7 @@
  * behaviour and must stay byte-for-byte equivalent to it.
  */
 
+import { mapWithConcurrency } from '@chrischall/mcp-utils';
 import { base64ToBytes } from '../bytes.js';
 import { signedLinks, type SignedLinks } from '../signed-url.js';
 import { tenantResolver } from '../tenant.js';
@@ -392,19 +393,6 @@ const SIDECAR_PROMPT_MAX = 500;
 /** How many record reads a single listing will have open at once. */
 const DECORATE_CONCURRENCY = 8;
 
-/** `Promise.all` with a ceiling on how many run at once, preserving order. */
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
-    }
-  });
-  await Promise.all(workers);
-  return out;
-}
 
 /**
  * The hosted-connector sink: one R2 object per generated item.
@@ -539,7 +527,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
             'They expire (see media[].expires_at), and the objects behind them are cleaned up on a retention schedule. ' +
             'This connector has no filesystem, so `output_dir` is ignored — but the interaction id is recorded beside each image, so continue_last and chain recovery still work.'
           : 'Generated media was stored, but this connector has no public media URL configured and no signing route available, so the values above are bare object keys rather than fetchable links. ' +
-            'Set MEDIA_PUBLIC_BASE_URL on the Worker, or pass inline: true to receive the bytes directly.',
+            'The host did not provide a blob store (mcp-host injects MCP_BLOB_BASE_URL and MCP_BLOB_SIGNING_KEY) — ask the server operator, or pass inline: true to receive the bytes directly.',
   };
 
   /**
@@ -602,7 +590,7 @@ export function createR2Sink(bucket: MediaBucket, opts: R2SinkOptions): MediaSin
     // a hundred concurrent store reads while the id lookups were carefully
     // budgeted. One tool call should not open a hundred connections to
     // decorate a page.
-    return mapLimit(entries, DECORATE_CONCURRENCY, async (entry) => {
+    return mapWithConcurrency(entries, DECORATE_CONCURRENCY, async (entry) => {
         const link = await describe(entry.key, expiresAtMs);
         // Only where the walk actually saw a record — media with none (anything
         // generated before sidecars existed, and anything whose write failed)

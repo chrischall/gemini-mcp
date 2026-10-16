@@ -17,12 +17,24 @@ env:
   - name: GEMINI_OUTPUT_DIR
     required: false
     help: >-
-      Default directory for generated images (default: current working
-      directory)
+      Default directory for generated images (default: ~/Downloads/gemini-mcp,
+      not the cwd). When set, a per-call output_dir must be inside it.
   - name: GEMINI_INPUT_DIR
     required: false
     help: >-
       Directory to resolve bare input-image filenames against
+  - name: GEMINI_UPLOAD_DIR
+    required: false
+    help: >-
+      Directories (path.delimiter-separated) that local files uploaded to the
+      Gemini Files API must come from. Mostly a local-install knob: on a hosted
+      server, uploads come from gemini_get_upload_url instead.
+  - name: GEMINI_REFERENCE_DIR
+    required: false
+    help: >-
+      Directories (path.delimiter-separated) that local reference images must
+      come from (else GEMINI_UPLOAD_DIR). Unset on a hosted server, only
+      $MCP_DATA_DIR/uploads is allowed, so leave it unset there.
   - name: GEMINI_TIMEOUT_MS
     required: false
     help: >-
@@ -38,6 +50,10 @@ env:
       How often, in milliseconds, to emit a progress notification while a
       generation is in flight. Hosts reset their tools/call timeout on progress,
       so this lets a long 4K/Pro generation outlive the default budget.
+  - name: GEMINI_DEBUG
+    required: false
+    help: >-
+      When set, emit heartbeat diagnostics to stderr. Off by default.
   - name: GEMINI_RATE_CARD
     required: false
     help: >-

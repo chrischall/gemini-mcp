@@ -328,3 +328,41 @@ describe('fetchRemoteImage — upstream failures', () => {
     ).rejects.toThrow(/no Location header/);
   });
 });
+
+// fleet-audit#1252: the name checks above cannot see a PUBLIC name that
+// resolves (or rebinds) to a private address. Without an injected fetchImpl
+// every hop goes through mcp-utils netguard's public-only dispatcher, which
+// resolves the name itself and pins the socket to the addresses it vetted.
+describe('fetchRemoteImage — connect-time pin (mcp-utils netguard)', () => {
+  it('refuses a public name that resolves to a private address, before sending anything', async () => {
+    const resolve = vi.fn(async () => ['127.0.0.1']);
+    await expect(
+      fetchRemoteImage('https://rebind.example.com/a.png', { resolve, timeoutMs: 5000 }),
+    ).rejects.toThrow(/rebind\.example\.com.*(private|not a public)/s);
+    expect(resolve).toHaveBeenCalledWith('rebind.example.com');
+  });
+
+  it('refuses when ANY resolved address is private (a mixed answer)', async () => {
+    const resolve = vi.fn(async () => ['93.184.216.34', '169.254.169.254']);
+    await expect(
+      fetchRemoteImage('https://mixed.example.com/a.png', { resolve, timeoutMs: 5000 }),
+    ).rejects.toThrow(/mixed\.example\.com.*(private|not a public)/s);
+  });
+
+  it('behind an egress proxy (HTTPS_PROXY, as on mcp-host) uses the global fetch, which the proxy guards', async () => {
+    const url = 'https://cdn.example.com/photo.png';
+    const globalFetch = vi.fn(async () => imageResponse());
+    vi.stubGlobal('fetch', globalFetch);
+    vi.stubEnv('HTTPS_PROXY', 'http://127.0.0.1:3128');
+    const resolve = vi.fn(async () => ['127.0.0.1']);
+    try {
+      const result = await fetchRemoteImage(url, { resolve });
+      expect(result.mimeType).toBe('image/png');
+      expect(globalFetch).toHaveBeenCalledTimes(1);
+      expect(resolve).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+});

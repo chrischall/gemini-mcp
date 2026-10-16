@@ -32,7 +32,7 @@
         },
         {
           "name": "GEMINI_OUTPUT_DIR",
-          "description": "Default directory for generated images (default: current working directory)",
+          "description": "Default directory for generated images (default: ~/Downloads/gemini-mcp). When set, a per-call output_dir must be inside it.",
           "isRequired": false,
           "format": "string",
           "isSecret": false

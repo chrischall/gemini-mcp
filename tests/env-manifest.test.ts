@@ -36,6 +36,13 @@ function readVars(): string[] {
 }
 
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
+const mintYaml = readFileSync(join(root, 'mint.yaml'), 'utf8');
+
+/** `env:` entry names in mint.yaml (the hosted registration form reads these). */
+function mintEnvNames(): string[] {
+  const section = /^env:\n([\s\S]*?)^(?=\S)/m.exec(mintYaml)?.[1] ?? '';
+  return [...section.matchAll(/^ {2}- name: ([A-Z0-9_]+)\s*$/gm)].map((m) => m[1]!);
+}
 const serverJson = JSON.parse(readFileSync(join(root, 'server.json'), 'utf8'));
 
 describe('env declared on every install path', () => {
@@ -73,5 +80,27 @@ describe('env declared on every install path', () => {
     expect(
       (serverJson.packages[0].environmentVariables as Array<{ name: string }>).map((v) => v.name).filter((n) => !read.includes(n)),
     ).toEqual([]);
+  });
+
+  // fleet-audit#1249: mint.yaml is the surface the hosted registration form
+  // reads, and it drifted (three knobs missing, a stale default) because
+  // nothing held it to the code.
+  it('declares every read var in mint.yaml, and nothing else', () => {
+    const names = mintEnvNames();
+    expect(names.length).toBeGreaterThan(0);
+    expect([...names].sort()).toEqual(readVars());
+  });
+
+  it('documents the real GEMINI_OUTPUT_DIR default everywhere (never the cwd)', () => {
+    const vars = serverJson.packages[0].environmentVariables as Array<{ name: string; description?: string }>;
+    const docs = [
+      /- name: GEMINI_OUTPUT_DIR\n[\s\S]*?help: >-\n([\s\S]*?)(?=\n {2}- name:|\n\S)/.exec(mintYaml)?.[1] ?? '',
+      vars.find((v) => v.name === 'GEMINI_OUTPUT_DIR')?.description ?? '',
+      manifest.user_config.gemini_output_dir.description as string,
+    ];
+    for (const d of docs) {
+      expect(d).toMatch(/Downloads\/gemini-mcp/);
+      expect(d).not.toMatch(/current working directory/);
+    }
   });
 });

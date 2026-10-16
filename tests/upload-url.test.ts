@@ -7,7 +7,8 @@ import {
   signUploadKey,
   verifyUploadSignature,
 } from '../src/upload-url.js';
-import { resolveSigningKey, signMediaKey, verifyMediaSignature, type SecretStore } from '../src/media-url.js';
+import { signMediaKey, verifyMediaSignature } from '../src/media-url.js';
+import { hmacKey } from './fixtures/hmac-key.js';
 
 /**
  * The upload signature is what authorizes an unauthenticated PUT to write into
@@ -16,21 +17,13 @@ import { resolveSigningKey, signMediaKey, verifyMediaSignature, type SecretStore
  * replayed against the other.
  */
 
-function fakeStore(): SecretStore {
-  const map = new Map<string, string>();
-  return {
-    get: async (k) => map.get(k) ?? null,
-    put: async (k, v) => { map.set(k, v); },
-  };
-}
-
 const KEY = 'up/ab12cd34ef56/2026-07-31/deadbeef-photo.jpg';
 const CT = 'image/jpeg';
 const NOW = 1_800_000_000_000;
 const EXP = NOW + UPLOAD_URL_TTL_MS;
 
 async function signingKey() {
-  return resolveSigningKey('test-secret', fakeStore());
+  return hmacKey('test-secret');
 }
 
 describe('sign/verify upload signatures', () => {
