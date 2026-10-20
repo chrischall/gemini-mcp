@@ -147,8 +147,6 @@ src/
   library.ts      # per-account character/style library under lib/<tenant>/ in
                   #   R2 — records + copied image bytes, NO expiry (cleanup
                   #   skips lib/). createR2Library; gates the library tools
-  zip.ts          # STORE-only zip writer (crc32) — bundles a multi-image set
-                  #   into the one-curl bundle_url. Pure, runtime-agnostic
   sidecar.ts      # readSidecars()/findInteractionImages()/latestInteractionId() —
                   #   reads the <image>.json sidecars as an on-disk chain index;
                   #   backs both chain recoveries in tools/interact.ts. Never throws

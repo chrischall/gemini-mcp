@@ -7,7 +7,7 @@ import { IMAGE_URL_MAX_BYTES, IMAGE_INLINE_MAX_BYTES } from '../fetch-image.js';
 import { bytesToBase64, base64ToBytes, wholeMb } from '../bytes.js';
 import { createDiskSink, type MediaSink, type MediaSidecar } from '../storage/media.js';
 import { downloadFilename } from '../media-name.js';
-import { buildZip } from '../zip.js';
+import { buildZip } from '@chrischall/mcp-utils/export';
 
 /**
  * Fallback sink for call sites that pass no explicit one (every pre-existing
@@ -746,7 +746,12 @@ export async function persistBundle(
   }
   try {
     const { mediaExt } = await import('../images.js');
-    const zip = buildZip(named.map((n) => ({ name: `${n.base}.${mediaExt(n.image.mimeType)}`, bytes: base64ToBytes(n.image.base64) })));
+    // STORE (`compress: false`): the images are already-compressed PNG/JPEG,
+    // so DEFLATE would only spend CPU, and STORE keeps the bundle byte-identical
+    // to what this repo's retired hand-rolled zip writer produced.
+    const zip = buildZip(
+      named.map((n) => ({ name: `${n.base}.${mediaExt(n.image.mimeType)}`, bytes: base64ToBytes(n.image.base64), compress: false })),
+    );
     const [persisted] = await sink.persist(
       [{ base: `${base}-bundle`, base64: bytesToBase64(zip), mimeType: 'application/zip' }],
       { urlTtlMs: SET_URL_TTL_MS },

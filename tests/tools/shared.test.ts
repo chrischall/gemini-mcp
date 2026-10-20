@@ -329,6 +329,25 @@ describe('persistBundle size guard', () => {
     expect(String(out.bundle_skipped)).toContain('download them individually');
   });
 
+  it('STOREs every bundled image (no DEFLATE), even when compression would shrink it', async () => {
+    // Highly compressible bytes: mcp-utils' buildZip DEFLATEs by default, so
+    // this pins the `compress: false` the bundle depends on — already-compressed
+    // PNG/JPEG gain nothing, and STORE keeps the archive what it always was.
+    const zeros = Buffer.alloc(4096).toString('base64');
+    let stored = '';
+    const persist = vi.fn(async (items: Array<{ base64: string }>) => {
+      stored = items[0]!.base64;
+      return [{ ref: 'https://x/bundle.zip', unavailable: false }];
+    }) as unknown as MediaSink['persist'];
+    const named = [1, 2].map((i) => ({ base: `img-${i}`, image: { base64: zeros, mimeType: 'image/png' } }));
+    const out = await persistBundle(named, objectSink(persist), 'set');
+    expect(out.bundle_url).toBe('https://x/bundle.zip');
+    const zip = Buffer.from(stored, 'base64');
+    expect(zip.readUInt32LE(0)).toBe(0x04034b50);
+    expect(zip.readUInt16LE(8)).toBe(0); // method: STORE
+    expect(zip.readUInt32LE(18)).toBe(4096); // compressed size == raw size
+  });
+
   it('still returns {} where a bundle was never promised (disk sink / single image)', async () => {
     const persist = vi.fn();
     const single = [{ base: 'img', image: { base64: PNG, mimeType: 'image/png' } }];
