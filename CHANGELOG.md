@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.4.2](https://github.com/chrischall/gemini-mcp/compare/v2.4.1...v2.4.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* **bundle:** build set bundle zips with the shared mcp-utils writer ([#311](https://github.com/chrischall/gemini-mcp/issues/311)) ([7ecd2e7](https://github.com/chrischall/gemini-mcp/commit/7ecd2e7a434ab8e62cdb34584c624c4458cd43d6))
+* **deps:** Bump dotenv ([#307](https://github.com/chrischall/gemini-mcp/issues/307)) ([e00c71f](https://github.com/chrischall/gemini-mcp/commit/e00c71fa0bce428ac56017ec414bfa34cd70e77b))
+
+
+### Documentation
+
+* **mint:** add sample prompts for the public catalog ([#310](https://github.com/chrischall/gemini-mcp/issues/310)) ([8e8c6e3](https://github.com/chrischall/gemini-mcp/commit/8e8c6e3181efeffd3b156d6965cbf44fa634a182))
+
 ## [2.4.1](https://github.com/chrischall/gemini-mcp/compare/v2.4.0...v2.4.1) (2026-10-16)
 
 
