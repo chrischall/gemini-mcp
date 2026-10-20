@@ -1,5 +1,15 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { buildZip, crc32 } from '../src/zip.js';
+import { buildZip as libBuildZip, crc32, type ZipEntry } from '@chrischall/mcp-utils/export';
+
+/**
+ * The bundle zip is built by mcp-utils' `buildZip` with every entry STOREd
+ * (`compress: false`) — what the hand-rolled `src/zip.ts` it replaced always
+ * did. Bundled images are already-compressed PNG/JPEG, so DEFLATE buys
+ * nothing; STORE keeps the archive byte-identical to what shipped.
+ */
+const buildZip = (entries: ZipEntry[], modifiedAt?: Date) =>
+  libBuildZip(entries.map((e) => ({ ...e, compress: false })), modifiedAt);
 
 /**
  * The zip writer's whole contract is "a stock unzip can open it". With no
@@ -81,4 +91,17 @@ describe('buildZip', () => {
     expect(u32(zip, 0)).toBe(0x06054b50);
     expect(u16(zip, 8)).toBe(0);
   });
+
+  it('is byte-identical to the retired hand-rolled STORE writer', () => {
+    // Digests captured from gemini-mcp's own src/zip.ts before it was deleted.
+    const sha = (z: Uint8Array) => `${createHash('sha256').update(z).digest('hex')} ${z.byteLength}`;
+    expect(sha(buildZip([A, B]))).toBe('44028e5edf73148aef23fbba1a7fa12e0d02137b040e526155c74c994ea4365d 221');
+    // Highly compressible bytes and a real timestamp: still STOREd, same bytes.
+    const big = { name: 'set-01.png', bytes: new Uint8Array(5000).fill(7) };
+    const master = { name: 'set-master.png', bytes: enc('x') };
+    expect(sha(buildZip([big, master], new Date(Date.UTC(2026, 6, 29, 13, 45, 31))))).toBe(
+      '450e629f312d28345e6df15cd4edb1bdd77463e5a0b0d51b92c1ac2123427322 5223',
+    );
+  });
 });
+
