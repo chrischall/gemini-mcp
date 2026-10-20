@@ -4,6 +4,19 @@ slug: gemini
 summary: >-
   Generate and edit images with Google Gemini image models (Nano Banana /
   Nano Banana Pro) via natural language prompts
+examples:
+  - prompt: >-
+      Generate a watercolor illustration of a lighthouse on a rocky coast at
+      sunset, in a 16:9 aspect ratio.
+    note: Text-to-image with gemini_image_generate.
+  - prompt: >-
+      Make a set of four images of the same cartoon fox mascot: waving,
+      reading a book, riding a bike, and sleeping under a tree.
+    note: A consistent character across scenes with gemini_image_set.
+  - prompt: >-
+      Compose a 30-second upbeat acoustic guitar instrumental for a cooking
+      video intro.
+    note: A short Lyria clip with gemini_music_generate.
 env:
   - name: GEMINI_API_KEY
     secret: true
