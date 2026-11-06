@@ -535,6 +535,27 @@ Two things to keep right:
   caller keeps is the one `gemini_get_upload_url` minted, and the content type
   is authenticated from the request **header** (`?ct=` is ours, and the gateway
   ignores it) — so a PUT without the exact `Content-Type` is a 403.
+- **`up/` objects are never deleted here; the host's retention sweep reclaims
+  them.** Using an `r2_key` must not consume it, because an upload is a
+  REFERENCE meant to be reused: the SKILL's worked example edits one upload
+  twice ("two edits, one upload"), `gemini_image_set` sends the same key to
+  the master and every scene call, and
+  `gemini_save_character` takes it as `image_r2_key` and COPIES the bytes into
+  `lib/` (a later generation may still name the original key). No call site
+  knows it is the last use, so delete-after-success would break the documented
+  flow to save a few MB that retention reclaims anyway (`up/` is swept like
+  `gen/`; mcp-host's default is 30 days). The one place that looks single-use,
+  `gemini_upload_file({ r2_key })`, is not: the Files API copy lives ~48h and
+  the upload far longer, so deleting it would trade the long-lived handle for
+  the short one. `blob-store.ts` can sign a DELETE; if explicit cleanup is ever
+  wanted, make it a separate, caller-invoked, tenant-gated tool, never a side
+  effect of a generation.
+- **`images_r2_keys` registers only where a key can resolve.** Video, music
+  and interact add it (plus the "gemini_get_upload_url, curl PUT, r2_key"
+  description sentence) through `hostedR2KeysParam` / `hostedUploadNote` in
+  `tools/shared.ts`, keyed on the sink's `persistsFiles`. A disk install has no
+  store, so there the param would be `tools/list` cost for nothing. The three
+  image tools still carry it unconditionally (they predate this).
 - **The machine stops whenever no request is in flight, and that is a
   correctness constraint, not a cost note.** The runner is a Fly machine with
   `auto_stop_machines = "stop"` / `min_machines_running = 0`; mcp-host's own

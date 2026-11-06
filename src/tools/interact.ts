@@ -6,7 +6,7 @@ import { ChainedRequest404Error, type GeminiClient, type ImageInput } from '../c
 import { slugify, baseName, resolveImagePath, writeSidecar, lookupOutputDir, readOutputImageAsInline } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { findInteractionImages, latestInteractionId } from '../sidecar.js';
-import { emit, reportShape, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedImage } from './shared.js';
+import { emit, reportShape, resolveAspectRatio, orientationSchema, ASPECT_RATIOS, IMAGE_SIZES, MODEL_CHOICE_GUIDE, resolveVideoInput, videoPathSchema, timeoutMsSchema, timeoutRiskHint, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, hostedR2KeysParam, hostedUploadNote, type NamedImage } from './shared.js';
 import { bytesToBase64 } from '../bytes.js';
 import { fingerprintRequest } from '../jobs.js';
 import { attachCost } from '../pricing.js';
@@ -102,6 +102,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         'do NOT start a new interaction or re-send the image for each tweak. `continue_last: true` chains from this ' +
         "session's most recent interaction without threading the id. " +
         recoveryDescription +
+        hostedUploadNote(client.mediaSink) +
         'Output is JPEG. ' +
         confirmNote('Local file inputs are confirmed first'),
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
@@ -121,6 +122,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
           .describe(`Paths to reference input images. Local paths must be inside GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR) when set. ${NEW_REFERENCES_ONLY}`),
         images_url: imagesUrlSchema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
         images_file_uris: imagesFileUrisSchema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
+        ...hostedR2KeysParam(client.mediaSink, `Reference images. ${NEW_REFERENCES_ONLY} Given`),
         images_base64: imagesBase64Schema(`Reference images. ${NEW_REFERENCES_ONLY} Given`),
         model: z
           .string()
@@ -238,7 +240,7 @@ export function registerInteractTools(server: McpServer, client: GeminiClient): 
         thinking_level: args.thinking_level, previous_interaction_id: previousInteractionId,
         google_search: args.google_search, search_types: args.search_types,
         images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
-        images_url: args.images_url, images_file_uris: args.images_file_uris,
+        images_url: args.images_url, images_file_uris: args.images_file_uris, images_r2_keys: args.images_r2_keys,
         video_url: args.video_url, video_path: args.video_path,
       });
       return client.session.jobs.dispatch({ toolName: 'gemini_interact', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async () => {
