@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.5.0](https://github.com/chrischall/gemini-mcp/compare/v2.4.2...v2.5.0) (2026-11-06)
+
+
+### Features
+
+* **hosted:** accept uploaded r2 keys on video, music and interact ([#316](https://github.com/chrischall/gemini-mcp/issues/316)) ([360992c](https://github.com/chrischall/gemini-mcp/commit/360992c656ca160d11ab3f1d28a6c99900e8586d))
+
+
+### Bug Fixes
+
+* **deps:** Bump the production-dependencies group across 1 directory with 2 updates ([#315](https://github.com/chrischall/gemini-mcp/issues/315)) ([2802cb9](https://github.com/chrischall/gemini-mcp/commit/2802cb9f78f6136709241eb2140544ce73f1d5aa))
+* **deps:** Bump the production-dependencies group with 3 updates ([#312](https://github.com/chrischall/gemini-mcp/issues/312)) ([c23d2f6](https://github.com/chrischall/gemini-mcp/commit/c23d2f6ef2840af85d84df912a45863e54a600f8))
+
 ## [2.4.2](https://github.com/chrischall/gemini-mcp/compare/v2.4.1...v2.4.2) (2026-10-20)
 
 
