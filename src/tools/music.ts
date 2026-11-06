@@ -4,7 +4,7 @@ import type { GeminiClient } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_MUSIC_MODEL } from '../models.js';
-import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedMedia} from './shared.js';
+import { emitMedia, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, hostedR2KeysParam, hostedUploadNote, type NamedMedia} from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { attachCost } from '../pricing.js';
 import { confirmLocalInputs, confirmNote, confirmTokenParam } from './_confirm.js';
@@ -37,6 +37,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         'lyria-3-pro-preview (longer-form). Output is MP3, written to disk (or returned inline). Single-turn: a track ' +
         'cannot be refined by a follow-up call, so put the whole brief in the prompt. Runs long — give it a `max_wait_ms` ' +
         'budget (or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account. ' +
+        hostedUploadNote(client.mediaSink) +
         confirmNote('Local file inputs are confirmed first'),
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: z.object({
@@ -45,6 +46,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
         images: z.array(z.string().min(1)).optional().describe('Optional reference image path(s) to condition the music. Local paths must be inside GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR) when set.'),
         images_url: imagesUrlSchema('Reference images'),
         images_file_uris: imagesFileUrisSchema('Reference images'),
+        ...hostedR2KeysParam(client.mediaSink, 'Reference images'),
         images_base64: imagesBase64Schema(),
         from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS clipboard as a reference'),
         filename: z.string().optional().describe('Base filename for the output audio (extension stripped; default: slugified prompt)'),
@@ -70,7 +72,7 @@ export function registerMusicTools(server: McpServer, client: GeminiClient): voi
       const fingerprint = fingerprintRequest('gemini_music_generate', {
         model, prompt: args.prompt,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
-        images_url: args.images_url, images_file_uris: args.images_file_uris,
+        images_url: args.images_url, images_file_uris: args.images_file_uris, images_r2_keys: args.images_r2_keys,
       });
       return client.session.jobs.dispatch({ toolName: 'gemini_music_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async (ctx) => {
         const { inputs, report } = await resolveImageInputs(args, client);

@@ -5,7 +5,7 @@ import type { GeminiClient } from '../client.js';
 import { slugify, baseName } from '../images.js';
 import { resolveImageInputs } from '../inputs.js';
 import { DEFAULT_VIDEO_MODEL } from '../models.js';
-import { emitMedia, reportShape, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, type NamedMedia} from './shared.js';
+import { emitMedia, reportShape, resolveAspectRatio, orientationSchema, timeoutMsSchema, idempotencyKeySchema, asyncSchema, maxWaitMsSchema, withProgressHeartbeat, assertLocalInputsAvailable, imagesUrlSchema, imagesFileUrisSchema, imagesBase64Schema, hostedR2KeysParam, hostedUploadNote, type NamedMedia} from './shared.js';
 import { fingerprintRequest } from '../jobs.js';
 import { attachCost } from '../pricing.js';
 import { confirmLocalInputs, confirmNote, confirmTokenParam } from './_confirm.js';
@@ -43,6 +43,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         'add ~3-10s each, to ~40s total). Cost scales with `resolution` — draft at 360p, keep at 1080p/4k. ' +
         'Output is written to disk as MP4 (video has no inline MCP block). Video runs long — give it a `max_wait_ms` budget ' +
         '(or `async: true` + gemini_get_result on a local install), or raise `timeout_ms`. Needs a funded account. ' +
+        hostedUploadNote(client.mediaSink) +
         confirmNote('Local file inputs are confirmed first'),
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: z.object({
@@ -54,6 +55,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         images: z.array(z.string().min(1)).optional().describe('Reference image path(s) for image_to_video / reference_to_video. Local paths must be inside GEMINI_REFERENCE_DIR (else GEMINI_UPLOAD_DIR) when set.'),
         images_url: imagesUrlSchema('Reference stills'),
         images_file_uris: imagesFileUrisSchema('Reference stills'),
+        ...hostedR2KeysParam(client.mediaSink, 'Reference stills'),
         images_base64: imagesBase64Schema(),
         from_clipboard: z.boolean().optional().describe('Use the image currently on the macOS clipboard as a reference'),
         filename: z.string().optional().describe('Base filename for the output video (extension stripped; default: slugified prompt)'),
@@ -103,7 +105,7 @@ export function registerVideoTools(server: McpServer, client: GeminiClient): voi
         // where `delivery` is not (same bytes, different transport).
         model, prompt: args.prompt, aspect_ratio: aspectRatio, resolution: args.resolution, task: args.task,
         images: args.images, images_base64: args.images_base64, from_clipboard: args.from_clipboard,
-        images_url: args.images_url, images_file_uris: args.images_file_uris,
+        images_url: args.images_url, images_file_uris: args.images_file_uris, images_r2_keys: args.images_r2_keys,
         previous_interaction_id: previousInteractionId,
       });
       return client.session.jobs.dispatch({ toolName: 'gemini_video_generate', fingerprint, idempotencyKey: args.idempotency_key, async: args.async, waitMs: args.max_wait_ms }, async (ctx) => {

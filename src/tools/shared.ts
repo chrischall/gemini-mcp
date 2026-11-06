@@ -177,6 +177,39 @@ export function imagesR2KeysSchema(label = 'Reference images'): z.ZodOptional<z.
     );
 }
 
+/**
+ * `images_r2_keys` for a tool, but ONLY where a key can resolve.
+ *
+ * An `r2_key` names an object in the hosted connector's blob store; a disk
+ * install has no store, so there the param could never work and would be
+ * standing `tools/list` cost on every request (see tool-surface-budget). So it
+ * is registered from the sink's capability, like interact's recovery text.
+ *
+ * The cast is runtime-honest: off the hosted connector the key is absent from
+ * the schema, zod strips it, and `args.images_r2_keys` is `undefined` — which
+ * is exactly what the declared optional type allows.
+ */
+export function hostedR2KeysParam(
+  sink: MediaSink | undefined,
+  label?: string,
+): { images_r2_keys: ReturnType<typeof imagesR2KeysSchema> } {
+  return ((sink ?? DEFAULT_SINK).persistsFiles ? {} : { images_r2_keys: imagesR2KeysSchema(label) }) as {
+    images_r2_keys: ReturnType<typeof imagesR2KeysSchema>;
+  };
+}
+
+/**
+ * The description sentence that sends a hosted caller to the upload route.
+ * Empty on disk (where `images` paths work and no upload tool exists), so it
+ * costs nothing there.
+ */
+export function hostedUploadNote(sink: MediaSink | undefined): string {
+  return (sink ?? DEFAULT_SINK).persistsFiles
+    ? ''
+    : 'For a reference photo you hold locally: gemini_get_upload_url, curl PUT it, then pass its r2_key in images_r2_keys ' +
+        '(no bytes in the conversation; reusable across calls). ';
+}
+
 /** Saved-character names attached to a generation (hosted connector only). */
 export const charactersSchema = z
   .array(z.string().min(1))
