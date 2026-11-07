@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.1](https://github.com/chrischall/gemini-mcp/compare/v2.5.0...v2.5.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **deps:** upgrade @chrischall/mcp-utils to 3.7.2 so uploads carry only the file's bytes ([#317](https://github.com/chrischall/gemini-mcp/issues/317)) ([738fe75](https://github.com/chrischall/gemini-mcp/commit/738fe757fb7b5d94fddc0aa32ae7d5c1b21048d3))
+
 ## [2.5.0](https://github.com/chrischall/gemini-mcp/compare/v2.4.2...v2.5.0) (2026-11-06)
 
 
