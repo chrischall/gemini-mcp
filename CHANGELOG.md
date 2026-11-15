@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.5.2](https://github.com/chrischall/gemini-mcp/compare/v2.5.1...v2.5.2) (2026-11-15)
+
+
+### Bug Fixes
+
+* **deps:** Bump the production-dependencies group with 2 updates ([#322](https://github.com/chrischall/gemini-mcp/issues/322)) ([7be60c5](https://github.com/chrischall/gemini-mcp/commit/7be60c52dc25e9b981aaf15a48190e7eaba5a5a2))
+* **deps:** Bump undici ([#320](https://github.com/chrischall/gemini-mcp/issues/320)) ([27a5608](https://github.com/chrischall/gemini-mcp/commit/27a5608504a2065a9487b25b8e52ac1c4d7c28bd))
+
 ## [2.5.1](https://github.com/chrischall/gemini-mcp/compare/v2.5.0...v2.5.1) (2026-11-07)
 
 
